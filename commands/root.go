@@ -96,6 +96,7 @@ Documentation: https://developers.copera.ai/`,
 		newBoardsCmd(cli),
 		newTablesCmd(cli),
 		newRowsCmd(cli),
+		newChannelsCmd(cli),
 		newCacheCmd(cli),
 		newUpdateCmd(cli),
 	)
