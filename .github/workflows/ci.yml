@@ -25,15 +25,14 @@ jobs:
       - name: Build
         run: go build ./cmd/copera/
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.1.6
+  # TODO: re-enable when golangci-lint ships a build targeting Go 1.26+
+  # lint:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-go@v5
+  #       with:
+  #         go-version-file: go.mod
+  #     - uses: golangci/golangci-lint-action@v7
+  #       with:
+  #         version: latest
