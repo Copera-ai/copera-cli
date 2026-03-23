@@ -1,0 +1,57 @@
+# Copera CLI configuration
+#
+# Config file locations (highest priority first):
+#   .copera.local.toml      — project-local, ADD TO .gitignore (tokens here)
+#   .copera.toml            — project-shared, safe to commit (no tokens!)
+#   ~/.copera.toml          — personal config with all profiles
+#
+# Active profile:
+#   --profile <name>  or  COPERA_PROFILE=<name>  (default: "default")
+#   Or set default_profile in this file to avoid using --profile every time
+#
+# Token override (bypasses all config):
+#   COPERA_CLI_AUTH_TOKEN=<token>
+
+# ── Default profile ───────────────────────────────────────────────────────────
+# Set this to use a non-"default" profile without --profile every time.
+# Overridden by COPERA_PROFILE env var or --profile flag.
+# default_profile = "work"
+
+# ── Profiles ──────────────────────────────────────────────────────────────────
+# Each profile groups a token with default resource IDs.
+# Switch with:  copera --profile work <command>
+#               COPERA_PROFILE=work copera <command>
+#
+# Token types:
+#   Boards/channels: integration key  (cp_key_...)
+#   Docs:            personal token   (cp_pat_...)
+#   Both are stored the same way — use the right one per profile.
+
+[profiles.default]
+token      = ""   # your API token — never commit this to source control
+board_id   = ""   # used when --board is not specified
+table_id   = ""   # used when --table is not specified
+row_id     = ""   # used when --row is not specified
+channel_id = ""   # used when --channel is not specified
+doc_id     = ""   # used when --doc is not specified
+
+# Example second profile (e.g. for docs work with a PAT token):
+# [profiles.docs]
+# token      = "cp_pat_..."
+# doc_id     = ""
+
+# ── Output ────────────────────────────────────────────────────────────────────
+[output]
+format = "auto"   # auto | json | table | plain
+                  # auto: table when terminal, JSON when piped
+color  = "auto"   # auto | always | never  (also respects NO_COLOR env var)
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+[cache]
+dir = ""          # default: system temp directory / copera-cli
+ttl = "1h"        # how long to cache doc content
+
+# ── API ───────────────────────────────────────────────────────────────────────
+[api]
+base_url = "https://api.copera.ai/public/v1"
+timeout  = "30s"

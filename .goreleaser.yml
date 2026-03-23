@@ -1,0 +1,48 @@
+version: 2
+
+project_name: copera
+
+builds:
+  - main: ./cmd/copera/
+    binary: copera
+    ldflags:
+      - -s -w
+      - -X github.com/copera/copera-cli/internal/build.Version={{.Version}}
+      - -X github.com/copera/copera-cli/internal/build.Time={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: copera
+    name: copera-cli
+  draft: false
+  prerelease: auto

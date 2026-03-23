@@ -1,0 +1,5 @@
+dist/
+*.exe
+
+# Local config files may contain tokens — never commit them
+.copera.local.toml
