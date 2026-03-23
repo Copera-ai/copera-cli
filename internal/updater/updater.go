@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -175,28 +174,8 @@ func Update(ctx context.Context, version string) error {
 		return fmt.Errorf("resolve symlink: %w", err)
 	}
 
-	// Check if we have write permission to the binary directory
-	needsSudo := !isWritable(filepath.Dir(currentBin))
-
-	if needsSudo {
-		// Use sudo to replace the binary
-		if err := sudoInstall(extractedPath, currentBin); err != nil {
-			return fmt.Errorf("install new binary: %w", err)
-		}
-	} else {
-		// Backup current binary
-		backupPath := currentBin + ".backup"
-		if err := os.Rename(currentBin, backupPath); err != nil {
-			return fmt.Errorf("backup current binary: %w", err)
-		}
-
-		// Move new binary into place
-		if err := copyFile(extractedPath, currentBin, 0755); err != nil {
-			_ = os.Rename(backupPath, currentBin)
-			return fmt.Errorf("install new binary: %w", err)
-		}
-
-		_ = os.Remove(backupPath)
+	if err := installBinary(extractedPath, currentBin); err != nil {
+		return err
 	}
 
 	// Invalidate version check cache
@@ -204,33 +183,6 @@ func Update(ctx context.Context, version string) error {
 	_ = os.Remove(filepath.Join(cacheDir, "version-check.json"))
 
 	return nil
-}
-
-func isWritable(dir string) bool {
-	tmp := filepath.Join(dir, ".copera-write-test")
-	f, err := os.Create(tmp)
-	if err != nil {
-		return false
-	}
-	f.Close()
-	os.Remove(tmp)
-	return true
-}
-
-func sudoInstall(src, dest string) error {
-	// Use sudo cp + chmod to install the binary
-	cmd := exec.Command("sudo", "cp", src, dest)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("sudo cp: %w", err)
-	}
-	cmd = exec.Command("sudo", "chmod", "755", dest)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func downloadFile(ctx context.Context, url, dest string) error {
