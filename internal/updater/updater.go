@@ -18,7 +18,7 @@ import (
 )
 
 // CDNBaseURL is the public CDN for release assets and version checks.
-// Override at build time: -X github.com/copera/copera-cli/internal/updater.CDNBaseURL=https://...
+// Override at build time: -X github.com/Copera-ai/copera-cli/internal/updater.CDNBaseURL=https://...
 var CDNBaseURL = "https://cli.copera.ai" //nolint:revive // exported var with matching name
 
 const (
