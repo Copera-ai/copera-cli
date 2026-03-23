@@ -42,15 +42,18 @@ type CheckResult struct {
 
 // CheckVersion compares the running version against the latest CDN release.
 // It caches the result for CheckInterval to avoid hitting the network on every invocation.
+// Set noCache to bypass the cached result and always fetch from CDN.
 // Returns nil if no update or check was skipped.
-func CheckVersion(ctx context.Context, cacheDir string) *CheckResult {
+func CheckVersion(ctx context.Context, cacheDir string, noCache bool) *CheckResult {
 	cacheFile := filepath.Join(cacheDir, "version-check.json")
 
-	// Check cache first
-	if data, err := os.ReadFile(cacheFile); err == nil {
-		var info VersionInfo
-		if json.Unmarshal(data, &info) == nil && time.Since(info.CheckedAt) < CheckInterval {
-			return compareVersions(info.Latest)
+	// Check cache first (unless bypassed)
+	if !noCache {
+		if data, err := os.ReadFile(cacheFile); err == nil {
+			var info VersionInfo
+			if json.Unmarshal(data, &info) == nil && time.Since(info.CheckedAt) < CheckInterval {
+				return compareVersions(info.Latest)
+			}
 		}
 	}
 
@@ -188,7 +191,7 @@ func Update(ctx context.Context, version string) error {
 	_ = os.Remove(backupPath)
 
 	// Invalidate version check cache
-	cacheDir := cache.DefaultDir()
+	cacheDir := cache.SharedDir()
 	_ = os.Remove(filepath.Join(cacheDir, "version-check.json"))
 
 	return nil

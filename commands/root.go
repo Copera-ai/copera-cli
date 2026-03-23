@@ -110,7 +110,7 @@ Documentation: https://developers.copera.ai/`,
 				os.Getenv("COPERA_NO_UPDATE_CHECK") == "1" || build.Version == "dev" {
 				return
 			}
-			updateResult = updater.CheckVersion(context.Background(), cache.DefaultDir())
+			updateResult = updater.CheckVersion(context.Background(), cache.SharedDir(), false)
 			if updateResult != nil && updateResult.HasUpdate {
 				fmt.Fprintf(stderr, "\nA new version of copera is available: v%s → v%s\n", updateResult.Current, updateResult.Latest)
 				fmt.Fprintf(stderr, "Run 'copera update' to upgrade.\n")

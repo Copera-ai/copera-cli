@@ -13,6 +13,7 @@ import (
 func newUpdateCmd(cli *CLI) *cobra.Command {
 	var flagVersion string
 	var flagForce bool
+	var flagNoCache bool
 
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -25,7 +26,7 @@ func newUpdateCmd(cli *CLI) *cobra.Command {
 
 			version := flagVersion
 			if version == "" {
-				result := updater.CheckVersion(context.Background(), cache.DefaultDir())
+				result := updater.CheckVersion(context.Background(), cache.SharedDir(), flagNoCache)
 				if result == nil || !result.HasUpdate {
 					cli.Printer.Info("Already up to date (v%s).", build.Version)
 					return nil
@@ -66,5 +67,6 @@ func newUpdateCmd(cli *CLI) *cobra.Command {
 
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Update to a specific version (e.g. 1.2.0)")
 	cmd.Flags().BoolVar(&flagForce, "force", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&flagNoCache, "no-cache", false, "Bypass version check cache")
 	return cmd
 }

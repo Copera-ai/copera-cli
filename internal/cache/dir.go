@@ -13,6 +13,12 @@ func DefaultDir() string {
 	return filepath.Join(os.TempDir(), "copera-cli-"+build.Version)
 }
 
+// SharedDir returns a version-agnostic cache directory for data shared across versions
+// (e.g. version check results). Path: os.TempDir()/copera-cli.
+func SharedDir() string {
+	return filepath.Join(os.TempDir(), "copera-cli")
+}
+
 // DocsDir returns the docs content cache subdirectory.
 func DocsDir(base string) string {
 	if base == "" {
