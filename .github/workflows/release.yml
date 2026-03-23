@@ -33,6 +33,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Delete existing release (if re-releasing)
+        run: gh release delete "v${GITHUB_REF_NAME#refs/tags/}" --yes --cleanup-tag=false 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
@@ -63,6 +68,9 @@ jobs:
           CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+
+          # Clean existing version assets (in case of re-release)
+          aws s3 rm "s3://${S3_BUCKET}/v${VERSION}/" --recursive || true
 
           # Upload versioned assets
           aws s3 cp cdn-assets/ "s3://${S3_BUCKET}/v${VERSION}/" \
