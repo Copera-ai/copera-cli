@@ -1,15 +1,22 @@
 {
     "cSpell.words": [
         "copera",
+        "darwin",
         "exitcodes",
+        "flagchan",
         "github",
+        "goarch",
         "httptest",
         "isatty",
         "jedib",
+        "ldflags",
+        "linux",
         "mattn",
         "Newf",
         "ratelimit",
+        "stretchr",
         "testutil",
+        "TMPDIR",
         "urfave"
     ]
 }
