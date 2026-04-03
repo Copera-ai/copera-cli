@@ -66,6 +66,7 @@ copera boards list|get          (alias: bases)
 copera tables list|get
 copera rows list|get|create
 copera docs tree|search|get|content|update|create|delete
+copera drive tree|search|get|download|upload|mkdir
 copera cache status|clean
 copera update [--version] [--force]
 copera version

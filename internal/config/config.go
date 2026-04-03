@@ -11,6 +11,11 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	defaultBaseURL = "https://api.copera.ai/public/v1"
+	sandboxBaseURL = "https://api-dev.copera.ai/public/v1"
+)
+
 // Config holds all resolved configuration for one CLI invocation.
 type Config struct {
 	// Active profile name
@@ -132,6 +137,11 @@ func Load(opts LoadOpts) (*Config, error) {
 		}
 	}
 
+	// Sandbox mode: COPERA_SANDBOX=1 switches to the dev API
+	if os.Getenv("COPERA_SANDBOX") == "1" && cfg.API.BaseURL == defaultBaseURL {
+		cfg.API.BaseURL = sandboxBaseURL
+	}
+
 	return cfg, nil
 }
 
@@ -169,7 +179,7 @@ func newViper() *viper.Viper {
 	v.SetDefault("output.format", "auto")
 	v.SetDefault("output.color", "auto")
 	v.SetDefault("cache.ttl", "1h")
-	v.SetDefault("api.base_url", "https://api.copera.ai/public/v1")
+	v.SetDefault("api.base_url", defaultBaseURL)
 	v.SetDefault("api.timeout", "30s")
 	return v
 }

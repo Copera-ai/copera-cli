@@ -27,9 +27,21 @@ func New(baseURL, token string, timeout time.Duration) *Client {
 		timeout = 30 * time.Second
 	}
 	return &Client{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		token:      token,
-		httpClient: &http.Client{Timeout: timeout},
+		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
+		httpClient: &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 5 {
+					return fmt.Errorf("too many redirects")
+				}
+				// Do not forward auth headers on cross-host redirects
+				if req.URL.Host != via[0].URL.Host {
+					req.Header.Del("Authorization")
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -61,6 +73,12 @@ func (e *APIError) ExitCode() int {
 	default:
 		return exitcodes.Error
 	}
+}
+
+// HTTPClient returns the underlying http.Client for direct HTTP operations
+// (e.g., uploading file parts to S3 presigned URLs).
+func (c *Client) HTTPClient() *http.Client {
+	return c.httpClient
 }
 
 // do executes a request, retrying up to 2 extra times on 429 with exponential backoff.

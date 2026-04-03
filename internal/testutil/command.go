@@ -31,6 +31,7 @@ func RunCommand(t *testing.T, args []string, stdin string) Result {
 // so multiple calls within one test can observe each other's cache writes.
 func RunCommandWithStore(t *testing.T, args []string, stdin string, store cache.Store) Result {
 	t.Helper()
+	SetEnv(t, "GO_TEST", "1")
 
 	var outBuf, errBuf bytes.Buffer
 	var stdinReader io.Reader = strings.NewReader(stdin)

@@ -1,6 +1,6 @@
 # Copera CLI
 
-`copera` is the official command-line interface for [Copera](https://copera.ai). Manage boards, tables, rows, docs, and messaging from your terminal — or integrate it into LLM agent pipelines.
+`copera` is the official command-line interface for [Copera](https://copera.ai). Manage boards, tables, rows, docs, drive files, and messaging from your terminal — or integrate it into LLM agent pipelines.
 
 ## Installation
 
@@ -136,6 +136,37 @@ cat content.md | copera docs update <id>  # Update from stdin
 copera docs delete <id> --force           # Delete a doc
 ```
 
+### Drive
+
+Drive commands require a **Personal Access Token** (`cp_pat_...`) with the `ACCESS_DRIVE` scope.
+
+```bash
+copera drive tree                             # Tree view of drive files and folders
+copera drive tree --parent <id>               # Subtree under a folder
+copera drive tree --depth 5                   # Control nesting depth (1-10)
+copera drive search "quarterly report"        # Full-text search
+copera drive get <file-id>                    # Get file/folder metadata
+copera drive download <file-id>               # Download a file
+copera drive download <file-id> -o report.pdf # Download to specific path
+copera drive upload ./report.pdf              # Upload a single file
+copera drive upload ./project/ --parent <id>  # Upload directory recursively
+copera drive mkdir "New Folder"               # Create a folder
+copera drive mkdir "Sub" --parent <id>        # Create nested folder
+```
+
+**Upload features:**
+- Multipart chunked upload via S3 presigned URLs (handles large files)
+- Concurrent part uploads (`--concurrency`, default 4)
+- Configurable chunk size (`--chunk-size`, default 10 MB)
+- curl/wget-style progress bar when running in a TTY
+- Recursive directory upload with automatic folder creation
+
+### Channels
+
+```bash
+copera channels message send <channel-id> --body "Hello"  # Send a message
+```
+
 ### Cache
 
 ```bash
@@ -239,6 +270,7 @@ The CLI is designed to work with LLM agents and scripts:
 | `COPERA_CLI_AUTH_TOKEN` | API token (overrides all config) |
 | `COPERA_PROFILE` | Active config profile name (default: `"default"`) |
 | `COPERA_NO_UPDATE_CHECK` | Set to `1` to disable background version checks |
+| `COPERA_SANDBOX` | Set to `1` to use the dev API (`api-dev.copera.ai`) |
 | `CI` | When set to `true`, disables interactive prompts and update checks |
 | `NO_COLOR` | Disable ANSI color output |
 
