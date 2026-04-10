@@ -45,10 +45,13 @@ copera update
 ## Quick Start
 
 ```bash
-# First time: set up auth
+# First time: set up auth (opens your browser)
 copera auth login
 
-# Or use an environment variable (recommended for CI/CD and agents)
+# Or, if you already have a token in hand:
+copera auth login --token=cp_pat_xxx   # save it directly, no browser
+
+# Or, for CI/CD and agents:
 export COPERA_CLI_AUTH_TOKEN="your_api_token"
 
 # List your boards
@@ -61,6 +64,26 @@ copera docs tree
 ---
 
 ## Authentication
+
+### Getting a token
+
+`copera auth login` is the easiest way. By default it opens your browser at
+`https://app.copera.ai/oauth/cli`, where you pick a workspace, fill in the
+PAT form, and copy the generated token back into the CLI.
+
+The CLI always prints the URL to the terminal **before** trying to open the
+browser, so the flow also works on WSL, SSH sessions, and headless
+containers — just copy the URL into any browser you have access to.
+
+**Login modes:**
+
+| Command | What it does |
+|---|---|
+| `copera auth login` | Opens the browser to the PAT creation page and prompts for the pasted token. |
+| `copera auth login --token=<value>` | Saves `<value>` directly. No browser, no paste prompt. Ideal for scripts, CI, and LLM agents. |
+| `copera auth login --token` | Skips the browser and drops straight into the masked paste prompt (same UX as the old CLI). Useful in WSL/SSH when you already have a token. |
+
+### Where the token is loaded from
 
 The CLI resolves your API token in this order (highest priority first):
 
@@ -76,7 +99,7 @@ The CLI resolves your API token in this order (highest priority first):
 - **Personal Access Token** (`cp_pat_...`) — required for docs commands, works for everything
 - **Integration API Key** (`cp_key_...`) — for boards and channels only
 
-Get a token at [developers.copera.ai/guides/authentication](https://developers.copera.ai/guides/authentication).
+More details at [developers.copera.ai/guides/authentication](https://developers.copera.ai/guides/authentication).
 
 ---
 

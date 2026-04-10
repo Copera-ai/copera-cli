@@ -14,6 +14,12 @@ import (
 const (
 	defaultBaseURL = "https://api.copera.ai/public/v1"
 	sandboxBaseURL = "https://api-dev.copera.ai/public/v1"
+	// defaultWebURL / sandboxWebURL locate the web app (NOT the REST API).
+	// Used by `copera auth login` to construct the OAuth-style URL the user
+	// opens in the browser to generate a PAT. Separate from the API base URL
+	// because the web app and API live on different hostnames.
+	defaultWebURL = "https://app.copera.ai"
+	sandboxWebURL = "https://dev.copera.ai"
 )
 
 // Config holds all resolved configuration for one CLI invocation.
@@ -72,6 +78,10 @@ type CacheConfig struct {
 // APIConfig mirrors the [api] TOML section.
 type APIConfig struct {
 	BaseURL string
+	// WebURL is the base URL of the Copera web app (e.g., https://app.copera.ai)
+	// — NOT the REST API. Used by `copera auth login` to construct the
+	// browser URL that walks the user through PAT creation.
+	WebURL  string
 	Timeout time.Duration
 }
 
@@ -137,9 +147,16 @@ func Load(opts LoadOpts) (*Config, error) {
 		}
 	}
 
-	// Sandbox mode: COPERA_SANDBOX=1 switches to the dev API
-	if os.Getenv("COPERA_SANDBOX") == "1" && cfg.API.BaseURL == defaultBaseURL {
-		cfg.API.BaseURL = sandboxBaseURL
+	// Sandbox mode: COPERA_SANDBOX=1 switches to the dev API and web URLs.
+	// Each URL is swapped independently — if the user has overridden one
+	// to a custom host via config, we leave it alone.
+	if os.Getenv("COPERA_SANDBOX") == "1" {
+		if cfg.API.BaseURL == defaultBaseURL {
+			cfg.API.BaseURL = sandboxBaseURL
+		}
+		if cfg.API.WebURL == defaultWebURL {
+			cfg.API.WebURL = sandboxWebURL
+		}
 	}
 
 	return cfg, nil
@@ -180,6 +197,7 @@ func newViper() *viper.Viper {
 	v.SetDefault("output.color", "auto")
 	v.SetDefault("cache.ttl", "1h")
 	v.SetDefault("api.base_url", defaultBaseURL)
+	v.SetDefault("api.web_url", defaultWebURL)
 	v.SetDefault("api.timeout", "30s")
 	return v
 }
@@ -242,6 +260,7 @@ func buildConfig(v *viper.Viper, profileName string) *Config {
 		},
 		API: APIConfig{
 			BaseURL: v.GetString("api.base_url"),
+			WebURL:  v.GetString("api.web_url"),
 			Timeout: apiTimeout,
 		},
 	}

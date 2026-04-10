@@ -7,8 +7,11 @@ This file provides instructions for LLM agents (Claude, GPT, Gemini, Codex, etc.
 ## Setup (run once per session)
 
 ```bash
-# Required: set API token
+# Option A (recommended for agents): set API token via environment variable
 export COPERA_CLI_AUTH_TOKEN="your_token"
+
+# Option B (also works for agents): save via --token flag directly
+copera auth login --token=your_token   # no browser, no prompts
 
 # Recommended: disable interactive prompts
 export CI=true
@@ -16,6 +19,12 @@ export CI=true
 # Verify setup works
 copera auth status --json
 ```
+
+**Never run bare `copera auth login`** — by default that command opens
+the system browser and waits for a pasted token, which agents cannot do.
+Agents should always use the env var (Option A) or `--token=<value>`
+(Option B). Running `auth login` in non-interactive mode without a
+`--token=<value>` flag exits with an error.
 
 If `auth status` returns exit code 4, the token is missing or invalid.
 

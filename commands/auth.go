@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"io"
+
 	"github.com/copera/copera-cli/internal/auth"
 	"github.com/copera/copera-cli/internal/config"
 	"github.com/copera/copera-cli/internal/exitcodes"
@@ -30,52 +32,162 @@ func newAuthCmd(cli *CLI) *cobra.Command {
 
 // auth login ─────────────────────────────────────────────────────────────────
 
-func newAuthLoginCmd(cli *CLI) *cobra.Command {
-	return &cobra.Command{
-		Use:   "login",
-		Short: "Set up credentials interactively",
-		Long: `Set up API credentials interactively.
+// loginPasteModeSentinel is the value `cmd.Flags().Lookup("token")` returns
+// when the user passed bare `--token` with no value. It's a sentinel that
+// cannot collide with a real token (which always starts with `cp_`).
+const loginPasteModeSentinel = "__paste_mode__"
 
-For non-interactive environments (CI, agents), set the environment variable:
-  export COPERA_CLI_AUTH_TOKEN=<your-token>`,
+// loginMode selects between the three sub-flows of `copera auth login`.
+type loginMode int
+
+const (
+	// loginModeBrowser is the default: print the URL, try to open the
+	// browser, then prompt for the token paste. This is the new PAT-
+	// friendly flow.
+	loginModeBrowser loginMode = iota
+
+	// loginModePasteOnly skips the browser and goes straight to the
+	// masked paste prompt — identical to the legacy interactive flow.
+	// Triggered by `--token` with no value. Useful in WSL/SSH where the
+	// user already has a token in hand and doesn't want us to launch
+	// xdg-open.
+	loginModePasteOnly
+
+	// loginModeDirect saves the flag value directly. No browser, no
+	// prompts. Triggered by `--token=<value>`. Useful for scripts, CI,
+	// and LLM agents.
+	loginModeDirect
+)
+
+func newAuthLoginCmd(cli *CLI) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "login",
+		Short: "Set up credentials (opens the browser by default)",
+		Long: `Authenticate the Copera CLI.
+
+Default behavior:
+  copera auth login                 Opens your browser to the OAuth-style PAT
+                                    creation page, then waits for you to paste
+                                    the generated token back at the prompt.
+
+Escape hatches:
+  copera auth login --token=VALUE   Save VALUE directly. No browser, no prompts
+                                    (beyond profile/save-location in interactive
+                                    mode). Ideal for scripts, CI, and agents.
+
+  copera auth login --token         Skip the browser and drop straight into
+                                    the masked paste prompt (same UX as the
+                                    old CLI). Useful in WSL/SSH where you
+                                    already have a token.
+
+Non-interactive fallback:
+  COPERA_CLI_AUTH_TOKEN=<token>     Set this environment variable and any
+                                    command (including 'auth login') picks it
+                                    up without touching the token files.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cli.IsNonInteractive() {
+			mode := resolveLoginMode(cmd)
+
+			// The only mode that tolerates non-interactive terminals is
+			// loginModeDirect — the token arrives via a flag so we don't
+			// need TTY input. Browser and paste modes both need a prompt,
+			// so gate them behind the interactivity check.
+			if mode != loginModeDirect && cli.IsNonInteractive() {
 				cli.Printer.PrintError(
 					"non_interactive",
 					"auth login requires an interactive terminal",
-					"Set COPERA_CLI_AUTH_TOKEN environment variable instead",
+					"Use 'copera auth login --token=<value>' or set COPERA_CLI_AUTH_TOKEN",
 					false,
 				)
 				return exitcodes.Newf(exitcodes.Usage,
-					"set COPERA_CLI_AUTH_TOKEN or run this command in a terminal")
+					"use --token=<value>, set COPERA_CLI_AUTH_TOKEN, or run this command in a terminal")
 			}
-			return runAuthLogin(cli)
+
+			switch mode {
+			case loginModeDirect:
+				token := cmd.Flag("token").Value.String()
+				return runAuthLoginDirect(cli, token)
+			case loginModePasteOnly:
+				return runAuthLoginPasteOnly(cli)
+			default:
+				return runAuthLoginBrowser(cli)
+			}
 		},
 	}
+
+	// Local --token flag shadows the persistent --token from root.
+	// Cobra's Command.mergePersistentFlags() only copies a parent's
+	// persistent flag into a child's flag set when the child doesn't
+	// already have a flag of the same name — so this registration wins
+	// within the `auth login` scope and the root's binding (which would
+	// otherwise send the token through cli.flags.token) is bypassed here.
+	cmd.Flags().String(
+		"token",
+		"",
+		"Save this token directly (skips browser). Use bare --token for paste-only mode.",
+	)
+	cmd.Flags().Lookup("token").NoOptDefVal = loginPasteModeSentinel
+
+	return cmd
 }
 
-func runAuthLogin(cli *CLI) error {
+// resolveLoginMode inspects the `--token` flag state and maps it to one of
+// the three login sub-flows.
+func resolveLoginMode(cmd *cobra.Command) loginMode {
+	f := cmd.Flag("token")
+	if f == nil || !f.Changed {
+		return loginModeBrowser
+	}
+	if f.Value.String() == loginPasteModeSentinel {
+		return loginModePasteOnly
+	}
+	return loginModeDirect
+}
+
+// runAuthLoginBrowser is the default login flow: print the URL, attempt to
+// open the browser, then prompt the user to paste the token back.
+func runAuthLoginBrowser(cli *CLI) error {
 	r := bufio.NewReader(cli.Stdin)
 
-	// 1. Profile name
-	fmt.Fprintf(cli.Printer.Out, "Profile name [default]: ")
-	profileInput, _ := r.ReadString('\n')
-	profileName := strings.TrimSpace(profileInput)
-	if profileName == "" {
-		profileName = "default"
-	}
+	// Pull the web URL from config so we point at the right host
+	// (prod vs sandbox vs user override). A missing token here is
+	// expected — we're literally in the process of setting one — so
+	// swallow the MissingTokenError.
+	webURL := resolveWebURL(cli)
+	loginURL := strings.TrimRight(webURL, "/") + "/oauth/cli"
 
-	// 2. Token (masked)
-	fmt.Fprintf(cli.Printer.Out, "API token: ")
-	tokenBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(cli.Printer.Out) // newline after hidden input
-	if err != nil {
-		// Fallback for non-TTY stdin (e.g. piped token in test environments)
-		fmt.Fprintf(cli.Printer.Out, "API token: ")
-		tokenInput, _ := r.ReadString('\n')
-		tokenBytes = []byte(strings.TrimSpace(tokenInput))
-	}
-	token := strings.TrimSpace(string(tokenBytes))
+	// ALWAYS print the URL first. In WSL/SSH/headless/containers the
+	// browser launch may succeed silently without doing anything useful,
+	// or fail silently — either way, the user's only reliable fallback
+	// is to read the URL from the terminal and open it themselves.
+	fmt.Fprintln(cli.Printer.Out)
+	fmt.Fprintln(cli.Printer.Out, "To authenticate the Copera CLI, open this URL in your browser:")
+	fmt.Fprintln(cli.Printer.Out)
+	fmt.Fprintf(cli.Printer.Out, "    %s\n", loginURL)
+	fmt.Fprintln(cli.Printer.Out)
+	fmt.Fprintln(cli.Printer.Out, "Select a workspace, create a token, then paste it below.")
+	fmt.Fprintln(cli.Printer.Out)
+
+	// Best-effort browser launch — intentionally ignore the error.
+	_ = auth.OpenURL(loginURL)
+
+	return promptTokenAndSave(cli, r)
+}
+
+// runAuthLoginPasteOnly skips the browser URL banner and drops straight
+// into the profile/paste/save-location prompts. Equivalent to the legacy
+// `copera auth login` flow.
+func runAuthLoginPasteOnly(cli *CLI) error {
+	r := bufio.NewReader(cli.Stdin)
+	return promptTokenAndSave(cli, r)
+}
+
+// runAuthLoginDirect saves the given token verbatim. Skips the browser
+// launch AND the masked paste prompt — the caller already has the token.
+// In interactive terminals we still ask for the profile name and save
+// location; in non-interactive we use safe defaults (`default` profile,
+// `~/.copera.toml`).
+func runAuthLoginDirect(cli *CLI, token string) error {
+	token = strings.TrimSpace(token)
 	if token == "" {
 		cli.Printer.PrintError("invalid_input", "token cannot be empty", "", false)
 		return exitcodes.Newf(exitcodes.Usage, "token cannot be empty")
@@ -83,7 +195,95 @@ func runAuthLogin(cli *CLI) error {
 
 	vals := config.ProfileValues{Token: token}
 
-	// 3. Save location
+	if cli.IsNonInteractive() {
+		// Non-interactive + --token=<value>: save to home with default profile.
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			cli.Printer.PrintError("home_dir_error", err.Error(), "", false)
+			return exitcodes.New(exitcodes.Error, err)
+		}
+		savePath := filepath.Join(homeDir, ".copera.toml")
+		if err := config.WriteProfile(savePath, "default", vals); err != nil {
+			cli.Printer.PrintError("write_error", err.Error(), "", false)
+			return exitcodes.New(exitcodes.Error, err)
+		}
+		cli.Printer.Info("✓ Credentials saved to %s (profile: default)", savePath)
+		cli.Printer.Info("  Token: %s", auth.MaskToken(token))
+		return nil
+	}
+
+	// Interactive: still ask for profile name + save location so users
+	// can distinguish multiple accounts on the same machine.
+	r := bufio.NewReader(cli.Stdin)
+
+	profileName := promptProfileName(cli, r)
+	savePath, choice := promptSaveLocation(cli, r)
+
+	if err := config.WriteProfile(savePath, profileName, vals); err != nil {
+		cli.Printer.PrintError("write_error", err.Error(), "", false)
+		return exitcodes.New(exitcodes.Error, err)
+	}
+
+	if choice == "2" {
+		cwd, _ := os.Getwd()
+		offerGitignore(r, cli, cwd)
+	}
+
+	cli.Printer.Info("✓ Credentials saved to %s (profile: %s)", savePath, profileName)
+	cli.Printer.Info("  Token: %s", auth.MaskToken(token))
+	return nil
+}
+
+// promptTokenAndSave runs the shared "profile name → masked paste → save
+// location → write → .gitignore" sequence used by both browser and
+// paste-only flows.
+func promptTokenAndSave(cli *CLI, r *bufio.Reader) error {
+	// Masked paste prompt — ask for the token FIRST so users can paste
+	// immediately after copying from the browser.
+	token, err := readMaskedInput(cli.Printer.Out, "API token: ")
+	if err != nil {
+		// Fallback for non-TTY stdin (piped token in test environments).
+		fmt.Fprintf(cli.Printer.Out, "API token: ")
+		tokenInput, _ := r.ReadString('\n')
+		token = strings.TrimSpace(tokenInput)
+	}
+	if token == "" {
+		cli.Printer.PrintError("invalid_input", "token cannot be empty", "", false)
+		return exitcodes.Newf(exitcodes.Usage, "token cannot be empty")
+	}
+
+	profileName := promptProfileName(cli, r)
+
+	vals := config.ProfileValues{Token: token}
+
+	savePath, choice := promptSaveLocation(cli, r)
+
+	if err := config.WriteProfile(savePath, profileName, vals); err != nil {
+		cli.Printer.PrintError("write_error", err.Error(), "", false)
+		return exitcodes.New(exitcodes.Error, err)
+	}
+
+	if choice == "2" {
+		cwd, _ := os.Getwd()
+		offerGitignore(r, cli, cwd)
+	}
+
+	cli.Printer.Info("✓ Credentials saved to %s (profile: %s)", savePath, profileName)
+	cli.Printer.Info("  Token: %s", auth.MaskToken(token))
+	return nil
+}
+
+func promptProfileName(cli *CLI, r *bufio.Reader) string {
+	fmt.Fprintf(cli.Printer.Out, "Profile name [default]: ")
+	profileInput, _ := r.ReadString('\n')
+	profileName := strings.TrimSpace(profileInput)
+	if profileName == "" {
+		profileName = "default"
+	}
+	return profileName
+}
+
+func promptSaveLocation(cli *CLI, r *bufio.Reader) (savePath, choice string) {
 	homeDir, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
 
@@ -94,9 +294,8 @@ func runAuthLogin(cli *CLI) error {
 	fmt.Fprintf(cli.Printer.Out, "Choice [1]: ")
 
 	choiceInput, _ := r.ReadString('\n')
-	choice := strings.TrimSpace(choiceInput)
+	choice = strings.TrimSpace(choiceInput)
 
-	var savePath string
 	switch choice {
 	case "2":
 		savePath = filepath.Join(cwd, ".copera.local.toml")
@@ -105,21 +304,60 @@ func runAuthLogin(cli *CLI) error {
 	default:
 		savePath = filepath.Join(homeDir, ".copera.toml")
 	}
+	return savePath, choice
+}
 
-	// 5. Write config
-	if err := config.WriteProfile(savePath, profileName, vals); err != nil {
-		cli.Printer.PrintError("write_error", err.Error(), "", false)
-		return exitcodes.New(exitcodes.Error, err)
+// resolveWebURL returns the Copera web app base URL (not the REST API) for
+// the current profile. It loads config silently and tolerates any error —
+// `auth login` should never fail just because the user has a malformed
+// config or no token yet (the whole point of login is to SET a token). On
+// any error or missing value we fall back to the prod default.
+// readMaskedInput prints the prompt, reads from stdin char by char in raw
+// terminal mode, echoing '*' for each character. On Enter it rewrites the
+// line with the masked representation (e.g. "*******ab1f"). Returns the
+// clear-text token string.
+func readMaskedInput(w io.Writer, prompt string) (string, error) {
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", err
 	}
+	defer term.Restore(fd, oldState)
 
-	// 6. Offer to add .copera.local.toml to .gitignore
-	if choice == "2" {
-		offerGitignore(r, cli, cwd)
+	fmt.Fprint(w, prompt)
+
+	var buf []byte
+	b := make([]byte, 1)
+	for {
+		if _, err := os.Stdin.Read(b); err != nil {
+			return "", err
+		}
+		switch {
+		case b[0] == '\n' || b[0] == '\r':
+			token := strings.TrimSpace(string(buf))
+			fmt.Fprint(w, "\r\n")
+			return token, nil
+		case b[0] == 127 || b[0] == 8: // backspace / delete
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
+				fmt.Fprint(w, "\b \b")
+			}
+		case b[0] == 3: // Ctrl-C
+			fmt.Fprint(w, "\r\n")
+			return "", fmt.Errorf("interrupted")
+		case b[0] >= 32: // printable
+			buf = append(buf, b[0])
+			fmt.Fprint(w, "*")
+		}
 	}
+}
 
-	cli.Printer.Info("✓ Credentials saved to %s (profile: %s)", savePath, profileName)
-	cli.Printer.Info("  Token: %s", auth.MaskToken(token))
-	return nil
+func resolveWebURL(cli *CLI) string {
+	cfg, _ := cli.LoadConfig()
+	if cfg != nil && cfg.API.WebURL != "" {
+		return cfg.API.WebURL
+	}
+	return "https://app.copera.ai"
 }
 
 func offerGitignore(r *bufio.Reader, cli *CLI, cwd string) {
