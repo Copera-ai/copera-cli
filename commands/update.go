@@ -13,8 +13,6 @@ import (
 func newUpdateCmd(cli *CLI) *cobra.Command {
 	var flagVersion string
 	var flagForce bool
-	var flagNoCache bool
-
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update copera to the latest version",
@@ -26,7 +24,10 @@ func newUpdateCmd(cli *CLI) *cobra.Command {
 
 			version := flagVersion
 			if version == "" {
-				result := updater.CheckVersion(context.Background(), cache.SharedDir(), flagNoCache)
+				// Always bypass cache on explicit `copera update` — the user
+				// is asking for a fresh check. The --no-cache flag is kept for
+				// backwards compat but is effectively always true here.
+				result := updater.CheckVersion(context.Background(), cache.SharedDir(), true)
 				if result == nil || !result.HasUpdate {
 					cli.Printer.Info("Already up to date (v%s).", build.Version)
 					return nil
@@ -67,6 +68,5 @@ func newUpdateCmd(cli *CLI) *cobra.Command {
 
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Update to a specific version (e.g. 1.2.0)")
 	cmd.Flags().BoolVar(&flagForce, "force", false, "Skip confirmation prompt")
-	cmd.Flags().BoolVar(&flagNoCache, "no-cache", false, "Bypass version check cache")
 	return cmd
 }
