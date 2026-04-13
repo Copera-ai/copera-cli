@@ -23,7 +23,11 @@ func requireAPIClient(cli *CLI) (*api.Client, *config.Config, error) {
 			false)
 		return nil, nil, exitcodes.New(exitcodes.AuthFailure, err)
 	}
-	return api.New(cfg.API.BaseURL, cfg.Token, cfg.API.Timeout), cfg, nil
+	client := api.New(cfg.API.BaseURL, cfg.Token, cfg.API.Timeout)
+	if cli.flags.verbose {
+		client.SetVerbose(cli.Printer.Err)
+	}
+	return client, cfg, nil
 }
 
 func handleConfigErr(cli *CLI, err error) error {

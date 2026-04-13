@@ -22,6 +22,7 @@ func newDocsCmd(cli *CLI) *cobra.Command {
 		newDocsGetCmd(cli),
 		newDocsContentCmd(cli),
 		newDocsUpdateCmd(cli),
+		newDocsMetadataCmd(cli),
 		newDocsCreateCmd(cli),
 		newDocsDeleteCmd(cli),
 	)
@@ -283,6 +284,58 @@ Operations:
 	}
 	cmd.Flags().StringVar(&flagOperation, "operation", "replace", "Update operation: replace|append|prepend")
 	cmd.Flags().StringVar(&flagContent, "content", "", "Content text (reads stdin if not set)")
+	return cmd
+}
+
+// ── docs metadata ────────────────────────────────────────────────────────────
+
+func newDocsMetadataCmd(cli *CLI) *cobra.Command {
+	var flagTitle, flagIcon, flagCover string
+
+	cmd := &cobra.Command{
+		Use:   "metadata <doc-id>",
+		Short: "Update document title, icon, or cover",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, _, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			updates := map[string]string{}
+			if flagTitle != "" {
+				updates["title"] = flagTitle
+			}
+			if flagIcon != "" {
+				updates["icon"] = flagIcon
+			}
+			if flagCover != "" {
+				updates["cover"] = flagCover
+			}
+			if len(updates) == 0 {
+				cli.Printer.PrintError("missing_input", "at least one of --title, --icon, or --cover is required", "", false)
+				return exitcodes.Newf(exitcodes.Usage, "no updates provided")
+			}
+
+			doc, err := client.DocUpdateMeta(context.Background(), args[0], updates)
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(doc)
+			}
+
+			cli.Printer.PrintLine(fmt.Sprintf("ID:      %s", doc.ID))
+			cli.Printer.PrintLine(fmt.Sprintf("Title:   %s", doc.Title))
+			cli.Printer.PrintLine(fmt.Sprintf("Updated: %s", doc.UpdatedAt.Format("2006-01-02 15:04")))
+			cli.Printer.Info("Document metadata updated.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagTitle, "title", "", "New document title")
+	cmd.Flags().StringVar(&flagIcon, "icon", "", "Document icon value")
+	cmd.Flags().StringVar(&flagCover, "cover", "", "Document cover value")
 	return cmd
 }
 

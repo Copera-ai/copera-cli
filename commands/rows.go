@@ -24,6 +24,9 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 		newRowsListCmd(cli),
 		newRowsGetCmd(cli),
 		newRowsCreateCmd(cli),
+		newRowsUpdateCmd(cli),
+		newRowsDeleteCmd(cli),
+		newRowsAuthenticateCmd(cli),
 	)
 	return cmd
 }
@@ -131,6 +134,9 @@ func newRowsGetCmd(cli *CLI) *cobra.Command {
 			cli.Printer.PrintLine(fmt.Sprintf("Board:   %s", row.Board))
 			cli.Printer.PrintLine(fmt.Sprintf("Table:   %s", row.Table))
 			cli.Printer.PrintLine(fmt.Sprintf("Updated: %s", row.UpdatedAt.Format("2006-01-02 15:04")))
+			if row.Description != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("Description: %s", row.Description))
+			}
 			cli.Printer.PrintLine("")
 			cli.Printer.PrintLine("Columns:")
 			for _, col := range row.Columns {
@@ -216,6 +222,203 @@ Example:
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
 	cmd.Flags().StringVar(&flagData, "data", "", "Row data as JSON")
+	return cmd
+}
+
+// ── rows update ─────────────────────────────────────────────────────────────
+
+func newRowsUpdateCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable, flagData string
+
+	cmd := &cobra.Command{
+		Use:   "update <row-id>",
+		Short: "Update a row's column values",
+		Long: `Update column values of an existing row. Provide column data via --data (JSON) or stdin.
+
+Example:
+  copera rows update <id> --board <id> --table <id> --data '{"columns":[{"columnId":"abc","value":"new"}]}'
+  echo '{"columns":[...]}' | copera rows update <id> --board <id> --table <id>`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			data := flagData
+			if data == "" {
+				raw, readErr := io.ReadAll(cli.Stdin)
+				if readErr != nil || len(raw) == 0 {
+					cli.Printer.PrintError("input_error", "no row data provided",
+						"Use --data '{...}' or pipe JSON via stdin", false)
+					return exitcodes.New(exitcodes.Usage, fmt.Errorf("no row data"))
+				}
+				data = string(raw)
+			}
+
+			var input api.UpdateRowInput
+			if err := json.Unmarshal([]byte(data), &input); err != nil {
+				cli.Printer.PrintError("input_error", fmt.Sprintf("invalid JSON: %s", err),
+					"Provide valid JSON with a 'columns' array", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			row, err := client.RowUpdate(context.Background(), boardID, tableID, args[0], &input)
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(row)
+			}
+
+			cli.Printer.PrintLine(fmt.Sprintf("Updated row %s (row# %d)", row.ID, row.RowID))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagData, "data", "", "Row data as JSON")
+	return cmd
+}
+
+// ── rows delete ─────────────────────────────────────────────────────────────
+
+func newRowsDeleteCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable string
+	var flagForce bool
+
+	cmd := &cobra.Command{
+		Use:   "delete <row-id>",
+		Short: "Delete a row",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			if !flagForce && !cli.IsNonInteractive() {
+				fmt.Fprintf(cli.Printer.Out, "Delete row %s? [y/N]: ", args[0])
+				var ans string
+				fmt.Fscanln(cli.Stdin, &ans)
+				if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(ans)), "y") {
+					cli.Printer.Info("Aborted.")
+					return nil
+				}
+			}
+
+			if err := client.RowDelete(context.Background(), boardID, tableID, args[0]); err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(map[string]any{
+					"deleted": true,
+					"rowId":   args[0],
+				})
+			}
+
+			cli.Printer.Info("Row deleted.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().BoolVar(&flagForce, "force", false, "Skip confirmation prompt")
+	return cmd
+}
+
+// ── rows authenticate ───────────────────────────────────────────────────────
+
+func newRowsAuthenticateCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable string
+	var flagIdentCol, flagIdentVal, flagPassCol, flagPassVal string
+
+	cmd := &cobra.Command{
+		Use:   "authenticate",
+		Short: "Authenticate a row using identifier and password columns",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			if flagIdentCol == "" || flagIdentVal == "" || flagPassCol == "" || flagPassVal == "" {
+				cli.Printer.PrintError("missing_input", "all authentication flags are required",
+					"Use --identifier-column, --identifier-value, --password-column, --password-value", false)
+				return exitcodes.Newf(exitcodes.Usage, "missing required authentication flags")
+			}
+
+			row, err := client.RowAuthenticate(context.Background(), boardID, tableID, &api.AuthenticateRowInput{
+				IdentifierColumnID:    flagIdentCol,
+				IdentifierColumnValue: flagIdentVal,
+				PasswordColumnID:      flagPassCol,
+				PasswordColumnValue:   flagPassVal,
+			})
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(row)
+			}
+
+			cli.Printer.PrintLine(fmt.Sprintf("ID:      %s", row.ID))
+			cli.Printer.PrintLine(fmt.Sprintf("Row#:    %d", row.RowID))
+			cli.Printer.PrintLine(fmt.Sprintf("Owner:   %s", row.Owner))
+			cli.Printer.PrintLine(fmt.Sprintf("Updated: %s", row.UpdatedAt.Format("2006-01-02 15:04")))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagIdentCol, "identifier-column", "", "Identifier column ID")
+	cmd.Flags().StringVar(&flagIdentVal, "identifier-value", "", "Identifier column value")
+	cmd.Flags().StringVar(&flagPassCol, "password-column", "", "Password column ID")
+	cmd.Flags().StringVar(&flagPassVal, "password-value", "", "Password column value")
 	return cmd
 }
 

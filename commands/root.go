@@ -34,6 +34,7 @@ type CLI struct {
 		output  string
 		quiet   bool
 		noInput bool
+		verbose bool
 	}
 }
 
@@ -87,6 +88,7 @@ Documentation: https://developers.copera.ai/`,
 	pf.StringVar(&cli.flags.output, "output", "auto", "Output format: auto|json|table|plain")
 	pf.BoolVarP(&cli.flags.quiet, "quiet", "q", false, "Suppress informational messages")
 	pf.BoolVar(&cli.flags.noInput, "no-input", false, "Disable all interactive prompts")
+	pf.BoolVar(&cli.flags.verbose, "verbose", false, "Show HTTP request/response details")
 
 	// Register subcommands
 	cmd.AddCommand(
@@ -98,6 +100,8 @@ Documentation: https://developers.copera.ai/`,
 		newRowsCmd(cli),
 		newChannelsCmd(cli),
 		newDriveCmd(cli),
+		newWorkspaceCmd(cli),
+		newSearchCmd(cli),
 		newCacheCmd(cli),
 		newUpdateCmd(cli),
 	)
@@ -108,7 +112,8 @@ Documentation: https://developers.copera.ai/`,
 	cmd.PersistentPostRun = func(cmd *cobra.Command, args []string) {
 		updateOnce.Do(func() {
 			if cli.flags.json || cli.flags.quiet || os.Getenv("CI") == "true" ||
-				os.Getenv("COPERA_NO_UPDATE_CHECK") == "1" || build.Version == "dev" {
+				os.Getenv("COPERA_NO_UPDATE_CHECK") == "1" || build.Version == "dev" ||
+				cmd.Name() == "update" {
 				return
 			}
 			updateResult = updater.CheckVersion(context.Background(), cache.SharedDir(), false)

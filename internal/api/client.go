@@ -19,6 +19,7 @@ type Client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+	verbose    io.Writer // if non-nil, log request/response details here
 }
 
 // New creates a Client. timeout=0 defaults to 30s.
@@ -75,6 +76,9 @@ func (e *APIError) ExitCode() int {
 	}
 }
 
+// SetVerbose enables request/response logging to the given writer (typically stderr).
+func (c *Client) SetVerbose(w io.Writer) { c.verbose = w }
+
 // HTTPClient returns the underlying http.Client for direct HTTP operations
 // (e.g., uploading file parts to S3 presigned URLs).
 func (c *Client) HTTPClient() *http.Client {
@@ -122,6 +126,10 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	if c.verbose != nil {
+		fmt.Fprintf(c.verbose, ">> %s %s\n", method, req.URL.String())
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("api: %w", err)
@@ -130,12 +138,20 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 
 	// 204 No Content and 202 Accepted are success with no body
 	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusAccepted {
+		if c.verbose != nil {
+			fmt.Fprintf(c.verbose, "<< %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+		}
 		return nil
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("api: read response: %w", err)
+	}
+
+	if c.verbose != nil {
+		fmt.Fprintf(c.verbose, "<< %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+		fmt.Fprintf(c.verbose, "<< %s\n", string(respBody))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

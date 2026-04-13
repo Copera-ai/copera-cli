@@ -302,3 +302,32 @@ token = "tok_test_fake"
 	res := testutil.RunCommand(t, []string{"docs", "get"}, "")
 	assert.Equal(t, 2, res.ExitCode)
 }
+
+// ── docs metadata ───────────────────────────────────────────────────────────
+
+func TestDocsMetadata_Title(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"PATCH /docs/doc1": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "doc1", "title": "New Title", "starred": false,
+				"createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-06-15T00:00:00Z",
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"docs", "metadata", "doc1", "--title", "New Title", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &doc))
+	assert.Equal(t, "New Title", doc["title"])
+}
+
+func TestDocsMetadata_NoFlags(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"docs", "metadata", "doc1"}, "")
+	assert.Equal(t, 2, res.ExitCode)
+}

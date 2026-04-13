@@ -59,14 +59,15 @@ type RowColumn struct {
 
 // Row represents a single row in a table.
 type Row struct {
-	ID        string      `json:"_id"`
-	RowID     int         `json:"rowId"`
-	Owner     string      `json:"owner"`
-	Table     string      `json:"table"`
-	Board     string      `json:"board"`
-	CreatedAt time.Time   `json:"createdAt"`
-	UpdatedAt time.Time   `json:"updatedAt"`
-	Columns   []RowColumn `json:"columns"`
+	ID          string      `json:"_id"`
+	RowID       int         `json:"rowId"`
+	Owner       string      `json:"owner"`
+	Table       string      `json:"table"`
+	Board       string      `json:"board"`
+	Description string      `json:"description,omitempty"`
+	CreatedAt   time.Time   `json:"createdAt"`
+	UpdatedAt   time.Time   `json:"updatedAt"`
+	Columns     []RowColumn `json:"columns"`
 }
 
 // CommentAuthor holds author details for a row comment.
@@ -106,6 +107,22 @@ type CreateRowInput struct {
 		ColumnID string `json:"columnId"`
 		Value    any    `json:"value"`
 	} `json:"columns"`
+}
+
+// UpdateRowInput is the body for PATCH /board/{boardId}/table/{tableId}/row/{rowId}.
+type UpdateRowInput struct {
+	Columns []struct {
+		ColumnID string `json:"columnId"`
+		Value    any    `json:"value"`
+	} `json:"columns"`
+}
+
+// AuthenticateRowInput is the body for POST .../row/authenticate.
+type AuthenticateRowInput struct {
+	IdentifierColumnID    string `json:"identifierColumnId"`
+	IdentifierColumnValue string `json:"identifierColumnValue"`
+	PasswordColumnID      string `json:"passwordColumnId"`
+	PasswordColumnValue   string `json:"passwordColumnValue"`
 }
 
 // CreateCommentInput is the body for POST .../row/{rowId}/comment.
@@ -172,6 +189,29 @@ func (c *Client) RowGet(ctx context.Context, boardID, tableID, rowID string) (*R
 func (c *Client) RowCreate(ctx context.Context, boardID, tableID string, input *CreateRowInput) (*Row, error) {
 	var r Row
 	path := fmt.Sprintf("/board/%s/table/%s/row", boardID, tableID)
+	if err := c.do(ctx, "POST", path, input, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (c *Client) RowUpdate(ctx context.Context, boardID, tableID, rowID string, input *UpdateRowInput) (*Row, error) {
+	var r Row
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s", boardID, tableID, rowID)
+	if err := c.do(ctx, "PATCH", path, input, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (c *Client) RowDelete(ctx context.Context, boardID, tableID, rowID string) error {
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s", boardID, tableID, rowID)
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+func (c *Client) RowAuthenticate(ctx context.Context, boardID, tableID string, input *AuthenticateRowInput) (*Row, error) {
+	var r Row
+	path := fmt.Sprintf("/board/%s/table/%s/row/authenticate", boardID, tableID)
 	if err := c.do(ctx, "POST", path, input, &r); err != nil {
 		return nil, err
 	}

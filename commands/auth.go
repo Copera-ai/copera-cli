@@ -2,13 +2,13 @@ package commands
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"io"
 
 	"github.com/copera/copera-cli/internal/auth"
 	"github.com/copera/copera-cli/internal/config"
@@ -25,6 +25,7 @@ func newAuthCmd(cli *CLI) *cobra.Command {
 	cmd.AddCommand(
 		newAuthLoginCmd(cli),
 		newAuthStatusCmd(cli),
+		newAuthWhoamiCmd(cli),
 		newAuthLogoutCmd(cli),
 	)
 	return cmd
@@ -381,6 +382,48 @@ func offerGitignore(r *bufio.Reader, cli *CLI, cwd string) {
 			f.Close()
 			cli.Printer.Info("  Added .copera.local.toml to .gitignore")
 		}
+	}
+}
+
+// auth whoami ─────────────────────────────────────────────────────────────────
+
+func newAuthWhoamiCmd(cli *CLI) *cobra.Command {
+	return &cobra.Command{
+		Use:   "whoami",
+		Short: "Show authenticated user and workspace",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			ws, err := client.WorkspaceInfo(context.Background())
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			type whoamiOut struct {
+				Profile   string `json:"profile"`
+				Token     string `json:"token"`
+				Workspace string `json:"workspace"`
+				Slug      string `json:"slug"`
+			}
+			out := whoamiOut{
+				Profile:   cfg.Profile,
+				Token:     auth.MaskToken(cfg.Token),
+				Workspace: ws.Name,
+				Slug:      ws.Slug,
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(out)
+			}
+
+			cli.Printer.PrintLine(fmt.Sprintf("Workspace: %s (%s)", out.Workspace, out.Slug))
+			cli.Printer.PrintLine(fmt.Sprintf("Profile:   %s", out.Profile))
+			cli.Printer.PrintLine(fmt.Sprintf("Token:     %s", out.Token))
+			return nil
+		},
 	}
 }
 

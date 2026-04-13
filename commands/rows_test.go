@@ -2,6 +2,7 @@ package commands_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -264,5 +265,129 @@ func TestRowsCreate_MissingData(t *testing.T) {
 	setupHomeWithBoard(t, srv.URL)
 
 	res := testutil.RunCommand(t, []string{"rows", "create"}, "")
+	assert.Equal(t, 2, res.ExitCode)
+}
+
+// ── rows update ─────────────────────────────────────────────────────────────
+
+func TestRowsUpdate_JSON(t *testing.T) {
+	var capturedBody []byte
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"PATCH /board/board1/table/table1/row/r1": func(w http.ResponseWriter, r *http.Request) {
+			capturedBody, _ = io.ReadAll(r.Body)
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "r1", "rowId": 42, "owner": "user1", "table": "table1", "board": "board1",
+				"createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-06-15T00:00:00Z",
+				"columns": []map[string]any{{"columnId": "c1", "value": "updated"}},
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "update", "r1", "--json",
+		"--data", `{"columns":[{"columnId":"c1","value":"updated"}]}`,
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	var row map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &row))
+	assert.Equal(t, "r1", row["_id"])
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(capturedBody, &body))
+	cols := body["columns"].([]any)
+	assert.Len(t, cols, 1)
+}
+
+func TestRowsUpdate_Stdin(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"PATCH /board/board1/table/table1/row/r1": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "r1", "rowId": 42, "owner": "user1", "table": "table1", "board": "board1",
+				"createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-06-15T00:00:00Z",
+				"columns": []map[string]any{},
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	stdin := `{"columns":[{"columnId":"c1","value":"piped"}]}`
+	res := testutil.RunCommand(t, []string{"rows", "update", "r1", "--json"}, stdin)
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+}
+
+// ── rows delete ─────────────────────────────────────────────────────────────
+
+func TestRowsDelete_Force(t *testing.T) {
+	var deleteCalled bool
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"DELETE /board/board1/table/table1/row/r1": func(w http.ResponseWriter, r *http.Request) {
+			deleteCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "delete", "r1", "--force", "--output", "table"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.True(t, deleteCalled)
+	assert.Contains(t, res.Stderr, "Row deleted.")
+}
+
+func TestRowsDelete_JSON(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"DELETE /board/board1/table/table1/row/r1": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "delete", "r1", "--force", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, true, out["deleted"])
+}
+
+// ── rows authenticate ───────────────────────────────────────────────────────
+
+func TestRowsAuthenticate_JSON(t *testing.T) {
+	var capturedBody []byte
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/authenticate": func(w http.ResponseWriter, r *http.Request) {
+			capturedBody, _ = io.ReadAll(r.Body)
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "r1", "rowId": 42, "owner": "user1", "table": "table1", "board": "board1",
+				"createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-06-01T00:00:00Z",
+				"columns": []map[string]any{},
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "authenticate", "--json",
+		"--identifier-column", "col_email",
+		"--identifier-value", "mike@acme.com",
+		"--password-column", "col_pass",
+		"--password-value", "secret",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(capturedBody, &body))
+	assert.Equal(t, "col_email", body["identifierColumnId"])
+	assert.Equal(t, "mike@acme.com", body["identifierColumnValue"])
+	assert.Equal(t, "col_pass", body["passwordColumnId"])
+	assert.Equal(t, "secret", body["passwordColumnValue"])
+}
+
+func TestRowsAuthenticate_MissingFlags(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "authenticate"}, "")
 	assert.Equal(t, 2, res.ExitCode)
 }
