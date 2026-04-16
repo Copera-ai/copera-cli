@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -216,6 +217,15 @@ func (c *Client) RowAuthenticate(ctx context.Context, boardID, tableID string, i
 		return nil, err
 	}
 	return &r, nil
+}
+
+// RowUpdateDescription sends a description update request (server processes async, returns 202).
+func (c *Client) RowUpdateDescription(ctx context.Context, boardID, tableID, rowID, operation, content string) error {
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/md", boardID, tableID, rowID)
+	return c.do(ctx, http.MethodPost, path, map[string]string{
+		"operation": operation,
+		"content":   content,
+	}, nil)
 }
 
 // ── Comment methods ──────────────────────────────────────────────────────────

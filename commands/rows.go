@@ -25,6 +25,7 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 		newRowsGetCmd(cli),
 		newRowsCreateCmd(cli),
 		newRowsUpdateCmd(cli),
+		newRowsUpdateDescriptionCmd(cli),
 		newRowsDeleteCmd(cli),
 		newRowsAuthenticateCmd(cli),
 	)
@@ -293,6 +294,69 @@ Example:
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
 	cmd.Flags().StringVar(&flagData, "data", "", "Row data as JSON")
+	return cmd
+}
+
+// ── rows update-description ─────────────────────────────────────────────────
+
+func newRowsUpdateDescriptionCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable string
+	var flagOperation, flagContent string
+
+	cmd := &cobra.Command{
+		Use:   "update-description <row-id>",
+		Short: "Update a row's description content",
+		Long: `Update a row's markdown description content.
+
+Content is read from --content or stdin. The update is processed asynchronously
+(the server returns 202 Accepted immediately).
+
+Operations:
+  replace  — replace entire description (default)
+  append   — add to the end
+  prepend  — add to the beginning`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			content := flagContent
+			if content == "" {
+				content, err = readStdinContent(cli)
+				if err != nil {
+					cli.Printer.PrintError("input_error", err.Error(), "Pipe content via stdin or use --content", false)
+					return exitcodes.New(exitcodes.Usage, err)
+				}
+			}
+
+			if err := client.RowUpdateDescription(context.Background(), boardID, tableID, args[0], flagOperation, content); err != nil {
+				return apiError(cli, err)
+			}
+
+			cli.Printer.Info("Description update queued (operation: %s). Processing is async.", flagOperation)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagOperation, "operation", "replace", "Update operation: replace|append|prepend")
+	cmd.Flags().StringVar(&flagContent, "content", "", "Content text (reads stdin if not set)")
 	return cmd
 }
 

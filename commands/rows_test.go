@@ -391,3 +391,37 @@ func TestRowsAuthenticate_MissingFlags(t *testing.T) {
 	res := testutil.RunCommand(t, []string{"rows", "authenticate"}, "")
 	assert.Equal(t, 2, res.ExitCode)
 }
+
+// ── rows update-description ─────────────────────────────────────────────────
+
+func TestRowsUpdateDescription_ReadsStdin(t *testing.T) {
+	var capturedBody map[string]string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/md": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+			w.WriteHeader(http.StatusAccepted)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "update-description", "r1"}, "# Updated description")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "replace", capturedBody["operation"])
+	assert.Equal(t, "# Updated description", capturedBody["content"])
+}
+
+func TestRowsUpdateDescription_AppendOperation(t *testing.T) {
+	var capturedBody map[string]string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/md": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+			w.WriteHeader(http.StatusAccepted)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "update-description", "r1", "--operation", "append", "--content", "new section"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "append", capturedBody["operation"])
+	assert.Equal(t, "new section", capturedBody["content"])
+}

@@ -64,7 +64,7 @@ Designed to be used by both **humans** (interactive, list/tree output) and **LLM
 copera auth login|status|logout
 copera boards list|get          (alias: bases)
 copera tables list|get
-copera rows list|get|create
+copera rows list|get|create|update-description
 copera docs tree|search|get|content|update|create|delete
 copera drive tree|search|get|download|upload|mkdir
 copera cache status|clean
