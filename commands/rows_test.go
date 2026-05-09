@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"testing"
 
@@ -424,4 +425,200 @@ func TestRowsUpdateDescription_AppendOperation(t *testing.T) {
 	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
 	assert.Equal(t, "append", capturedBody["operation"])
 	assert.Equal(t, "new section", capturedBody["content"])
+}
+
+// ── rows comment ────────────────────────────────────────────────────────────
+
+func sampleCommentResponse(id string) map[string]any {
+	return map[string]any{
+		"_id":         id,
+		"content":     "hello world",
+		"contentType": "text/html",
+		"visibility":  "internal",
+		"author": map[string]any{
+			"_id": "u1", "name": "Alice", "picture": "", "email": "alice@example.com",
+		},
+		"createdAt": "2025-06-01T00:00:00Z",
+		"updatedAt": "2025-06-01T00:00:00Z",
+	}
+}
+
+func TestRowsComment_JSON(t *testing.T) {
+	var capturedBody map[string]string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/comment": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+			testutil.RespondJSON(w, http.StatusOK, sampleCommentResponse("c1"))
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "comment", "r1", "--json",
+		"--content", "hello world",
+		"--visibility", "external",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	assert.Equal(t, "hello world", capturedBody["content"])
+	assert.Equal(t, "external", capturedBody["visibility"])
+
+	var cmt map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &cmt))
+	assert.Equal(t, "c1", cmt["_id"])
+	assert.Equal(t, "hello world", cmt["content"])
+}
+
+func TestRowsComment_Stdin(t *testing.T) {
+	var capturedBody map[string]string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/comment": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+			testutil.RespondJSON(w, http.StatusOK, sampleCommentResponse("c2"))
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "comment", "r1", "--json"}, "from stdin")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "from stdin", capturedBody["content"])
+	assert.Equal(t, "internal", capturedBody["visibility"])
+}
+
+func TestRowsComment_MissingContent(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "comment", "r1"}, "")
+	assert.Equal(t, 2, res.ExitCode)
+}
+
+func TestRowsComment_InvalidVisibility(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "comment", "r1", "--content", "hi", "--visibility", "secret",
+	}, "")
+	assert.Equal(t, 2, res.ExitCode)
+}
+
+func TestRowsComment_HumanOutput(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/comment": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, sampleCommentResponse("c3"))
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "comment", "r1", "--content", "hi", "--output", "table",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "ID:         c3")
+	assert.Contains(t, res.Stdout, "Alice <alice@example.com>")
+	assert.Contains(t, res.Stdout, "Visibility: internal")
+	assert.Contains(t, res.Stdout, "hello world")
+}
+
+// ── rows comments ───────────────────────────────────────────────────────────
+
+func TestRowsComments_JSON(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/comments": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"items": []map[string]any{
+					sampleCommentResponse("c1"),
+					sampleCommentResponse("c2"),
+				},
+				"pageInfo": map[string]any{
+					"endCursor":       nil,
+					"startCursor":     nil,
+					"hasNextPage":     false,
+					"hasPreviousPage": false,
+				},
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "comments", "r1", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	var page map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &page))
+	items := page["items"].([]any)
+	assert.Len(t, items, 2)
+}
+
+func TestRowsComments_QueryParams(t *testing.T) {
+	var capturedQuery string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/comments": func(w http.ResponseWriter, r *http.Request) {
+			capturedQuery = r.URL.RawQuery
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"items": []map[string]any{},
+				"pageInfo": map[string]any{
+					"endCursor": nil, "startCursor": nil,
+					"hasNextPage": false, "hasPreviousPage": false,
+				},
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "comments", "r1", "--json",
+		"--after", "cur=X+y",
+		"--visibility", "external",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	values, err := url.ParseQuery(capturedQuery)
+	require.NoError(t, err)
+	assert.Equal(t, "cur=X+y", values.Get("after"))
+	assert.Equal(t, "external", values.Get("visibility"))
+	assert.Equal(t, "", values.Get("before"))
+}
+
+func TestRowsComments_Empty(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/comments": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"items": []map[string]any{},
+				"pageInfo": map[string]any{
+					"endCursor": nil, "startCursor": nil,
+					"hasNextPage": false, "hasPreviousPage": false,
+				},
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "comments", "r1", "--output", "table"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stderr, "No comments found.")
+}
+
+func TestRowsComments_HumanOutput(t *testing.T) {
+	endCursor := "next-page-cursor"
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/comments": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"items": []map[string]any{sampleCommentResponse("c1")},
+				"pageInfo": map[string]any{
+					"endCursor": endCursor, "startCursor": nil,
+					"hasNextPage": true, "hasPreviousPage": false,
+				},
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "comments", "r1", "--output", "table"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "ID:         c1")
+	assert.Contains(t, res.Stdout, "Alice <alice@example.com>")
+	assert.Contains(t, res.Stdout, "hello world")
+	assert.Contains(t, res.Stderr, "--after "+endCursor)
 }

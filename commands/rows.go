@@ -28,6 +28,8 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 		newRowsUpdateDescriptionCmd(cli),
 		newRowsDeleteCmd(cli),
 		newRowsAuthenticateCmd(cli),
+		newRowsCommentCmd(cli),
+		newRowsCommentsCmd(cli),
 	)
 	return cmd
 }
@@ -483,6 +485,172 @@ func newRowsAuthenticateCmd(cli *CLI) *cobra.Command {
 	cmd.Flags().StringVar(&flagIdentVal, "identifier-value", "", "Identifier column value")
 	cmd.Flags().StringVar(&flagPassCol, "password-column", "", "Password column ID")
 	cmd.Flags().StringVar(&flagPassVal, "password-value", "", "Password column value")
+	return cmd
+}
+
+// ── rows comment ────────────────────────────────────────────────────────────
+
+func newRowsCommentCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable string
+	var flagContent, flagVisibility string
+
+	cmd := &cobra.Command{
+		Use:   "comment <row-id>",
+		Short: "Post a comment on a row",
+		Long: `Post a comment on a row.
+
+Content is read from --content or stdin. HTML is supported in the comment body.
+
+Visibility:
+  internal  — visible only to workspace members (default)
+  external  — visible to external collaborators (e.g. customers on the row)`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			if flagVisibility != "internal" && flagVisibility != "external" {
+				cli.Printer.PrintError("input_error",
+					fmt.Sprintf("invalid visibility %q", flagVisibility),
+					"Use --visibility internal or --visibility external", false)
+				return exitcodes.Newf(exitcodes.Usage, "invalid visibility")
+			}
+
+			content := flagContent
+			if content == "" {
+				content, err = readStdinContent(cli)
+				if err != nil {
+					cli.Printer.PrintError("input_error", err.Error(),
+						"Pipe content via stdin or use --content", false)
+					return exitcodes.New(exitcodes.Usage, err)
+				}
+			}
+
+			cmt, err := client.CommentCreate(context.Background(), boardID, tableID, args[0], &api.CreateCommentInput{
+				Content:    content,
+				Visibility: flagVisibility,
+			})
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(cmt)
+			}
+
+			cli.Printer.PrintLine(fmt.Sprintf("ID:         %s", cmt.ID))
+			cli.Printer.PrintLine(fmt.Sprintf("Author:     %s <%s>", cmt.Author.Name, cmt.Author.Email))
+			cli.Printer.PrintLine(fmt.Sprintf("Visibility: %s", cmt.Visibility))
+			cli.Printer.PrintLine(fmt.Sprintf("Created:    %s", cmt.CreatedAt.Format("2006-01-02 15:04")))
+			cli.Printer.PrintLine("")
+			cli.Printer.PrintLine(cmt.Content)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagContent, "content", "", "Comment text (reads stdin if not set)")
+	cmd.Flags().StringVar(&flagVisibility, "visibility", "internal", "Comment visibility: internal|external")
+	return cmd
+}
+
+// ── rows comments ───────────────────────────────────────────────────────────
+
+func newRowsCommentsCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable string
+	var flagAfter, flagBefore, flagVisibility string
+
+	cmd := &cobra.Command{
+		Use:   "comments <row-id>",
+		Short: "List comments on a row",
+		Long: `List comments on a row (paginated).
+
+Pagination:
+  --after <cursor>   fetch the next page (use endCursor from previous response)
+  --before <cursor>  fetch the previous page
+
+Visibility filter (defaults to all when omitted):
+  all | internal | external`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			if flagVisibility != "" && flagVisibility != "all" && flagVisibility != "internal" && flagVisibility != "external" {
+				cli.Printer.PrintError("input_error",
+					fmt.Sprintf("invalid visibility %q", flagVisibility),
+					"Use --visibility all|internal|external", false)
+				return exitcodes.Newf(exitcodes.Usage, "invalid visibility")
+			}
+
+			page, err := client.CommentList(context.Background(), boardID, tableID, args[0], flagAfter, flagBefore, flagVisibility)
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(page)
+			}
+
+			if len(page.Items) == 0 {
+				cli.Printer.Info("No comments found.")
+				return nil
+			}
+
+			for i, cmt := range page.Items {
+				if i > 0 {
+					cli.Printer.PrintLine("")
+				}
+				cli.Printer.PrintLine(fmt.Sprintf("ID:         %s", cmt.ID))
+				cli.Printer.PrintLine(fmt.Sprintf("Author:     %s <%s>", cmt.Author.Name, cmt.Author.Email))
+				cli.Printer.PrintLine(fmt.Sprintf("Visibility: %s", cmt.Visibility))
+				cli.Printer.PrintLine(fmt.Sprintf("Created:    %s", cmt.CreatedAt.Format("2006-01-02 15:04")))
+				cli.Printer.PrintLine(truncate(cmt.Content, 200))
+			}
+
+			if page.PageInfo.HasNextPage && page.PageInfo.EndCursor != nil {
+				cli.Printer.Info("More results available. Use --after %s to fetch the next page.", *page.PageInfo.EndCursor)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagAfter, "after", "", "Cursor for the next page")
+	cmd.Flags().StringVar(&flagBefore, "before", "", "Cursor for the previous page")
+	cmd.Flags().StringVar(&flagVisibility, "visibility", "", "Filter by visibility: all|internal|external")
 	return cmd
 }
 

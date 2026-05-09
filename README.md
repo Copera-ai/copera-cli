@@ -139,6 +139,12 @@ copera rows list --board <id> --table <id>            # Explicit IDs
 copera rows get <row-id>                              # Get row with resolved column labels
 copera rows create --data '{"columns":[...]}'         # Create a row
 echo '{"columns":[...]}' | copera rows create        # Create from stdin
+copera rows comment <row-id> --content "Looks good"   # Post a comment on a row
+copera rows comment <row-id> --visibility external    # Post a comment visible to external collaborators
+echo "From stdin" | copera rows comment <row-id>      # Comment content from stdin
+copera rows comments <row-id>                         # List comments on a row
+copera rows comments <row-id> --visibility external   # Filter by visibility (all|internal|external)
+copera rows comments <row-id> --after <cursor>        # Paginate via endCursor from previous response
 ```
 
 ### Docs

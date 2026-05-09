@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -246,7 +247,7 @@ func (c *Client) CommentList(ctx context.Context, boardID, tableID, rowID string
 		{"after", after}, {"before", before}, {"visibility", visibility},
 	} {
 		if p.v != "" {
-			path += fmt.Sprintf("%s%s=%s", sep, p.k, p.v)
+			path += fmt.Sprintf("%s%s=%s", sep, p.k, url.QueryEscape(p.v))
 			sep = "&"
 		}
 	}
