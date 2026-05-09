@@ -1,8 +1,12 @@
 package commands
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/cache"
@@ -87,4 +91,81 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+// newWorkspaceCache returns a workspace metadata cache (used for slug lookup).
+func newWorkspaceCache(cli *CLI, cfg *config.Config) *cache.Cache {
+	if cli.CacheStore != nil {
+		return cache.NewWithStore(cli.CacheStore, cfg.Cache.TTL)
+	}
+	return cache.NewWorkspaceCache(cfg.Cache.Dir, cfg.Cache.TTL)
+}
+
+// tokenCacheKey returns a short, stable key derived from the API token,
+// so workspace slugs from different tokens never collide on disk.
+func tokenCacheKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "slug-" + hex.EncodeToString(sum[:8])
+}
+
+// resolveWorkspaceSlug returns the active workspace slug, hitting the cache
+// first and falling back to GET /workspace/info. Returns "" on any failure
+// so URL construction can be skipped silently.
+func resolveWorkspaceSlug(ctx context.Context, cli *CLI, client *api.Client, cfg *config.Config) string {
+	key := tokenCacheKey(cfg.Token)
+	wc := newWorkspaceCache(cli, cfg)
+	if slug, ok := wc.Get(key); ok && slug != "" {
+		return slug
+	}
+	ws, err := client.WorkspaceInfo(ctx)
+	if err != nil || ws == nil || ws.Slug == "" {
+		return ""
+	}
+	wc.Set(key, ws.Slug)
+	return ws.Slug
+}
+
+// ── Resource URL builders ────────────────────────────────────────────────────
+
+func webBase(cfg *config.Config) string {
+	return strings.TrimRight(cfg.API.WebURL, "/")
+}
+
+func docURL(cfg *config.Config, slug, docID string) string {
+	if slug == "" || docID == "" || cfg.API.WebURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/docs/%s", webBase(cfg), slug, docID)
+}
+
+func driveItemURL(cfg *config.Config, slug, itemType, itemID string) string {
+	if slug == "" || itemID == "" || cfg.API.WebURL == "" {
+		return ""
+	}
+	seg := "c"
+	if itemType == "folder" {
+		seg = "f"
+	}
+	return fmt.Sprintf("%s/%s/drive/%s/%s", webBase(cfg), slug, seg, itemID)
+}
+
+func boardURL(cfg *config.Config, slug, boardID string) string {
+	if slug == "" || boardID == "" || cfg.API.WebURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/boards/%s", webBase(cfg), slug, boardID)
+}
+
+func tableURL(cfg *config.Config, slug, boardID, tableID string) string {
+	if slug == "" || boardID == "" || tableID == "" || cfg.API.WebURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/boards/%s/%s", webBase(cfg), slug, boardID, tableID)
+}
+
+func rowURL(cfg *config.Config, slug, boardID, tableID, rowID string) string {
+	if slug == "" || boardID == "" || tableID == "" || rowID == "" || cfg.API.WebURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/boards/%s/%s/v/%s", webBase(cfg), slug, boardID, tableID, rowID)
 }

@@ -119,13 +119,20 @@ func newRowsGetCmd(cli *CLI) *cobra.Command {
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
-			row, err := client.RowGet(context.Background(), boardID, tableID, args[0])
+			ctx := context.Background()
+			row, err := client.RowGet(ctx, boardID, tableID, args[0])
 			if err != nil {
 				return apiError(cli, err)
 			}
 
+			slug := resolveWorkspaceSlug(ctx, cli, client, cfg)
+			url := rowURL(cfg, slug, row.Board, row.Table, row.ID)
+
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(row)
+				return cli.Printer.PrintJSON(struct {
+					*api.Row
+					URL string `json:"url,omitempty"`
+				}{row, url})
 			}
 
 			// Fetch table schema (cached) to resolve column/option labels
@@ -137,6 +144,9 @@ func newRowsGetCmd(cli *CLI) *cobra.Command {
 			cli.Printer.PrintLine(fmt.Sprintf("Board:   %s", row.Board))
 			cli.Printer.PrintLine(fmt.Sprintf("Table:   %s", row.Table))
 			cli.Printer.PrintLine(fmt.Sprintf("Updated: %s", row.UpdatedAt.Format("2006-01-02 15:04")))
+			if url != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("URL:     %s", url))
+			}
 			if row.Description != "" {
 				cli.Printer.PrintLine(fmt.Sprintf("Description: %s", row.Description))
 			}
@@ -209,16 +219,26 @@ Example:
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
-			row, err := client.RowCreate(context.Background(), boardID, tableID, &input)
+			ctx := context.Background()
+			row, err := client.RowCreate(ctx, boardID, tableID, &input)
 			if err != nil {
 				return apiError(cli, err)
 			}
 
+			slug := resolveWorkspaceSlug(ctx, cli, client, cfg)
+			url := rowURL(cfg, slug, row.Board, row.Table, row.ID)
+
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(row)
+				return cli.Printer.PrintJSON(struct {
+					*api.Row
+					URL string `json:"url,omitempty"`
+				}{row, url})
 			}
 
 			cli.Printer.PrintLine(fmt.Sprintf("Created row %s (row# %d)", row.ID, row.RowID))
+			if url != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("URL: %s", url))
+			}
 			return nil
 		},
 	}
@@ -280,16 +300,26 @@ Example:
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
-			row, err := client.RowUpdate(context.Background(), boardID, tableID, args[0], &input)
+			ctx := context.Background()
+			row, err := client.RowUpdate(ctx, boardID, tableID, args[0], &input)
 			if err != nil {
 				return apiError(cli, err)
 			}
 
+			slug := resolveWorkspaceSlug(ctx, cli, client, cfg)
+			url := rowURL(cfg, slug, row.Board, row.Table, row.ID)
+
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(row)
+				return cli.Printer.PrintJSON(struct {
+					*api.Row
+					URL string `json:"url,omitempty"`
+				}{row, url})
 			}
 
 			cli.Printer.PrintLine(fmt.Sprintf("Updated row %s (row# %d)", row.ID, row.RowID))
+			if url != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("URL: %s", url))
+			}
 			return nil
 		},
 	}

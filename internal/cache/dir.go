@@ -35,6 +35,14 @@ func TablesDir(base string) string {
 	return filepath.Join(base, "tables")
 }
 
+// WorkspaceDir returns the workspace metadata cache subdirectory.
+func WorkspaceDir(base string) string {
+	if base == "" {
+		base = DefaultDir()
+	}
+	return filepath.Join(base, "workspace")
+}
+
 // DirInfo holds cache directory stats.
 type DirInfo struct {
 	Path  string

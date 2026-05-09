@@ -178,18 +178,25 @@ func newDriveGetCmd(cli *CLI) *cobra.Command {
 		Short: "Get file or folder metadata",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, _, err := requireAPIClient(cli)
+			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
 
-			f, err := client.DriveFileGet(context.Background(), args[0])
+			ctx := context.Background()
+			f, err := client.DriveFileGet(ctx, args[0])
 			if err != nil {
 				return apiError(cli, err)
 			}
 
+			slug := resolveWorkspaceSlug(ctx, cli, client, cfg)
+			url := driveItemURL(cfg, slug, f.Type, f.ID)
+
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(f)
+				return cli.Printer.PrintJSON(struct {
+					*api.DriveFile
+					URL string `json:"url,omitempty"`
+				}{f, url})
 			}
 
 			cli.Printer.PrintLine(fmt.Sprintf("ID:       %s", f.ID))
@@ -207,6 +214,9 @@ func newDriveGetCmd(cli *CLI) *cobra.Command {
 			cli.Printer.PrintLine(fmt.Sprintf("Owner:    %s", f.Owner))
 			cli.Printer.PrintLine(fmt.Sprintf("Created:  %s", f.CreatedAt.Format("2006-01-02 15:04:05")))
 			cli.Printer.PrintLine(fmt.Sprintf("Updated:  %s", f.UpdatedAt.Format("2006-01-02 15:04:05")))
+			if url != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("URL:      %s", url))
+			}
 			return nil
 		},
 	}
@@ -346,7 +356,7 @@ and uploads them in parallel via S3 presigned URLs.
 For directories, folders are created first, then files are uploaded.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, _, err := requireAPIClient(cli)
+			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
@@ -377,14 +387,23 @@ For directories, folders are created first, then files are uploaded.`,
 				if err != nil {
 					return err
 				}
+				slug := resolveWorkspaceSlug(ctx, cli, client, cfg)
+				url := driveItemURL(cfg, slug, result.Type, result.ID)
 				if cli.Printer.IsJSON() {
-					return cli.Printer.PrintJSON(result)
+					return cli.Printer.PrintJSON(struct {
+						*api.DriveFile
+						URL string `json:"url,omitempty"`
+					}{result, url})
 				}
 				cli.Printer.Info("Uploaded %s (%s) -> %s", result.Name, humanSize(result.Size), result.ID)
+				if url != "" {
+					cli.Printer.PrintLine(fmt.Sprintf("URL: %s", url))
+				}
 				return nil
 			}
 
 			// Directory upload
+			_ = cfg
 			return uploadDirectory(ctx, cli, client, uploader, path, flagParent, progress)
 		},
 	}
@@ -518,12 +537,13 @@ func newDriveMkdirCmd(cli *CLI) *cobra.Command {
 		Short: "Create a folder",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, _, err := requireAPIClient(cli)
+			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
 
-			folder, err := client.DriveFolderCreate(context.Background(), &api.CreateFolderRequest{
+			ctx := context.Background()
+			folder, err := client.DriveFolderCreate(ctx, &api.CreateFolderRequest{
 				Name:     args[0],
 				ParentID: flagParent,
 			})
@@ -531,11 +551,20 @@ func newDriveMkdirCmd(cli *CLI) *cobra.Command {
 				return apiError(cli, err)
 			}
 
+			slug := resolveWorkspaceSlug(ctx, cli, client, cfg)
+			url := driveItemURL(cfg, slug, folder.Type, folder.ID)
+
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(folder)
+				return cli.Printer.PrintJSON(struct {
+					*api.DriveFile
+					URL string `json:"url,omitempty"`
+				}{folder, url})
 			}
 
 			cli.Printer.Info("Created folder %q (%s)", folder.Name, folder.ID)
+			if url != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("URL: %s", url))
+			}
 			return nil
 		},
 	}

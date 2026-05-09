@@ -165,13 +165,20 @@ func newDocsGetCmd(cli *CLI) *cobra.Command {
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
-			doc, err := client.DocGet(context.Background(), id)
+			ctx := context.Background()
+			doc, err := client.DocGet(ctx, id)
 			if err != nil {
 				return apiError(cli, err)
 			}
 
+			slug := resolveWorkspaceSlug(ctx, cli, client, cfg)
+			url := docURL(cfg, slug, doc.ID)
+
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(doc)
+				return cli.Printer.PrintJSON(struct {
+					*api.Doc
+					URL string `json:"url,omitempty"`
+				}{doc, url})
 			}
 
 			cli.Printer.PrintLine(fmt.Sprintf("ID:       %s", doc.ID))
@@ -184,6 +191,9 @@ func newDocsGetCmd(cli *CLI) *cobra.Command {
 			}
 			cli.Printer.PrintLine(fmt.Sprintf("Created:  %s", doc.CreatedAt.Format("2006-01-02 15:04:05")))
 			cli.Printer.PrintLine(fmt.Sprintf("Updated:  %s", doc.UpdatedAt.Format("2006-01-02 15:04:05")))
+			if url != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("URL:      %s", url))
+			}
 			return nil
 		},
 	}
@@ -353,7 +363,7 @@ func newDocsCreateCmd(cli *CLI) *cobra.Command {
 				return exitcodes.Newf(exitcodes.Usage, "--title is required")
 			}
 
-			client, _, err := requireAPIClient(cli)
+			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
@@ -364,16 +374,26 @@ func newDocsCreateCmd(cli *CLI) *cobra.Command {
 				content, _ = readStdinContent(cli)
 			}
 
-			doc, err := client.DocCreate(context.Background(), flagTitle, flagParent, content)
+			ctx := context.Background()
+			doc, err := client.DocCreate(ctx, flagTitle, flagParent, content)
 			if err != nil {
 				return apiError(cli, err)
 			}
 
+			slug := resolveWorkspaceSlug(ctx, cli, client, cfg)
+			url := docURL(cfg, slug, doc.ID)
+
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(doc)
+				return cli.Printer.PrintJSON(struct {
+					*api.Doc
+					URL string `json:"url,omitempty"`
+				}{doc, url})
 			}
 
 			cli.Printer.Info("Created document %q (%s)", doc.Title, doc.ID)
+			if url != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("URL: %s", url))
+			}
 			return nil
 		},
 	}

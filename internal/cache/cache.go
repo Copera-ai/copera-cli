@@ -34,6 +34,14 @@ func NewWithStore(store Store, ttl time.Duration) *Cache {
 	return &Cache{store: store, ttl: ttl}
 }
 
+// NewWorkspaceCache creates a Cache backed by disk under WorkspaceDir(base).
+func NewWorkspaceCache(dir string, ttl time.Duration) *Cache {
+	if ttl == 0 {
+		ttl = time.Hour
+	}
+	return &Cache{store: NewDiskStore(WorkspaceDir(dir)), ttl: ttl}
+}
+
 // Get returns the cached value and true if present and not expired.
 func (c *Cache) Get(key string) (string, bool) {
 	data, err := c.store.Read(key + ".json")
