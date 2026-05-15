@@ -157,6 +157,41 @@ func TestRowsList_JSON(t *testing.T) {
 	assert.Len(t, rows, 1)
 }
 
+func TestRowsList_FilterAndSort(t *testing.T) {
+	var capturedQuery string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/rows": func(w http.ResponseWriter, r *http.Request) {
+			capturedQuery = r.URL.RawQuery
+			testutil.RespondJSON(w, http.StatusOK, []map[string]any{})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	filter := `{"match":"and","conditions":[{"column_id":"c1","operator":"contains","value":"foo"}]}`
+	res := testutil.RunCommand(t, []string{
+		"rows", "list", "--json",
+		"--filter", filter,
+		"--sort", "c1:asc,c2:desc",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	values, err := url.ParseQuery(capturedQuery)
+	require.NoError(t, err)
+	assert.Equal(t, filter, values.Get("filter"))
+	assert.Equal(t, "c1:asc,c2:desc", values.Get("sort"))
+}
+
+func TestRowsList_InvalidFilterJSON(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "list", "--filter", "{not json",
+	}, "")
+	assert.NotEqual(t, 0, res.ExitCode)
+	assert.Contains(t, res.Stderr, "valid JSON")
+}
+
 func TestRowsList_MissingTable(t *testing.T) {
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
 	// config has board_id but no table_id

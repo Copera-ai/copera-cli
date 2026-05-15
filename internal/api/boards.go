@@ -171,9 +171,33 @@ func (c *Client) TableGet(ctx context.Context, boardID, tableID string) (*Table,
 
 // ── Row methods ──────────────────────────────────────────────────────────────
 
-func (c *Client) RowList(ctx context.Context, boardID, tableID string) ([]Row, error) {
+// RowListOptions configures filtering and sorting for RowList.
+//
+// Filter is a JSON-shaped filter (the CLI passes through whatever the user
+// provided; the API validates it). Sort is the raw "col:asc,col:desc" spec.
+// Both are optional.
+type RowListOptions struct {
+	Filter string
+	Sort   string
+}
+
+func (c *Client) RowList(ctx context.Context, boardID, tableID string, opts *RowListOptions) ([]Row, error) {
+	path := fmt.Sprintf("/board/%s/table/%s/rows", boardID, tableID)
+	if opts != nil {
+		q := url.Values{}
+		if opts.Filter != "" {
+			q.Set("filter", opts.Filter)
+		}
+		if opts.Sort != "" {
+			q.Set("sort", opts.Sort)
+		}
+		if encoded := q.Encode(); encoded != "" {
+			path = path + "?" + encoded
+		}
+	}
+
 	var rows []Row
-	if err := c.do(ctx, "GET", fmt.Sprintf("/board/%s/table/%s/rows", boardID, tableID), nil, &rows); err != nil {
+	if err := c.do(ctx, "GET", path, nil, &rows); err != nil {
 		return nil, err
 	}
 	return rows, nil

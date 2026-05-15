@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/copera/copera-cli/internal/api"
@@ -37,11 +38,41 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 // ── rows list ────────────────────────────────────────────────────────────────
 
 func newRowsListCmd(cli *CLI) *cobra.Command {
-	var flagBoard, flagTable string
+	var flagBoard, flagTable, flagFilter, flagSort string
 
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List rows in a table",
+		Long: `List rows in a table, optionally filtered and sorted.
+
+--filter accepts a JSON filter (inline JSON, or @path to read from a file). Shape:
+  {
+    "match": "and" | "or",
+    "conditions": [
+      { "column_id": "<id>", "operator": "<op>", "value": <v> }
+    ]
+  }
+
+Operators per column type:
+  string  equals, not_equals, contains, not_contains, starts_with, ends_with,
+          is_empty, is_not_empty
+  number  equals, not_equals, gt, gte, lt, lte, includes, not_includes,
+          is_empty, is_not_empty
+  select  equals, not_equals, includes, not_includes, is_empty, is_not_empty
+  bool    equals, not_equals, is_empty, is_not_empty
+  date    equals, before, after, between, today, yesterday, tomorrow,
+          next_7_days, last_7_days, current_week, last_week, next_week,
+          current_month, last_month, next_month, is_empty, is_not_empty
+
+is_empty / is_not_empty omit "value". between takes [startISO, endISO].
+
+--sort is a comma-separated list of <columnId>:asc or <columnId>:desc.
+
+Examples:
+  copera rows list --board <B> --table <T> --json \
+    --filter '{"match":"and","conditions":[{"column_id":"col_a","operator":"contains","value":"foo"}]}'
+
+  copera rows list --board <B> --table <T> --filter @./filter.json --sort col_due:asc`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
@@ -62,7 +93,16 @@ func newRowsListCmd(cli *CLI) *cobra.Command {
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
-			rows, err := client.RowList(context.Background(), boardID, tableID)
+			filterJSON, err := resolveFilterFlag(flagFilter)
+			if err != nil {
+				cli.Printer.PrintError("input_error", err.Error(),
+					"Pass inline JSON or @path/to/file.json", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			opts := &api.RowListOptions{Filter: filterJSON, Sort: flagSort}
+
+			rows, err := client.RowList(context.Background(), boardID, tableID, opts)
 			if err != nil {
 				return apiError(cli, err)
 			}
@@ -87,7 +127,37 @@ func newRowsListCmd(cli *CLI) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagFilter, "filter", "", "Filter JSON (inline or @file)")
+	cmd.Flags().StringVar(&flagSort, "sort", "", "Sort spec, e.g. col_a:asc,col_b:desc")
 	return cmd
+}
+
+// resolveFilterFlag returns the literal filter JSON string the user supplied.
+// "" → no filter. "@path" → read JSON from file. Anything else → passed
+// straight through; the API performs validation.
+func resolveFilterFlag(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if strings.HasPrefix(raw, "@") {
+		path := strings.TrimPrefix(raw, "@")
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("reading filter file: %w", err)
+		}
+		// Validate it parses as JSON; surface parse errors locally before
+		// the round trip to the server.
+		var probe any
+		if err := json.Unmarshal(b, &probe); err != nil {
+			return "", fmt.Errorf("filter file is not valid JSON: %w", err)
+		}
+		return string(b), nil
+	}
+	var probe any
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return "", fmt.Errorf("--filter is not valid JSON: %w", err)
+	}
+	return raw, nil
 }
 
 // ── rows get ─────────────────────────────────────────────────────────────────

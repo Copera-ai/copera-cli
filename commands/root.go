@@ -16,6 +16,7 @@ import (
 	"github.com/copera/copera-cli/internal/exitcodes"
 	"github.com/copera/copera-cli/internal/output"
 	"github.com/copera/copera-cli/internal/updater"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -113,7 +114,7 @@ Documentation: https://developers.copera.ai/`,
 		updateOnce.Do(func() {
 			if cli.flags.json || cli.flags.quiet || os.Getenv("CI") == "true" ||
 				os.Getenv("COPERA_NO_UPDATE_CHECK") == "1" || build.Version == "dev" ||
-				cmd.Name() == "update" {
+				cmd.Name() == "update" || isCompletionCmd(cmd) || !stderrIsTTY(stderr) {
 				return
 			}
 			updateResult = updater.CheckVersion(context.Background(), cache.SharedDir(), false)
@@ -125,6 +126,28 @@ Documentation: https://developers.copera.ai/`,
 	}
 
 	return cmd, cli
+}
+
+// isCompletionCmd reports whether cmd is the shell-completion command (or one
+// of its subcommands). Shell completion scripts source the CLI's output, so
+// any banner we print pollutes the user's shell session.
+func isCompletionCmd(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "completion" {
+			return true
+		}
+	}
+	return false
+}
+
+// stderrIsTTY reports whether stderr is an interactive terminal. The update
+// banner is only useful when a human can see it; suppress otherwise.
+func stderrIsTTY(stderr io.Writer) bool {
+	f, ok := stderr.(*os.File)
+	if !ok {
+		return false
+	}
+	return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
 }
 
 // Execute runs the CLI reading from os.Args, os.Stdin, writing to os.Stdout/Stderr.
