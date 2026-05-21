@@ -331,3 +331,47 @@ func TestDocsMetadata_NoFlags(t *testing.T) {
 	res := testutil.RunCommand(t, []string{"docs", "metadata", "doc1"}, "")
 	assert.Equal(t, 2, res.ExitCode)
 }
+
+func TestDocsMetadata_IconAndCover(t *testing.T) {
+	var capturedBody map[string]any
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"PATCH /docs/doc1": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "doc1", "title": "Same Title", "starred": false,
+				"createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-06-15T00:00:00Z",
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"docs", "metadata", "doc1", "--json",
+		"--icon-type", "emoji", "--icon-value", "rocket",
+		"--cover-type", "color", "--cover-value", "blue",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	icon := capturedBody["icon"].(map[string]any)
+	assert.Equal(t, "emoji", icon["type"])
+	assert.Equal(t, "rocket", icon["value"])
+
+	cover := capturedBody["cover"].(map[string]any)
+	assert.Equal(t, "color", cover["type"])
+	assert.Equal(t, "blue", cover["value"])
+
+	// Title was not provided — must not be in the body.
+	_, hasTitle := capturedBody["title"]
+	assert.False(t, hasTitle, "title should be omitted when not set")
+}
+
+func TestDocsMetadata_PartialIcon(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"docs", "metadata", "doc1", "--icon-type", "emoji",
+	}, "")
+	assert.Equal(t, 2, res.ExitCode)
+	assert.Contains(t, res.Stderr, "icon-type and --icon-value must be set together")
+}

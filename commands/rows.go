@@ -27,6 +27,7 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 		newRowsCreateCmd(cli),
 		newRowsUpdateCmd(cli),
 		newRowsUpdateDescriptionCmd(cli),
+		newRowsDescriptionCmd(cli),
 		newRowsDeleteCmd(cli),
 		newRowsAuthenticateCmd(cli),
 		newRowsCommentCmd(cli),
@@ -751,6 +752,56 @@ Visibility filter (defaults to all when omitted):
 	cmd.Flags().StringVar(&flagAfter, "after", "", "Cursor for the next page")
 	cmd.Flags().StringVar(&flagBefore, "before", "", "Cursor for the previous page")
 	cmd.Flags().StringVar(&flagVisibility, "visibility", "", "Filter by visibility: all|internal|external")
+	return cmd
+}
+
+// ── rows description ────────────────────────────────────────────────────────
+
+func newRowsDescriptionCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable string
+
+	cmd := &cobra.Command{
+		Use:   "description <row-id>",
+		Short: "Get a row's markdown description",
+		Long: `Print the markdown source of a row's description.
+
+The output is the raw markdown text. Use --json to wrap it in {"content":"..."}.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			content, err := client.RowDescription(context.Background(), boardID, tableID, args[0])
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(map[string]string{"content": content})
+			}
+
+			cli.Printer.PrintLine(content)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
 	return cmd
 }
 

@@ -125,10 +125,13 @@ copera bases list              # Same as boards list
 ### Tables
 
 ```bash
-copera tables list                        # List tables (uses default board if set)
-copera tables list --board <board-id>     # List tables in specific board
-copera tables get <table-id>              # Get table schema and columns
+copera tables list                                                 # List tables (uses default board if set)
+copera tables list --board <board-id>                              # List tables in specific board
+copera tables get <table-id>                                       # Get table schema and columns
 copera tables get <id> --board <board-id>
+copera tables export <id> --view <view-id> --format CSV            # Export a view (CSV/XLSX/JSON/MARKDOWN/HTML/PDF/ZIP/ICS)
+copera tables export <id> --view <view-id> --format CSV -o out.csv # Write payload to a file
+copera tables export <id> --view <view-id> --format PDF --force-async   # Queue an async render
 ```
 
 ### Rows
@@ -139,6 +142,8 @@ copera rows list --board <id> --table <id>            # Explicit IDs
 copera rows get <row-id>                              # Get row with resolved column labels
 copera rows create --data '{"columns":[...]}'         # Create a row
 echo '{"columns":[...]}' | copera rows create        # Create from stdin
+copera rows description <row-id>                      # Get a row's markdown description
+copera rows update-description <row-id> --content "..."  # Update a row's description (async)
 copera rows comment <row-id> --content "Looks good"   # Post a comment on a row
 copera rows comment <row-id> --visibility external    # Post a comment visible to external collaborators
 echo "From stdin" | copera rows comment <row-id>      # Comment content from stdin
@@ -162,6 +167,9 @@ copera docs create --title "New Doc"      # Create a doc
 copera docs update <id> --content "..."   # Update content (replace by default)
 copera docs update <id> --operation append  # Append content
 cat content.md | copera docs update <id>  # Update from stdin
+copera docs metadata <id> --title "New title"                       # Update doc title
+copera docs metadata <id> --icon-type emoji --icon-value rocket     # Set an emoji icon
+copera docs metadata <id> --cover-type color --cover-value blue     # Set a cover color
 copera docs delete <id> --force           # Delete a doc
 ```
 
@@ -194,6 +202,18 @@ copera drive mkdir "Sub" --parent <id>        # Create nested folder
 
 ```bash
 copera channels message send <channel-id> --body "Hello"  # Send a message
+```
+
+### Notifications
+
+```bash
+copera notifications list                          # List notifications for the current PAT user
+copera notifications list --after <id>             # Paginate older notifications
+copera notifications list --before <id>            # Paginate newer notifications
+copera notifications read <id>                     # Mark a notification as read
+copera notifications unread <id>                   # Mark a notification as unread
+copera notifications delete <id>                   # Delete a notification (prompts unless --force)
+copera notifications delete <id> --force           # Delete without confirmation
 ```
 
 ### Cache

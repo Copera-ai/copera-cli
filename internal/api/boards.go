@@ -253,6 +253,18 @@ func (c *Client) RowUpdateDescription(ctx context.Context, boardID, tableID, row
 	}, nil)
 }
 
+// RowDescription fetches the markdown source of a row's description.
+func (c *Client) RowDescription(ctx context.Context, boardID, tableID, rowID string) (string, error) {
+	var resp struct {
+		Content string `json:"content"`
+	}
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/md", boardID, tableID, rowID)
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
 // ── Comment methods ──────────────────────────────────────────────────────────
 
 func (c *Client) CommentCreate(ctx context.Context, boardID, tableID, rowID string, input *CreateCommentInput) (*Comment, error) {

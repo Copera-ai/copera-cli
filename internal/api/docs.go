@@ -169,10 +169,25 @@ func (c *Client) DocCreate(ctx context.Context, title, parentID, content string)
 	return &doc, nil
 }
 
+// DocIconCover is the shape used by both `icon` and `cover` fields on a doc.
+type DocIconCover struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+// UpdateDocInput is the body for PATCH /docs/{docId}. All fields are optional;
+// only set fields are sent (omitempty + pointer for icon/cover so unset stays nil).
+type UpdateDocInput struct {
+	Title string        `json:"title,omitempty"`
+	Icon  *DocIconCover `json:"icon,omitempty"`
+	Cover *DocIconCover `json:"cover,omitempty"`
+}
+
 // DocUpdateMeta updates document metadata fields (title, icon, cover).
-func (c *Client) DocUpdateMeta(ctx context.Context, id string, updates map[string]string) (*Doc, error) {
+// At least one field on input must be set.
+func (c *Client) DocUpdateMeta(ctx context.Context, id string, input *UpdateDocInput) (*Doc, error) {
 	var doc Doc
-	if err := c.do(ctx, http.MethodPatch, "/docs/"+id, updates, &doc); err != nil {
+	if err := c.do(ctx, http.MethodPatch, "/docs/"+id, input, &doc); err != nil {
 		return nil, err
 	}
 	return &doc, nil

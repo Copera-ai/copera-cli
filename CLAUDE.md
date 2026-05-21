@@ -63,10 +63,11 @@ Designed to be used by both **humans** (interactive, list/tree output) and **LLM
 ```
 copera auth login|status|logout
 copera boards list|get          (alias: bases)
-copera tables list|get
-copera rows list|get|create|update-description|comment|comments
-copera docs tree|search|get|content|update|create|delete
+copera tables list|get|export
+copera rows list|get|create|update-description|description|comment|comments
+copera docs tree|search|get|content|update|metadata|create|delete
 copera drive tree|search|get|download|upload|mkdir
+copera notifications list|read|unread|delete
 copera cache status|clean
 copera update [--version] [--force]
 copera version
@@ -103,6 +104,9 @@ copera schema <command>
 - `POST /board/{boardId}/table/{tableId}/row` — create row
 - `POST /board/{boardId}/table/{tableId}/row/{rowId}/comment` — create comment
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/comments` — list comments (paginated)
+- `GET /board/{boardId}/table/{tableId}/row/{rowId}/md` — get row markdown description
+- `POST /board/{boardId}/table/{tableId}/row/{rowId}/md` — update row description (async, 202); body: `{operation, content}`
+- `POST /board/{boardId}/table/{tableId}/export` — render table view; body: `{boardId, viewId, format, ...}`; returns inline payload OR `asyncJob` for PDF/ZIP/large renders
 
 ### Docs endpoints (prefix: `/docs/`)
 - `GET /docs/tree?parentId=` — doc tree (children are fully hydrated `DocNode` objects)
@@ -111,7 +115,13 @@ copera schema <command>
 - `GET /docs/{id}/md` — markdown content
 - `POST /docs/{id}/md` — update content (async, 202); body: `{operation, content}`
 - `POST /docs/` — create doc; body: `{title, parent?, content?}`
+- `PATCH /docs/{id}` — update properties; body: `{title?, icon?: {type, value}, cover?: {type, value}}`
 - `DELETE /docs/{id}` — soft-delete
+
+### Notifications endpoints (prefix: `/notifications/`)
+- `GET /notifications/?after=&before=` — list notifications owned by the PAT user; returns `{notifications, unreadCount, count}`. Cursors are notification IDs (24-char ObjectId).
+- `PATCH /notifications/{id}` — mark as read/unread; body: `{status: "read" | "unread"}`
+- `DELETE /notifications/{id}` — delete; returns `{_id}`
 
 ### Key API quirks
 - Docs tree: children are fully hydrated `DocNode` objects (not stubs). No `--depth` parameter needed.

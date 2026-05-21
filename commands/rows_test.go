@@ -446,6 +446,41 @@ func TestRowsUpdateDescription_ReadsStdin(t *testing.T) {
 	assert.Equal(t, "# Updated description", capturedBody["content"])
 }
 
+// ── rows description ────────────────────────────────────────────────────────
+
+func TestRowsDescription_HumanOutput(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/md": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"content": "# Heading\n\nSome markdown body.",
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "description", "r1", "--output", "table"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "# Heading")
+	assert.Contains(t, res.Stdout, "Some markdown body.")
+}
+
+func TestRowsDescription_JSON(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/md": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"content": "raw markdown",
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "description", "r1", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	var out map[string]string
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, "raw markdown", out["content"])
+}
+
 func TestRowsUpdateDescription_AppendOperation(t *testing.T) {
 	var capturedBody map[string]string
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{

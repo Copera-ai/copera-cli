@@ -103,6 +103,7 @@ Documentation: https://developers.copera.ai/`,
 		newDriveCmd(cli),
 		newWorkspaceCmd(cli),
 		newSearchCmd(cli),
+		newNotificationsCmd(cli),
 		newCacheCmd(cli),
 		newUpdateCmd(cli),
 	)

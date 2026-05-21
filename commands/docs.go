@@ -300,34 +300,65 @@ Operations:
 // ── docs metadata ────────────────────────────────────────────────────────────
 
 func newDocsMetadataCmd(cli *CLI) *cobra.Command {
-	var flagTitle, flagIcon, flagCover string
+	var flagTitle string
+	var flagIconType, flagIconValue string
+	var flagCoverType, flagCoverValue string
 
 	cmd := &cobra.Command{
 		Use:   "metadata <doc-id>",
 		Short: "Update document title, icon, or cover",
-		Args:  cobra.ExactArgs(1),
+		Long: `Update document properties on the workspace doc tree.
+
+Examples:
+  copera docs metadata <id> --title "New title"
+  copera docs metadata <id> --icon-type emoji --icon-value 📄
+  copera docs metadata <id> --cover-type color --cover-value blue
+
+Icon and cover both accept the {type,value} shape used by the workspace UI.
+Provide --icon-type with --icon-value (and the same for cover) — partial pairs return an error.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, _, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
 
-			updates := map[string]string{}
+			input := &api.UpdateDocInput{}
 			if flagTitle != "" {
-				updates["title"] = flagTitle
+				input.Title = flagTitle
 			}
-			if flagIcon != "" {
-				updates["icon"] = flagIcon
+
+			iconHasType := flagIconType != ""
+			iconHasValue := flagIconValue != ""
+			if iconHasType != iconHasValue {
+				cli.Printer.PrintError("input_error",
+					"--icon-type and --icon-value must be set together",
+					"", false)
+				return exitcodes.Newf(exitcodes.Usage, "incomplete icon flags")
 			}
-			if flagCover != "" {
-				updates["cover"] = flagCover
+			if iconHasType {
+				input.Icon = &api.DocIconCover{Type: flagIconType, Value: flagIconValue}
 			}
-			if len(updates) == 0 {
-				cli.Printer.PrintError("missing_input", "at least one of --title, --icon, or --cover is required", "", false)
+
+			coverHasType := flagCoverType != ""
+			coverHasValue := flagCoverValue != ""
+			if coverHasType != coverHasValue {
+				cli.Printer.PrintError("input_error",
+					"--cover-type and --cover-value must be set together",
+					"", false)
+				return exitcodes.Newf(exitcodes.Usage, "incomplete cover flags")
+			}
+			if coverHasType {
+				input.Cover = &api.DocIconCover{Type: flagCoverType, Value: flagCoverValue}
+			}
+
+			if input.Title == "" && input.Icon == nil && input.Cover == nil {
+				cli.Printer.PrintError("missing_input",
+					"at least one of --title, --icon-*, or --cover-* is required", "", false)
 				return exitcodes.Newf(exitcodes.Usage, "no updates provided")
 			}
 
-			doc, err := client.DocUpdateMeta(context.Background(), args[0], updates)
+			doc, err := client.DocUpdateMeta(context.Background(), args[0], input)
 			if err != nil {
 				return apiError(cli, err)
 			}
@@ -344,8 +375,10 @@ func newDocsMetadataCmd(cli *CLI) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&flagTitle, "title", "", "New document title")
-	cmd.Flags().StringVar(&flagIcon, "icon", "", "Document icon value")
-	cmd.Flags().StringVar(&flagCover, "cover", "", "Document cover value")
+	cmd.Flags().StringVar(&flagIconType, "icon-type", "", "Icon type (e.g. emoji, image)")
+	cmd.Flags().StringVar(&flagIconValue, "icon-value", "", "Icon value (e.g. an emoji character or image URL)")
+	cmd.Flags().StringVar(&flagCoverType, "cover-type", "", "Cover type (e.g. color, image)")
+	cmd.Flags().StringVar(&flagCoverValue, "cover-value", "", "Cover value (color name or image URL)")
 	return cmd
 }
 
