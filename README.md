@@ -1,268 +1,293 @@
 # Copera CLI
 
-`copera` is the official command-line interface for [Copera](https://copera.ai). Manage boards, tables, rows, docs, drive files, and messaging from your terminal — or integrate it into LLM agent pipelines.
+`copera` is the official command-line interface for [Copera](https://copera.ai).
+Use it to work with boards, tables, rows, docs, drive files, channels, and
+workspace data from your terminal or from scripts.
 
-## Installation
+## Install
 
 ### macOS / Linux
+
+Run this in your terminal:
 
 ```bash
 curl -fsSL https://cli.copera.ai/install.sh | bash
 ```
 
-Or with a specific version:
+To install a specific version:
 
 ```bash
 VERSION=0.1.0 curl -fsSL https://cli.copera.ai/install.sh | bash
 ```
 
+By default, the installer writes to `/usr/local/bin/copera`. If that directory
+requires elevated permissions, the script will ask for `sudo`.
+
 ### Windows
 
-Download the latest `.zip` from [cli.copera.ai](https://cli.copera.ai/version.json), extract `copera.exe`, and add it to your `PATH`:
+Open **PowerShell** and run this command. You do not need to run PowerShell as
+Administrator; this installs `copera.exe` for your current Windows user.
 
 ```powershell
-# PowerShell
-$version = (Invoke-RestMethod https://cli.copera.ai/version.json).latest
-Invoke-WebRequest "https://cli.copera.ai/v$version/copera-$version-windows-amd64.zip" -OutFile copera.zip
-Expand-Archive copera.zip -DestinationPath .
-Move-Item copera.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\copera.exe"
+irm https://cli.copera.ai/install.ps1 | iex
 ```
 
-### From source
+Close and reopen PowerShell, then verify the install:
+
+```powershell
+copera version
+```
+
+To install a specific version:
+
+```powershell
+$env:VERSION = "0.1.0"; irm https://cli.copera.ai/install.ps1 | iex
+```
+
+### Manual Windows Install
+
+If you prefer to download the archive yourself:
+
+1. Download the Windows AMD64 zip for the version you want from the Copera CLI CDN.
+2. Extract `copera.exe`.
+3. Move it to a directory on your `PATH`, such as `%LOCALAPPDATA%\Microsoft\WindowsApps`.
+4. Open a new PowerShell window and run `copera version`.
+
+### From Source
 
 ```bash
 go install github.com/copera/copera-cli/cmd/copera@latest
 ```
 
-### Update
+## Update
 
 ```bash
 copera update
 ```
 
----
+Use `copera update --version 1.2.0` to install a specific version, or
+`copera update --force` to skip the confirmation prompt.
 
-## Quick Start
+## First Setup
+
+For most people, the easiest authentication flow is:
 
 ```bash
-# First time: set up auth (opens your browser)
 copera auth login
-
-# Or, if you already have a token in hand:
-copera auth login --token=cp_pat_xxx   # save it directly, no browser
-
-# Or, for CI/CD and agents:
-export COPERA_CLI_AUTH_TOKEN="your_api_token"
-
-# List your boards
-copera boards list
-
-# Browse your docs
-copera docs tree
 ```
 
----
+The CLI prints a Copera URL, opens your browser when possible, then asks you to
+paste the generated token back into the terminal. The printed URL is always
+available, so the same flow works from WSL, SSH, and other terminals where the
+browser may not open automatically.
 
-## Authentication
+If you already have a token:
 
-### Getting a token
+```bash
+copera auth login --token=cp_pat_xxx
+```
 
-`copera auth login` is the easiest way. By default it opens your browser at
-`https://app.copera.ai/oauth/cli`, where you pick a workspace, fill in the
-PAT form, and copy the generated token back into the CLI.
+For CI, scripts, and LLM agents, prefer an environment variable:
 
-The CLI always prints the URL to the terminal **before** trying to open the
-browser, so the flow also works on WSL, SSH sessions, and headless
-containers — just copy the URL into any browser you have access to.
+```bash
+export COPERA_CLI_AUTH_TOKEN="cp_pat_xxx"
+```
 
-**Login modes:**
+On Windows PowerShell:
 
-| Command | What it does |
+```powershell
+$env:COPERA_CLI_AUTH_TOKEN = "cp_pat_xxx"
+```
+
+## Try It
+
+```bash
+copera auth status
+copera boards list
+copera docs tree
+copera search "onboarding"
+```
+
+Use `--json` whenever you want machine-readable output:
+
+```bash
+copera boards list --json
+```
+
+## Authentication Details
+
+### Token Types
+
+- Personal Access Token (`cp_pat_...`): required for docs, drive,
+  notifications, and workspace-user commands; works for all supported commands.
+- Integration API Key (`cp_key_...`): works for boards and channels only.
+
+Docs and drive operations require a Personal Access Token with the appropriate
+workspace permissions.
+
+### Login Modes
+
+| Command | Use it when |
 |---|---|
-| `copera auth login` | Opens the browser to the PAT creation page and prompts for the pasted token. |
-| `copera auth login --token=<value>` | Saves `<value>` directly. No browser, no paste prompt. Ideal for scripts, CI, and LLM agents. |
-| `copera auth login --token` | Skips the browser and drops straight into the masked paste prompt (same UX as the old CLI). Useful in WSL/SSH when you already have a token. |
+| `copera auth login` | You want the guided browser flow. |
+| `copera auth login --token=<value>` | You already have a token and want to save it directly. |
+| `copera auth login --token` | You already have a token and want a masked paste prompt without opening a browser. |
 
-### Where the token is loaded from
+### Token Resolution Order
 
-The CLI resolves your API token in this order (highest priority first):
+The CLI loads credentials in this order:
 
-| Source | Example |
-|--------|---------|
-| Environment variable | `COPERA_CLI_AUTH_TOKEN=cp_pat_xxx` |
-| `--token` flag | `copera boards list --token cp_pat_xxx` |
-| `.copera.local.toml` (current dir, git-ignored) | Project-local token |
-| `.copera.toml` (current dir) | Committed project config |
-| `~/.copera.toml` | Home directory fallback |
+| Priority | Source | Example |
+|---|---|---|
+| 1 | Environment variable | `COPERA_CLI_AUTH_TOKEN=cp_pat_xxx` |
+| 2 | `--token` flag | `copera boards list --token cp_pat_xxx` |
+| 3 | `.copera.local.toml` in the current directory | Project-local, git-ignored token |
+| 4 | `.copera.toml` in the current directory | Shared project defaults |
+| 5 | `~/.copera.toml` | User-level fallback |
 
-**Token types:**
-- **Personal Access Token** (`cp_pat_...`) — required for docs commands, works for everything
-- **Integration API Key** (`cp_key_...`) — for boards and channels only
+More details are available in the
+[Copera authentication guide](https://developers.copera.ai/guides/authentication).
 
-More details at [developers.copera.ai/guides/authentication](https://developers.copera.ai/guides/authentication).
+## Common Commands
 
----
-
-## Commands
+Run `copera <command> --help` for the full list of flags and examples.
 
 ### Auth
 
 ```bash
-copera auth login              # Interactive auth setup
-copera auth status             # Show current token and source
-copera auth logout             # Remove stored credential
+copera auth login
+copera auth status
+copera auth whoami
+copera auth logout
 ```
 
-### Boards (alias: `bases`)
+### Boards and Tables
 
 ```bash
-copera boards list             # List all accessible boards
-copera boards list --json      # JSON output (for scripting)
-copera boards get <id>         # Get board details
-copera bases list              # Same as boards list
+copera boards list
+copera boards get <board-id>
+
+copera tables list --board <board-id>
+copera tables get <table-id> --board <board-id>
+copera tables export <table-id> --board <board-id> --view <view-id> --format CSV -o out.csv
 ```
 
-### Tables
-
-```bash
-copera tables list                                                 # List tables (uses default board if set)
-copera tables list --board <board-id>                              # List tables in specific board
-copera tables get <table-id>                                       # Get table schema and columns
-copera tables get <id> --board <board-id>
-copera tables export <id> --view <view-id> --format CSV            # Export a view (CSV/XLSX/JSON/MARKDOWN/HTML/PDF/ZIP/ICS)
-copera tables export <id> --view <view-id> --format CSV -o out.csv # Write payload to a file
-copera tables export <id> --view <view-id> --format PDF --force-async   # Queue an async render
-```
+`copera bases` is an alias for `copera boards`.
 
 ### Rows
 
 ```bash
-copera rows list                                      # List rows (uses defaults)
-copera rows list --board <id> --table <id>            # Explicit IDs
-copera rows get <row-id>                              # Get row with resolved column labels
-copera rows create --data '{"columns":[...]}'         # Create a row
-echo '{"columns":[...]}' | copera rows create        # Create from stdin
-copera rows description <row-id>                      # Get a row's markdown description
-copera rows update-description <row-id> --content "..."  # Update a row's description (async)
-copera rows comment <row-id> --content "Looks good"   # Post a comment on a row
-copera rows comment <row-id> --visibility external    # Post a comment visible to external collaborators
-echo "From stdin" | copera rows comment <row-id>      # Comment content from stdin
-copera rows comments <row-id>                         # List comments on a row
-copera rows comments <row-id> --visibility external   # Filter by visibility (all|internal|external)
-copera rows comments <row-id> --after <cursor>        # Paginate via endCursor from previous response
+copera rows list --board <board-id> --table <table-id>
+copera rows get <row-id> --board <board-id> --table <table-id>
+copera rows create --board <board-id> --table <table-id> --data '{"columns":[{"columnId":"<column-id>","value":"Hello"}]}'
+copera rows update <row-id> --board <board-id> --table <table-id> --data '{"columns":[{"columnId":"<column-id>","value":"Updated"}]}'
+copera rows delete <row-id> --board <board-id> --table <table-id> --force
+
+copera rows description <row-id> --board <board-id> --table <table-id>
+copera rows update-description <row-id> --board <board-id> --table <table-id> --content "New description"
+copera rows comment <row-id> --board <board-id> --table <table-id> --content "Looks good"
+copera rows comments <row-id> --board <board-id> --table <table-id>
+```
+
+You can also pipe JSON or text into commands that accept stdin:
+
+```bash
+echo '{"columns":[{"columnId":"<column-id>","value":"Hello"}]}' | copera rows create --board <board-id> --table <table-id>
+echo "Looks good" | copera rows comment <row-id> --board <board-id> --table <table-id>
 ```
 
 ### Docs
 
-Docs commands require a **Personal Access Token** (`cp_pat_...`).
+Docs commands require a Personal Access Token.
 
 ```bash
-copera docs tree                          # Tree view of workspace docs
-copera docs tree --parent <id>            # Subtree under a specific doc
-copera docs search "keyword"              # Full-text search
-copera docs get <id>                      # Get doc metadata
-copera docs content <id>                  # Get markdown content (cached)
-copera docs content <id> --no-cache       # Bypass cache
-copera docs create --title "New Doc"      # Create a doc
-copera docs update <id> --content "..."   # Update content (replace by default)
-copera docs update <id> --operation append  # Append content
-cat content.md | copera docs update <id>  # Update from stdin
-copera docs metadata <id> --title "New title"                       # Update doc title
-copera docs metadata <id> --icon-type emoji --icon-value rocket     # Set an emoji icon
-copera docs metadata <id> --cover-type color --cover-value blue     # Set a cover color
-copera docs delete <id> --force           # Delete a doc
+copera docs tree
+copera docs tree --parent <doc-id>
+copera docs search "keyword"
+copera docs get <doc-id>
+copera docs content <doc-id>
+copera docs create --title "New Doc" --content "Initial content"
+copera docs update <doc-id> --content "Replacement content"
+copera docs update <doc-id> --operation append --content "More content"
+copera docs metadata <doc-id> --title "New title"
+copera docs delete <doc-id> --force
 ```
 
 ### Drive
 
-Drive commands require a **Personal Access Token** (`cp_pat_...`) with the `ACCESS_DRIVE` scope.
+Drive commands require a Personal Access Token with drive access.
 
 ```bash
-copera drive tree                             # Tree view of drive files and folders
-copera drive tree --parent <id>               # Subtree under a folder
-copera drive tree --depth 5                   # Control nesting depth (1-10)
-copera drive search "quarterly report"        # Full-text search
-copera drive get <file-id>                    # Get file/folder metadata
-copera drive download <file-id>               # Download a file
-copera drive download <file-id> -o report.pdf # Download to specific path
-copera drive upload ./report.pdf              # Upload a single file
-copera drive upload ./project/ --parent <id>  # Upload directory recursively
-copera drive mkdir "New Folder"               # Create a folder
-copera drive mkdir "Sub" --parent <id>        # Create nested folder
+copera drive tree
+copera drive tree --parent <folder-id>
+copera drive search "quarterly report"
+copera drive get <file-id>
+copera drive download <file-id> -o report.pdf
+copera drive upload ./report.pdf --parent <folder-id>
+copera drive upload ./project/ --parent <folder-id>
+copera drive mkdir "New Folder"
 ```
 
-**Upload features:**
-- Multipart chunked upload via S3 presigned URLs (handles large files)
-- Concurrent part uploads (`--concurrency`, default 4)
-- Configurable chunk size (`--chunk-size`, default 10 MB)
-- curl/wget-style progress bar when running in a TTY
-- Recursive directory upload with automatic folder creation
+Uploads support multipart transfer, configurable chunk size, concurrent part
+uploads, progress output in interactive terminals, and recursive directory
+upload.
 
 ### Channels
 
 ```bash
-copera channels message send <channel-id> --body "Hello"  # Send a message
+copera channels message send "Hello" --channel <channel-id>
+echo "Deploy done" | copera channels message send --channel <channel-id>
 ```
 
-### Notifications
+### Workspace, Search, and Notifications
 
 ```bash
-copera notifications list                          # List notifications for the current PAT user
-copera notifications list --after <id>             # Paginate older notifications
-copera notifications list --before <id>            # Paginate newer notifications
-copera notifications read <id>                     # Mark a notification as read
-copera notifications unread <id>                   # Mark a notification as unread
-copera notifications delete <id>                   # Delete a notification (prompts unless --force)
-copera notifications delete <id> --force           # Delete without confirmation
+copera workspace info
+copera workspace members
+copera workspace teams
+
+copera search "contract"
+copera search "contract" --type document --type driveContent
+
+copera notifications list
+copera notifications read <notification-id>
+copera notifications unread <notification-id>
+copera notifications delete <notification-id> --force
 ```
 
-### Cache
+### Cache and Utilities
 
 ```bash
-copera cache status            # Show cache location and size
-copera cache clean             # Remove all cached data
+copera cache status
+copera cache clean
+
+copera version
+copera version --json
+copera completion bash
+copera completion zsh
+copera completion fish
 ```
-
-### Update
-
-```bash
-copera update                  # Update to the latest version
-copera update --version 1.2.0  # Pin to a specific version
-copera update --force          # Skip confirmation
-```
-
-### Utilities
-
-```bash
-copera version                 # Show version
-copera version --json          # Version as JSON
-copera completion bash         # Shell completion for bash
-copera completion zsh          # Shell completion for zsh
-copera completion fish         # Shell completion for fish
-```
-
----
 
 ## Configuration
 
-Profiles group a token and default resource IDs together. Create `~/.copera.toml`:
+Profiles group a token and default resource IDs together. Create
+`~/.copera.toml` when you want to avoid repeating flags such as `--board` and
+`--table`.
 
 ```toml
-# Set the default profile (avoids --profile flag)
 default_profile = "work"
 
 [profiles.default]
-token      = "cp_pat_abc123..."
-board_id   = "66abc123def456789012abcd"
+token = "cp_pat_abc123..."
+board_id = "66abc123def456789012abcd"
 
 [profiles.work]
-token      = "cp_key_xyz789..."
-board_id   = "66ghi789jkl012345678mnop"
-table_id   = "66pqr012stu345678901vwxy"
+token = "cp_key_xyz789..."
+board_id = "66ghi789jkl012345678mnop"
+table_id = "66pqr012stu345678901vwxy"
 
-# Global settings (apply to all profiles)
 [output]
-format = "auto"   # auto | json | table | plain
+format = "auto" # auto | json | table | plain
 
 [cache]
 ttl = "1h"
@@ -271,76 +296,56 @@ ttl = "1h"
 Switch profiles with `--profile` or `COPERA_PROFILE`:
 
 ```bash
-copera boards list                        # uses default_profile
-copera boards list --profile work         # uses [profiles.work]
-COPERA_PROFILE=work copera boards list    # same, via env var
+copera boards list --profile work
+COPERA_PROFILE=work copera boards list
 ```
 
-For project-level shared defaults (no tokens — safe to commit):
+For shared project defaults, commit `.copera.toml` without tokens:
 
 ```toml
-# .copera.toml
 [profiles.default]
-board_id   = "66abc123def456789012abcd"
+board_id = "66abc123def456789012abcd"
+table_id = "66pqr012stu345678901vwxy"
 ```
 
-For project-local token override (add to `.gitignore`):
+For local secrets, use `.copera.local.toml` and keep it out of git:
 
 ```toml
-# .copera.local.toml
 [profiles.default]
-token = "your_personal_token_here"
+token = "cp_pat_xxx"
 ```
-
----
 
 ## Machine-Readable Output
 
-The CLI is designed to work with LLM agents and scripts:
+The CLI is designed to work well in scripts and agent workflows:
 
-- **Auto-JSON when piped:** When stdout is not a TTY, output defaults to JSON.
-- **`--json` flag:** Forces JSON output regardless of TTY.
-- **`--output` flag:** `auto | json | table | plain`
-- **`--quiet` / `-q`:** Suppress informational messages; only emit result data.
-- **Structured errors on stderr:**
-  ```json
-  {"error":"resource_not_found","message":"Board 'abc123' not found","suggestion":"Run 'copera boards list' to see accessible boards","transient":false}
-  ```
-- **Exit codes:** `0=ok, 1=error, 2=usage, 3=not found, 4=auth, 5=conflict, 6=rate limit`
-- **Stdin support:** Pipe content directly for `rows create` and `docs update`.
-- **No interactive prompts** when `--no-input` is set or `CI=true`.
+- When stdout is not a TTY, output defaults to JSON.
+- `--json` forces JSON output.
+- `--output` accepts `auto`, `json`, `table`, or `plain`.
+- `--quiet` / `-q` suppresses informational messages.
+- Errors are emitted on stderr as structured JSON.
+- Exit codes are stable: `0=ok`, `1=error`, `2=usage`, `3=not found`,
+  `4=auth`, `5=conflict`, `6=rate limited`.
+- `--no-input` and `CI=true` disable interactive prompts.
 
----
+Example structured error:
+
+```json
+{"error":"resource_not_found","message":"Board 'abc123' not found","suggestion":"Run 'copera boards list' to see accessible boards","transient":false}
+```
 
 ## Environment Variables
 
 | Variable | Description |
-|----------|-------------|
-| `COPERA_CLI_AUTH_TOKEN` | API token (overrides all config) |
-| `COPERA_PROFILE` | Active config profile name (default: `"default"`) |
-| `COPERA_NO_UPDATE_CHECK` | Set to `1` to disable background version checks |
-| `COPERA_SANDBOX` | Set to `1` to use the dev API (`api-dev.copera.ai`) |
-| `CI` | When set to `true`, disables interactive prompts and update checks |
-| `NO_COLOR` | Disable ANSI color output |
-
----
-
-## Shell Completion
-
-```bash
-# Bash
-copera completion bash >> ~/.bashrc
-
-# Zsh
-copera completion zsh >> ~/.zshrc
-
-# Fish
-copera completion fish > ~/.config/fish/completions/copera.fish
-```
-
----
+|---|---|
+| `COPERA_CLI_AUTH_TOKEN` | API token; overrides config files. |
+| `COPERA_PROFILE` | Active config profile name. |
+| `COPERA_NO_UPDATE_CHECK` | Set to `1` to disable background version checks. |
+| `COPERA_SANDBOX` | Set to `1` to use the dev API. |
+| `CI` | Set to `true` to disable prompts and update checks. |
+| `NO_COLOR` | Disable ANSI color output. |
 
 ## Related
 
 - [Copera Developer Docs](https://developers.copera.ai/)
-- [AGENTS.md](./AGENTS.md) — Instructions for LLM agents using this CLI
+- [AGENTS.md](./AGENTS.md) for LLM agents using this CLI
