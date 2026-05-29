@@ -185,6 +185,11 @@ copera rows delete <row-id> --board <board-id> --table <table-id> --force
 
 copera rows description <row-id> --board <board-id> --table <table-id>
 copera rows update-description <row-id> --board <board-id> --table <table-id> --content "New description"
+
+# RICH TEXT columns (a row can have several; --column selects which one)
+copera rows column-content <row-id> --board <board-id> --table <table-id> --column <column-id>
+copera rows update-column-content <row-id> --board <board-id> --table <table-id> --column <column-id> --content "# Notes"
+
 copera rows comment <row-id> --board <board-id> --table <table-id> --content "Looks good"
 copera rows comments <row-id> --board <board-id> --table <table-id>
 ```
@@ -194,6 +199,7 @@ You can also pipe JSON or text into commands that accept stdin:
 ```bash
 echo '{"columns":[{"columnId":"<column-id>","value":"Hello"}]}' | copera rows create --board <board-id> --table <table-id>
 echo "Looks good" | copera rows comment <row-id> --board <board-id> --table <table-id>
+echo "# Notes" | copera rows update-column-content <row-id> --board <board-id> --table <table-id> --column <column-id>
 ```
 
 ### Docs

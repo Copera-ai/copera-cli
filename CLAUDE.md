@@ -64,7 +64,7 @@ Designed to be used by both **humans** (interactive, list/tree output) and **LLM
 copera auth login|status|logout
 copera boards list|get          (alias: bases)
 copera tables list|get|export
-copera rows list|get|create|update-description|description|comment|comments
+copera rows list|get|create|update|delete|description|update-description|column-content|update-column-content|authenticate|comment|comments
 copera docs tree|search|get|content|update|metadata|create|delete
 copera drive tree|search|get|download|upload|mkdir
 copera notifications list|read|unread|delete
@@ -76,8 +76,6 @@ copera completion bash|zsh|fish
 
 ### Not Yet Implemented
 ```
-copera send message             (Phase 4 — needs API validation)
-copera rows update|delete       (API does not support these endpoints yet)
 copera config set|get|list
 copera schema <command>
 ```
@@ -106,6 +104,8 @@ copera schema <command>
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/comments` — list comments (paginated)
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/md` — get row markdown description
 - `POST /board/{boardId}/table/{tableId}/row/{rowId}/md` — update row description (async, 202); body: `{operation, content}`
+- `GET /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — get a RICH TEXT (DESCRIPTION) column cell's markdown content; returns `{content}` (empty string when unset)
+- `POST /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — update a RICH TEXT column cell (async, 202); body: `{operation, content}`
 - `POST /board/{boardId}/table/{tableId}/export` — render table view; body: `{boardId, viewId, format, ...}`; returns inline payload OR `asyncJob` for PDF/ZIP/large renders
 
 ### Docs endpoints (prefix: `/docs/`)

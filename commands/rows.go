@@ -28,6 +28,8 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 		newRowsUpdateCmd(cli),
 		newRowsUpdateDescriptionCmd(cli),
 		newRowsDescriptionCmd(cli),
+		newRowsColumnContentCmd(cli),
+		newRowsUpdateColumnContentCmd(cli),
 		newRowsDeleteCmd(cli),
 		newRowsAuthenticateCmd(cli),
 		newRowsCommentCmd(cli),
@@ -802,6 +804,145 @@ The output is the raw markdown text. Use --json to wrap it in {"content":"..."}.
 	}
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	return cmd
+}
+
+// ── rows column-content ─────────────────────────────────────────────────────
+
+func newRowsColumnContentCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable, flagColumn string
+
+	cmd := &cobra.Command{
+		Use:   "column-content <row-id>",
+		Short: "Get the markdown content of a RICH TEXT column cell",
+		Long: `Print the markdown content of a RICH TEXT column cell on a row.
+
+RICH TEXT columns hold collaborative long-text content. A row can have several
+of them; --column selects which one. The output is the raw markdown text (empty
+when the cell has no content). Use --json to wrap it in {"content":"..."}.
+
+Example:
+  copera rows column-content <row-id> --board <id> --table <id> --column <id>`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			columnID, err := resolveID(nil, flagColumn, "", "column ID (--column)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --column <id> to select the RICH TEXT column", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			content, err := client.RowColumnContent(context.Background(), boardID, tableID, args[0], columnID)
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(map[string]string{"content": content})
+			}
+
+			cli.Printer.PrintLine(content)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagColumn, "column", "", "RICH TEXT column ID")
+	return cmd
+}
+
+// ── rows update-column-content ──────────────────────────────────────────────
+
+func newRowsUpdateColumnContentCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable, flagColumn string
+	var flagOperation, flagContent string
+
+	cmd := &cobra.Command{
+		Use:   "update-column-content <row-id>",
+		Short: "Update a RICH TEXT column cell's content",
+		Long: `Update the markdown content of a RICH TEXT column cell on a row.
+
+--column selects which RICH TEXT column. Content is read from --content or
+stdin. The update is processed asynchronously (the server returns 202 Accepted
+immediately).
+
+Operations:
+  replace  — replace entire cell content (default)
+  append   — add to the end
+  prepend  — add to the beginning
+
+Example:
+  copera rows update-column-content <row-id> --column <id> --content '# Notes'
+  echo '# Notes' | copera rows update-column-content <row-id> --column <id>`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			columnID, err := resolveID(nil, flagColumn, "", "column ID (--column)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --column <id> to select the RICH TEXT column", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			content := flagContent
+			if content == "" {
+				content, err = readStdinContent(cli)
+				if err != nil {
+					cli.Printer.PrintError("input_error", err.Error(), "Pipe content via stdin or use --content", false)
+					return exitcodes.New(exitcodes.Usage, err)
+				}
+			}
+
+			if err := client.RowUpdateColumnContent(context.Background(), boardID, tableID, args[0], columnID, flagOperation, content); err != nil {
+				return apiError(cli, err)
+			}
+
+			cli.Printer.Info("Column content update queued (operation: %s). Processing is async.", flagOperation)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagColumn, "column", "", "RICH TEXT column ID")
+	cmd.Flags().StringVar(&flagOperation, "operation", "replace", "Update operation: replace|append|prepend")
+	cmd.Flags().StringVar(&flagContent, "content", "", "Content text (reads stdin if not set)")
 	return cmd
 }
 

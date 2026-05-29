@@ -265,6 +265,29 @@ func (c *Client) RowDescription(ctx context.Context, boardID, tableID, rowID str
 	return resp.Content, nil
 }
 
+// RowColumnContent fetches the markdown content of a RICH TEXT column cell on a row.
+// Returns an empty string when the cell has no content.
+func (c *Client) RowColumnContent(ctx context.Context, boardID, tableID, rowID, columnID string) (string, error) {
+	var resp struct {
+		Content string `json:"content"`
+	}
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/column/%s/md", boardID, tableID, rowID, columnID)
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// RowUpdateColumnContent updates a RICH TEXT column cell on a row (server
+// processes async, returns 202). operation is one of replace|append|prepend.
+func (c *Client) RowUpdateColumnContent(ctx context.Context, boardID, tableID, rowID, columnID, operation, content string) error {
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/column/%s/md", boardID, tableID, rowID, columnID)
+	return c.do(ctx, http.MethodPost, path, map[string]string{
+		"operation": operation,
+		"content":   content,
+	}, nil)
+}
+
 // ── Comment methods ──────────────────────────────────────────────────────────
 
 func (c *Client) CommentCreate(ctx context.Context, boardID, tableID, rowID string, input *CreateCommentInput) (*Comment, error) {

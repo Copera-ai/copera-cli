@@ -497,6 +497,93 @@ func TestRowsUpdateDescription_AppendOperation(t *testing.T) {
 	assert.Equal(t, "new section", capturedBody["content"])
 }
 
+// ── rows column-content ─────────────────────────────────────────────────────
+
+func TestRowsColumnContent_Human(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/column/col1/md": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"content": "# Cell heading\n\nRich text body.",
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "column-content", "r1", "--column", "col1", "--output", "table"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "# Cell heading")
+	assert.Contains(t, res.Stdout, "Rich text body.")
+}
+
+func TestRowsColumnContent_JSON(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/column/col1/md": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"content": "raw cell markdown",
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "column-content", "r1", "--column", "col1", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	var out map[string]string
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, "raw cell markdown", out["content"])
+}
+
+func TestRowsColumnContent_MissingColumn(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "column-content", "r1"}, "")
+	assert.NotEqual(t, 0, res.ExitCode)
+	assert.Contains(t, res.Stderr, "column")
+}
+
+// ── rows update-column-content ──────────────────────────────────────────────
+
+func TestRowsUpdateColumnContent_ReadsStdin(t *testing.T) {
+	var capturedBody map[string]string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/column/col1/md": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+			w.WriteHeader(http.StatusAccepted)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "update-column-content", "r1", "--column", "col1"}, "# Cell body")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "replace", capturedBody["operation"])
+	assert.Equal(t, "# Cell body", capturedBody["content"])
+}
+
+func TestRowsUpdateColumnContent_AppendOperation(t *testing.T) {
+	var capturedBody map[string]string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/column/col1/md": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+			w.WriteHeader(http.StatusAccepted)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "update-column-content", "r1", "--column", "col1", "--operation", "append", "--content", "appended chunk"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "append", capturedBody["operation"])
+	assert.Equal(t, "appended chunk", capturedBody["content"])
+}
+
+func TestRowsUpdateColumnContent_MissingColumn(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "update-column-content", "r1", "--content", "x"}, "")
+	assert.NotEqual(t, 0, res.ExitCode)
+	assert.Contains(t, res.Stderr, "column")
+}
+
 // ── rows comment ────────────────────────────────────────────────────────────
 
 func sampleCommentResponse(id string) map[string]any {
