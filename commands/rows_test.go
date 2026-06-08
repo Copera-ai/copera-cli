@@ -94,6 +94,21 @@ func TestTablesList_BoardFromFlag(t *testing.T) {
 	assert.Equal(t, "/board/flagboard/tables", capturedPath)
 }
 
+func TestTablesList_Query(t *testing.T) {
+	var capturedQuery url.Values
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/tables": func(w http.ResponseWriter, r *http.Request) {
+			capturedQuery = r.URL.Query()
+			testutil.RespondJSON(w, http.StatusOK, []map[string]any{})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"tables", "list", "--query", "tasks", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "tasks", capturedQuery.Get("q"))
+}
+
 func TestTablesList_MissingBoard(t *testing.T) {
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
 	setupHome(t, srv.URL)
@@ -157,7 +172,7 @@ func TestRowsList_JSON(t *testing.T) {
 	assert.Len(t, rows, 1)
 }
 
-func TestRowsList_FilterAndSort(t *testing.T) {
+func TestRowsList_QueryFilterAndSort(t *testing.T) {
 	var capturedQuery string
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{
 		"GET /board/board1/table/table1/rows": func(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +185,7 @@ func TestRowsList_FilterAndSort(t *testing.T) {
 	filter := `{"match":"and","conditions":[{"column_id":"c1","operator":"contains","value":"foo"}]}`
 	res := testutil.RunCommand(t, []string{
 		"rows", "list", "--json",
+		"--query", "oauth",
 		"--filter", filter,
 		"--sort", "c1:asc,c2:desc",
 	}, "")
@@ -177,6 +193,7 @@ func TestRowsList_FilterAndSort(t *testing.T) {
 
 	values, err := url.ParseQuery(capturedQuery)
 	require.NoError(t, err)
+	assert.Equal(t, "oauth", values.Get("q"))
 	assert.Equal(t, filter, values.Get("filter"))
 	assert.Equal(t, "c1:asc,c2:desc", values.Get("sort"))
 }
@@ -217,7 +234,8 @@ func TestRowsGet_HumanOutput(t *testing.T) {
 		"GET /board/board1/table/table1/row/r1": func(w http.ResponseWriter, r *http.Request) {
 			testutil.RespondJSON(w, http.StatusOK, map[string]any{
 				"_id": "r1", "rowId": 42, "owner": "user1", "table": "table1", "board": "board1",
-				"createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-06-01T00:00:00Z",
+				"description": "Legacy row body",
+				"createdAt":   "2025-01-01T00:00:00Z", "updatedAt": "2025-06-01T00:00:00Z",
 				"columns": []map[string]any{
 					{"columnId": "c1", "value": "opt_inprog"},
 					{"columnId": "c2", "value": "Fix the bug"},
@@ -225,6 +243,7 @@ func TestRowsGet_HumanOutput(t *testing.T) {
 						"value":     []any{"row1", "row2"},
 						"linkValue": []any{"Task Alpha", "Task Beta"},
 					},
+					{"columnId": "c4", "value": "Modern description preview"},
 				},
 			})
 		},
@@ -239,6 +258,7 @@ func TestRowsGet_HumanOutput(t *testing.T) {
 						}},
 					{"columnId": "c2", "label": "Title", "type": "TEXT", "order": 1},
 					{"columnId": "c3", "label": "Related Tasks", "type": "LINK", "order": 2},
+					{"columnId": "c4", "label": "Description", "type": "DESCRIPTION", "order": 3},
 				},
 			})
 		},
@@ -249,9 +269,12 @@ func TestRowsGet_HumanOutput(t *testing.T) {
 	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
 	assert.Contains(t, res.Stdout, "ID:      r1")
 	assert.Contains(t, res.Stdout, "Row#:    42")
+	assert.Contains(t, res.Stdout, "Description (legacy): Legacy row body")
 	assert.Contains(t, res.Stdout, "Status: In Progress")
 	assert.Contains(t, res.Stdout, "Title: Fix the bug")
 	assert.Contains(t, res.Stdout, "Related Tasks: Task Alpha, Task Beta")
+	assert.Contains(t, res.Stdout, "Description (column: c4, type: DESCRIPTION): Modern description preview")
+	assert.Contains(t, res.Stdout, "DESCRIPTION/RICH TEXT columns use rows column-content/update-column-content with --column")
 }
 
 // ── rows create ──────────────────────────────────────────────────────────────
@@ -497,6 +520,14 @@ func TestRowsUpdateDescription_AppendOperation(t *testing.T) {
 	assert.Equal(t, "new section", capturedBody["content"])
 }
 
+func TestRowsDescriptionHelpClarifiesLegacyVsColumnContent(t *testing.T) {
+	res := testutil.RunCommand(t, []string{"rows", "update-description", "--help"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "legacy row-level markdown description")
+	assert.Contains(t, res.Stdout, "does not update RICH TEXT / Description columns")
+	assert.Contains(t, res.Stdout, "rows update-column-content")
+}
+
 // ── rows column-content ─────────────────────────────────────────────────────
 
 func TestRowsColumnContent_Human(t *testing.T) {
@@ -582,6 +613,14 @@ func TestRowsUpdateColumnContent_MissingColumn(t *testing.T) {
 	res := testutil.RunCommand(t, []string{"rows", "update-column-content", "r1", "--content", "x"}, "")
 	assert.NotEqual(t, 0, res.ExitCode)
 	assert.Contains(t, res.Stderr, "column")
+}
+
+func TestRowsColumnContentHelpClarifiesModernDescriptionColumns(t *testing.T) {
+	res := testutil.RunCommand(t, []string{"rows", "update-column-content", "--help"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "RICH TEXT / Description column cell")
+	assert.Contains(t, res.Stdout, "different from the fixed legacy row description")
+	assert.Contains(t, res.Stdout, "rows update-description")
 }
 
 // ── rows comment ────────────────────────────────────────────────────────────

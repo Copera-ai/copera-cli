@@ -102,11 +102,17 @@ copera schema <command>
 - `POST /board/{boardId}/table/{tableId}/row` — create row
 - `POST /board/{boardId}/table/{tableId}/row/{rowId}/comment` — create comment
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/comments` — list comments (paginated)
-- `GET /board/{boardId}/table/{tableId}/row/{rowId}/md` — get row markdown description
-- `POST /board/{boardId}/table/{tableId}/row/{rowId}/md` — update row description (async, 202); body: `{operation, content}`
+- `GET /board/{boardId}/table/{tableId}/row/{rowId}/md` — get the fixed legacy row markdown description
+- `POST /board/{boardId}/table/{tableId}/row/{rowId}/md` — update the fixed legacy row description (async, 202); body: `{operation, content}`
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — get a RICH TEXT (DESCRIPTION) column cell's markdown content; returns `{content}` (empty string when unset)
-- `POST /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — update a RICH TEXT column cell (async, 202); body: `{operation, content}`
+- `POST /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — update a RICH TEXT (DESCRIPTION) column cell (async, 202); body: `{operation, content}`
 - `POST /board/{boardId}/table/{tableId}/export` — render table view; body: `{boardId, viewId, format, ...}`; returns inline payload OR `asyncJob` for PDF/ZIP/large renders
+
+Important for agents: `rows update-description` only changes the fixed legacy
+row description shown by `rows get` as `Description (legacy)`. If a table has a
+column named `Description` or type `DESCRIPTION`, fetch the column ID with
+`tables get --json` and update it with
+`rows update-column-content <row-id> --column <column-id>`.
 
 ### Docs endpoints (prefix: `/docs/`)
 - `GET /docs/tree?parentId=` — doc tree (children are fully hydrated `DocNode` objects)

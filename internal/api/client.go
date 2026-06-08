@@ -136,8 +136,9 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 	}
 	defer resp.Body.Close()
 
-	// 204 No Content and 202 Accepted are success with no body
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusAccepted {
+	// 204 No Content is the only success status that never has a body.
+	// 202 Accepted may carry a queued-job response.
+	if resp.StatusCode == http.StatusNoContent {
 		if c.verbose != nil {
 			fmt.Fprintf(c.verbose, "<< %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
 		}
@@ -156,7 +157,18 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := &APIError{StatusCode: resp.StatusCode}
-		_ = json.Unmarshal(respBody, apiErr)
+		var errBody struct {
+			Code    string `json:"code"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(respBody, &errBody) == nil {
+			apiErr.Code = errBody.Code
+			apiErr.Message = errBody.Error
+			if apiErr.Message == "" {
+				apiErr.Message = errBody.Message
+			}
+		}
 		if apiErr.Message == "" {
 			apiErr.Message = http.StatusText(resp.StatusCode)
 		}

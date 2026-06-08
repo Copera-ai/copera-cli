@@ -26,7 +26,9 @@ func newBoardsCmd(cli *CLI) *cobra.Command {
 // ── boards list ──────────────────────────────────────────────────────────────
 
 func newBoardsListCmd(cli *CLI) *cobra.Command {
-	return &cobra.Command{
+	var flagQuery string
+
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all boards",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -35,7 +37,9 @@ func newBoardsListCmd(cli *CLI) *cobra.Command {
 				return err
 			}
 
-			boards, err := client.BoardList(context.Background())
+			boards, err := client.BoardList(context.Background(), &api.BoardListOptions{
+				Query: flagQuery,
+			})
 			if err != nil {
 				return apiError(cli, err)
 			}
@@ -61,6 +65,8 @@ func newBoardsListCmd(cli *CLI) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&flagQuery, "query", "", "Search by board name or description")
+	return cmd
 }
 
 // ── boards get ───────────────────────────────────────────────────────────────
@@ -113,6 +119,7 @@ func newTablesCmd(cli *CLI) *cobra.Command {
 
 func newTablesListCmd(cli *CLI) *cobra.Command {
 	var flagBoard string
+	var flagQuery string
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -130,7 +137,9 @@ func newTablesListCmd(cli *CLI) *cobra.Command {
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
-			tables, err := client.TableList(context.Background(), boardID)
+			tables, err := client.TableList(context.Background(), boardID, &api.TableListOptions{
+				Query: flagQuery,
+			})
 			if err != nil {
 				return apiError(cli, err)
 			}
@@ -157,6 +166,7 @@ func newTablesListCmd(cli *CLI) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagQuery, "query", "", "Search by table name")
 	return cmd
 }
 

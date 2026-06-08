@@ -41,7 +41,7 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 // ── rows list ────────────────────────────────────────────────────────────────
 
 func newRowsListCmd(cli *CLI) *cobra.Command {
-	var flagBoard, flagTable, flagFilter, flagSort string
+	var flagBoard, flagTable, flagQuery, flagFilter, flagSort string
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -69,6 +69,7 @@ Operators per column type:
 
 is_empty / is_not_empty omit "value". between takes [startISO, endISO].
 
+--query searches visible, non-password table columns.
 --sort is a comma-separated list of <columnId>:asc or <columnId>:desc.
 
 Examples:
@@ -103,7 +104,7 @@ Examples:
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
-			opts := &api.RowListOptions{Filter: filterJSON, Sort: flagSort}
+			opts := &api.RowListOptions{Query: flagQuery, Filter: filterJSON, Sort: flagSort}
 
 			rows, err := client.RowList(context.Background(), boardID, tableID, opts)
 			if err != nil {
@@ -130,6 +131,7 @@ Examples:
 	}
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagQuery, "query", "", "Search visible row columns")
 	cmd.Flags().StringVar(&flagFilter, "filter", "", "Filter JSON (inline or @file)")
 	cmd.Flags().StringVar(&flagSort, "sort", "", "Sort spec, e.g. col_a:asc,col_b:desc")
 	return cmd
@@ -221,17 +223,24 @@ func newRowsGetCmd(cli *CLI) *cobra.Command {
 				cli.Printer.PrintLine(fmt.Sprintf("URL:     %s", url))
 			}
 			if row.Description != "" {
-				cli.Printer.PrintLine(fmt.Sprintf("Description: %s", row.Description))
+				cli.Printer.PrintLine(fmt.Sprintf("Description (legacy): %s", row.Description))
 			}
 			cli.Printer.PrintLine("")
 			cli.Printer.PrintLine("Columns:")
+			hasDescriptionColumn := false
 			for _, col := range row.Columns {
 				label := col.ColumnID
 				value := formatColumnValue(td, col)
 				if td != nil {
-					label = td.ResolveColumnLabel(col.ColumnID)
+					var isDescriptionColumn bool
+					label, isDescriptionColumn = formatRowColumnLabel(td, col.ColumnID)
+					hasDescriptionColumn = hasDescriptionColumn || isDescriptionColumn
 				}
 				cli.Printer.PrintLine(fmt.Sprintf("  %s: %s", label, value))
+			}
+			if hasDescriptionColumn {
+				cli.Printer.PrintLine("")
+				cli.Printer.PrintLine("Tip: DESCRIPTION/RICH TEXT columns use rows column-content/update-column-content with --column. The legacy row description uses rows description/update-description.")
 			}
 			return nil
 		},
@@ -410,8 +419,14 @@ func newRowsUpdateDescriptionCmd(cli *CLI) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "update-description <row-id>",
-		Short: "Update a row's description content",
-		Long: `Update a row's markdown description content.
+		Short: "Update the legacy row description field",
+		Long: `Update the legacy row-level markdown description field.
+
+This command targets the fixed legacy description shown by rows get as
+"Description (legacy)". It does not update RICH TEXT / Description columns.
+For modern tables with one or more long-text columns, use:
+
+  copera rows update-column-content <row-id> --column <column-id>
 
 Content is read from --content or stdin. The update is processed asynchronously
 (the server returns 202 Accepted immediately).
@@ -764,8 +779,14 @@ func newRowsDescriptionCmd(cli *CLI) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "description <row-id>",
-		Short: "Get a row's markdown description",
-		Long: `Print the markdown source of a row's description.
+		Short: "Get the legacy row description field",
+		Long: `Print the markdown source of the legacy row-level description field.
+
+This command reads the fixed legacy description shown by rows get as
+"Description (legacy)". It does not read RICH TEXT / Description columns.
+For modern tables with one or more long-text columns, use:
+
+  copera rows column-content <row-id> --column <column-id>
 
 The output is the raw markdown text. Use --json to wrap it in {"content":"..."}.`,
 		Args: cobra.ExactArgs(1),
@@ -814,12 +835,17 @@ func newRowsColumnContentCmd(cli *CLI) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "column-content <row-id>",
-		Short: "Get the markdown content of a RICH TEXT column cell",
-		Long: `Print the markdown content of a RICH TEXT column cell on a row.
+		Short: "Get markdown content from a RICH TEXT / Description column cell",
+		Long: `Print the markdown content of a RICH TEXT / Description column cell on a row.
 
-RICH TEXT columns hold collaborative long-text content. A row can have several
-of them; --column selects which one. The output is the raw markdown text (empty
-when the cell has no content). Use --json to wrap it in {"content":"..."}.
+Modern tables can have several long-text columns; --column selects which one.
+This is different from the fixed legacy row description. To read that legacy
+field instead, use:
+
+  copera rows description <row-id>
+
+The output is the raw markdown text (empty when the cell has no content).
+Use --json to wrap it in {"content":"..."}.
 
 Example:
   copera rows column-content <row-id> --board <id> --table <id> --column <id>`,
@@ -847,7 +873,7 @@ Example:
 			columnID, err := resolveID(nil, flagColumn, "", "column ID (--column)")
 			if err != nil {
 				cli.Printer.PrintError("missing_id", err.Error(),
-					"Use --column <id> to select the RICH TEXT column", false)
+					"Use --column <id> to select the RICH TEXT / Description column", false)
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
@@ -866,7 +892,7 @@ Example:
 	}
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
-	cmd.Flags().StringVar(&flagColumn, "column", "", "RICH TEXT column ID")
+	cmd.Flags().StringVar(&flagColumn, "column", "", "RICH TEXT / Description column ID")
 	return cmd
 }
 
@@ -878,12 +904,17 @@ func newRowsUpdateColumnContentCmd(cli *CLI) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "update-column-content <row-id>",
-		Short: "Update a RICH TEXT column cell's content",
-		Long: `Update the markdown content of a RICH TEXT column cell on a row.
+		Short: "Update a RICH TEXT / Description column cell",
+		Long: `Update the markdown content of a RICH TEXT / Description column cell on a row.
 
---column selects which RICH TEXT column. Content is read from --content or
-stdin. The update is processed asynchronously (the server returns 202 Accepted
-immediately).
+Modern tables can have several long-text columns; --column selects which one.
+This is different from the fixed legacy row description. To update that legacy
+field instead, use:
+
+  copera rows update-description <row-id>
+
+Content is read from --content or stdin. The update is processed asynchronously
+(the server returns 202 Accepted immediately).
 
 Operations:
   replace  — replace entire cell content (default)
@@ -917,7 +948,7 @@ Example:
 			columnID, err := resolveID(nil, flagColumn, "", "column ID (--column)")
 			if err != nil {
 				cli.Printer.PrintError("missing_id", err.Error(),
-					"Use --column <id> to select the RICH TEXT column", false)
+					"Use --column <id> to select the RICH TEXT / Description column", false)
 				return exitcodes.New(exitcodes.Usage, err)
 			}
 
@@ -940,7 +971,7 @@ Example:
 	}
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
-	cmd.Flags().StringVar(&flagColumn, "column", "", "RICH TEXT column ID")
+	cmd.Flags().StringVar(&flagColumn, "column", "", "RICH TEXT / Description column ID")
 	cmd.Flags().StringVar(&flagOperation, "operation", "replace", "Update operation: replace|append|prepend")
 	cmd.Flags().StringVar(&flagContent, "content", "", "Content text (reads stdin if not set)")
 	return cmd
@@ -961,6 +992,17 @@ func formatColumnValue(td *cache.TableData, col api.RowColumn) string {
 		return td.ResolveOptionLabel(col.ColumnID, col.Value)
 	}
 	return fmt.Sprintf("%v", col.Value)
+}
+
+func formatRowColumnLabel(td *cache.TableData, columnID string) (string, bool) {
+	tc, ok := td.Columns[columnID]
+	if !ok {
+		return columnID, false
+	}
+	if tc.Type == "DESCRIPTION" {
+		return fmt.Sprintf("%s (column: %s, type: DESCRIPTION)", tc.Label, columnID), true
+	}
+	return tc.Label, false
 }
 
 func formatLinkValue(linkValue any) string {

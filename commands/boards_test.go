@@ -3,6 +3,7 @@ package commands_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 
@@ -63,6 +64,21 @@ func TestBoardsList_BasesAlias(t *testing.T) {
 
 	res := testutil.RunCommand(t, []string{"bases", "list", "--json"}, "")
 	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+}
+
+func TestBoardsList_Query(t *testing.T) {
+	var capturedQuery url.Values
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/list-boards": func(w http.ResponseWriter, r *http.Request) {
+			capturedQuery = r.URL.Query()
+			testutil.RespondJSON(w, http.StatusOK, []map[string]any{})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"boards", "list", "--query", "roadmap", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "roadmap", capturedQuery.Get("q"))
 }
 
 // ── boards get ───────────────────────────────────────────────────────────────

@@ -135,9 +135,21 @@ type CreateCommentInput struct {
 
 // ── Board methods ────────────────────────────────────────────────────────────
 
-func (c *Client) BoardList(ctx context.Context) ([]Board, error) {
+// BoardListOptions configures GET /board/list-boards.
+type BoardListOptions struct {
+	Query string
+}
+
+func (c *Client) BoardList(ctx context.Context, opts *BoardListOptions) ([]Board, error) {
+	path := "/board/list-boards"
+	if opts != nil && opts.Query != "" {
+		q := url.Values{}
+		q.Set("q", opts.Query)
+		path += "?" + q.Encode()
+	}
+
 	var boards []Board
-	if err := c.do(ctx, "GET", "/board/list-boards", nil, &boards); err != nil {
+	if err := c.do(ctx, "GET", path, nil, &boards); err != nil {
 		return nil, err
 	}
 	return boards, nil
@@ -153,9 +165,21 @@ func (c *Client) BoardGet(ctx context.Context, boardID string) (*Board, error) {
 
 // ── Table methods ────────────────────────────────────────────────────────────
 
-func (c *Client) TableList(ctx context.Context, boardID string) ([]Table, error) {
+// TableListOptions configures GET /board/{boardId}/tables.
+type TableListOptions struct {
+	Query string
+}
+
+func (c *Client) TableList(ctx context.Context, boardID string, opts *TableListOptions) ([]Table, error) {
+	path := fmt.Sprintf("/board/%s/tables", boardID)
+	if opts != nil && opts.Query != "" {
+		q := url.Values{}
+		q.Set("q", opts.Query)
+		path += "?" + q.Encode()
+	}
+
 	var tables []Table
-	if err := c.do(ctx, "GET", fmt.Sprintf("/board/%s/tables", boardID), nil, &tables); err != nil {
+	if err := c.do(ctx, "GET", path, nil, &tables); err != nil {
 		return nil, err
 	}
 	return tables, nil
@@ -177,6 +201,7 @@ func (c *Client) TableGet(ctx context.Context, boardID, tableID string) (*Table,
 // provided; the API validates it). Sort is the raw "col:asc,col:desc" spec.
 // Both are optional.
 type RowListOptions struct {
+	Query  string
 	Filter string
 	Sort   string
 }
@@ -185,6 +210,9 @@ func (c *Client) RowList(ctx context.Context, boardID, tableID string, opts *Row
 	path := fmt.Sprintf("/board/%s/table/%s/rows", boardID, tableID)
 	if opts != nil {
 		q := url.Values{}
+		if opts.Query != "" {
+			q.Set("q", opts.Query)
+		}
 		if opts.Filter != "" {
 			q.Set("filter", opts.Filter)
 		}
@@ -265,7 +293,7 @@ func (c *Client) RowDescription(ctx context.Context, boardID, tableID, rowID str
 	return resp.Content, nil
 }
 
-// RowColumnContent fetches the markdown content of a RICH TEXT column cell on a row.
+// RowColumnContent fetches the markdown content of a RICH TEXT / DESCRIPTION column cell on a row.
 // Returns an empty string when the cell has no content.
 func (c *Client) RowColumnContent(ctx context.Context, boardID, tableID, rowID, columnID string) (string, error) {
 	var resp struct {
@@ -278,7 +306,7 @@ func (c *Client) RowColumnContent(ctx context.Context, boardID, tableID, rowID, 
 	return resp.Content, nil
 }
 
-// RowUpdateColumnContent updates a RICH TEXT column cell on a row (server
+// RowUpdateColumnContent updates a RICH TEXT / DESCRIPTION column cell on a row (server
 // processes async, returns 202). operation is one of replace|append|prepend.
 func (c *Client) RowUpdateColumnContent(ctx context.Context, boardID, tableID, rowID, columnID, operation, content string) error {
 	path := fmt.Sprintf("/board/%s/table/%s/row/%s/column/%s/md", boardID, tableID, rowID, columnID)

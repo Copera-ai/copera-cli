@@ -73,11 +73,11 @@ When you don't know IDs, discover them:
 
 ```bash
 # 1. List boards
-copera boards list --json
+copera boards list --query "engineering" --json
 # -> [{"_id": "...", "name": "...", "description": "..."}, ...]
 
 # 2. List tables in a board
-copera tables list --board <board-id> --json
+copera tables list --board <board-id> --query "tasks" --json
 # -> [{"_id": "...", "name": "...", "columns": [...]}]
 # Note: columns include their IDs, labels, and types — use these for row creation
 
@@ -85,7 +85,7 @@ copera tables list --board <board-id> --json
 copera tables get <table-id> --board <board-id> --json
 
 # 4. List rows
-copera rows list --board <board-id> --table <table-id> --json
+copera rows list --board <board-id> --table <table-id> --query "oauth" --json
 ```
 
 ---
@@ -109,6 +109,24 @@ echo '{"columns":[{"columnId":"abc123","value":"Hello"}]}' | copera rows create 
 ```
 
 Note: unsupported column types are silently ignored by the API — the row is created without those values.
+
+---
+
+## Row Long-Text Fields
+
+Rows have two different long-text surfaces. Do not mix them up:
+
+- **Fixed legacy row description** — shown by `rows get` as
+  `Description (legacy)`. Read it with `copera rows description <row-id>` and
+  update it with `copera rows update-description <row-id>`.
+- **RICH TEXT / DESCRIPTION table column cells** — shown under `Columns` with
+  a column ID. Read them with
+  `copera rows column-content <row-id> --column <column-id>` and update them
+  with `copera rows update-column-content <row-id> --column <column-id>`.
+
+Never use `update-description` to update a table column named `Description`.
+Run `copera tables get <table-id> --board <board-id> --json`, find the column
+ID, then call `update-column-content --column <column-id>`.
 
 ---
 
@@ -216,6 +234,7 @@ default_profile = "work"
 |-----------|-------|
 | Board reads | 50 req/min |
 | Row creation | 30 req/min |
+| List channels | 50 req/min |
 | Send message | 100 req/min |
 | Docs | not published |
 
@@ -236,7 +255,17 @@ abc123                     <- invalid, returns exit code 2 (usage error)
 
 ```bash
 # What boards exist?
-copera boards list --json
+copera boards list --query "engineering" --json
+
+# What channels can I post to?
+copera channels list --query "deploy" --json
+
+# Who can I DM?
+copera workspace members --query "alice" --json
+
+# Send a message to a channel or person
+copera channels message send "Deploy done" --channel <channel-id> --json
+copera channels message send "Can you review this?" --user <user-id> --json
 
 # What tables are in a board?
 copera tables list --board $BOARD_ID --json

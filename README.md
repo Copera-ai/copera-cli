@@ -165,9 +165,11 @@ copera auth logout
 
 ```bash
 copera boards list
+copera boards list --query "roadmap"
 copera boards get <board-id>
 
 copera tables list --board <board-id>
+copera tables list --board <board-id> --query "tasks"
 copera tables get <table-id> --board <board-id>
 copera tables export <table-id> --board <board-id> --view <view-id> --format CSV -o out.csv
 ```
@@ -178,15 +180,17 @@ copera tables export <table-id> --board <board-id> --view <view-id> --format CSV
 
 ```bash
 copera rows list --board <board-id> --table <table-id>
+copera rows list --board <board-id> --table <table-id> --query "oauth"
 copera rows get <row-id> --board <board-id> --table <table-id>
 copera rows create --board <board-id> --table <table-id> --data '{"columns":[{"columnId":"<column-id>","value":"Hello"}]}'
 copera rows update <row-id> --board <board-id> --table <table-id> --data '{"columns":[{"columnId":"<column-id>","value":"Updated"}]}'
 copera rows delete <row-id> --board <board-id> --table <table-id> --force
 
+# Fixed legacy row description, shown by rows get as "Description (legacy)"
 copera rows description <row-id> --board <board-id> --table <table-id>
 copera rows update-description <row-id> --board <board-id> --table <table-id> --content "New description"
 
-# RICH TEXT columns (a row can have several; --column selects which one)
+# RICH TEXT / DESCRIPTION table column cells (modern long-text columns)
 copera rows column-content <row-id> --board <board-id> --table <table-id> --column <column-id>
 copera rows update-column-content <row-id> --board <board-id> --table <table-id> --column <column-id> --content "# Notes"
 
@@ -201,6 +205,15 @@ echo '{"columns":[{"columnId":"<column-id>","value":"Hello"}]}' | copera rows cr
 echo "Looks good" | copera rows comment <row-id> --board <board-id> --table <table-id>
 echo "# Notes" | copera rows update-column-content <row-id> --board <board-id> --table <table-id> --column <column-id>
 ```
+
+Rows have two separate long-text surfaces:
+
+- Fixed legacy row description: use `rows description` and `rows update-description`.
+- RICH TEXT / DESCRIPTION table column cells: use `rows column-content --column <column-id>` and `rows update-column-content --column <column-id>`.
+
+Do not use `rows update-description` for a table column named `Description`.
+Run `copera tables get <table-id> --board <board-id> --json` to find the
+column ID, then use `rows update-column-content --column <column-id>`.
 
 ### Docs
 
@@ -241,7 +254,12 @@ upload.
 ### Channels
 
 ```bash
+copera channels list
+copera channels list --query "deploy"
+copera channels list --kind dm --participant <user-id>
+
 copera channels message send "Hello" --channel <channel-id>
+copera channels message send "Hello" --user <user-id>
 echo "Deploy done" | copera channels message send --channel <channel-id>
 ```
 
