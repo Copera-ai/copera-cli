@@ -80,6 +80,14 @@ type CommentAuthor struct {
 	Email   string `json:"email"`
 }
 
+// Attachment is metadata for a file attached to a row comment.
+type Attachment struct {
+	FileID   string `json:"fileId"`
+	Name     string `json:"name"`
+	MimeType string `json:"mimeType"`
+	Size     int64  `json:"size"`
+}
+
 // Comment is a row comment.
 type Comment struct {
 	ID          string        `json:"_id"`
@@ -87,6 +95,7 @@ type Comment struct {
 	ContentType string        `json:"contentType"`
 	Visibility  string        `json:"visibility"`
 	Author      CommentAuthor `json:"author"`
+	Attachment  *Attachment   `json:"attachment,omitempty"`
 	CreatedAt   time.Time     `json:"createdAt"`
 	UpdatedAt   time.Time     `json:"updatedAt"`
 }
@@ -316,6 +325,11 @@ func (c *Client) RowUpdateColumnContent(ctx context.Context, boardID, tableID, r
 	}, nil)
 }
 
+func (c *Client) RowAttachmentDownload(ctx context.Context, boardID, tableID, rowID, columnID, fileID string) (*http.Response, error) {
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/column/%s/file/%s/download", boardID, tableID, rowID, columnID, fileID)
+	return c.Download(ctx, path)
+}
+
 // ── Comment methods ──────────────────────────────────────────────────────────
 
 func (c *Client) CommentCreate(ctx context.Context, boardID, tableID, rowID string, input *CreateCommentInput) (*Comment, error) {
@@ -343,4 +357,9 @@ func (c *Client) CommentList(ctx context.Context, boardID, tableID, rowID string
 		return nil, err
 	}
 	return &page, nil
+}
+
+func (c *Client) CommentAttachmentDownload(ctx context.Context, boardID, tableID, rowID, commentID, fileID string) (*http.Response, error) {
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/comment/%s/file/%s/download", boardID, tableID, rowID, commentID, fileID)
+	return c.Download(ctx, path)
 }

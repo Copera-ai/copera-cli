@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"net/url"
 	"os"
 	"strings"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/copera/copera-cli/internal/config"
 	"github.com/copera/copera-cli/internal/exitcodes"
 	"github.com/copera/copera-cli/internal/output"
+	"github.com/copera/copera-cli/internal/upload"
 	"github.com/spf13/cobra"
 )
 
@@ -30,6 +33,7 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 		newRowsDescriptionCmd(cli),
 		newRowsColumnContentCmd(cli),
 		newRowsUpdateColumnContentCmd(cli),
+		newRowsAttachmentsCmd(cli),
 		newRowsDeleteCmd(cli),
 		newRowsAuthenticateCmd(cli),
 		newRowsCommentCmd(cli),
@@ -769,6 +773,126 @@ Visibility filter (defaults to all when omitted):
 	cmd.Flags().StringVar(&flagAfter, "after", "", "Cursor for the next page")
 	cmd.Flags().StringVar(&flagBefore, "before", "", "Cursor for the previous page")
 	cmd.Flags().StringVar(&flagVisibility, "visibility", "", "Filter by visibility: all|internal|external")
+	cmd.AddCommand(newRowsCommentAttachmentsCmd(cli))
+	return cmd
+}
+
+// ── rows comments attachments ───────────────────────────────────────────────
+
+func newRowsCommentAttachmentsCmd(cli *CLI) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "attachments",
+		Short: "Manage attachments on row comments",
+	}
+	cmd.AddCommand(newRowsCommentAttachmentDownloadCmd(cli))
+	return cmd
+}
+
+func newRowsCommentAttachmentDownloadCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable, flagComment, flagFile, flagDest string
+
+	cmd := &cobra.Command{
+		Use:   "download <row-id>",
+		Short: "Download a row comment attachment",
+		Long: `Download a file attached to a row comment.
+
+The download is authorized in the row, table, board, comment, and file context.
+
+Example:
+  copera rows comments attachments download <row-id> --board <board-id> --table <table-id> --comment <comment-id> --file <file-id> -o ./contract.pdf`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			commentID, err := resolveID(nil, flagComment, "", "comment ID (--comment)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --comment <id> to select the row comment", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			fileID, err := resolveID(nil, flagFile, "", "file ID (--file)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --file <id> to select the attachment", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			ctx := context.Background()
+			resp, err := client.CommentAttachmentDownload(ctx, boardID, tableID, args[0], commentID, fileID)
+			if err != nil {
+				return apiError(cli, err)
+			}
+			defer resp.Body.Close()
+
+			fileName := sanitizeFilename(filenameFromContentDisposition(resp.Header.Get("Content-Disposition"), fileID))
+			dest := flagDest
+			if dest == "" {
+				dest = fileName
+			}
+			dest, err = safePath(dest)
+			if err != nil {
+				cli.Printer.PrintError("invalid_path", err.Error(), "Use --dest with a safe file path", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			outFile, err := os.Create(dest)
+			if err != nil {
+				return exitcodes.New(exitcodes.Error, fmt.Errorf("create output file: %w", err))
+			}
+			defer outFile.Close()
+
+			var reader io.Reader = resp.Body
+			if upload.ShouldShowProgress(cli.Printer.Err) && !cli.Printer.IsJSON() && !cli.flags.quiet {
+				prog := upload.NewBarProgress(cli.Printer.Err)
+				totalBytes := resp.ContentLength
+				if totalBytes < 0 {
+					totalBytes = 0
+				}
+				prog.Init(fileName, totalBytes)
+				reader = &progressReader{r: resp.Body, progress: prog}
+				defer prog.Finish()
+			}
+
+			written, err := io.Copy(outFile, reader)
+			if err != nil {
+				return exitcodes.New(exitcodes.Error, fmt.Errorf("write file: %w", err))
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(map[string]any{
+					"file": fileName,
+					"size": written,
+					"path": dest,
+				})
+			}
+
+			cli.Printer.Info("Downloaded %s (%s)", fileName, humanSize(written))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagComment, "comment", "", "Row comment ID")
+	cmd.Flags().StringVar(&flagFile, "file", "", "Attachment file ID")
+	cmd.Flags().StringVarP(&flagDest, "dest", "o", "", "Destination file path (default: current dir + original filename)")
 	return cmd
 }
 
@@ -975,6 +1099,153 @@ Example:
 	cmd.Flags().StringVar(&flagOperation, "operation", "replace", "Update operation: replace|append|prepend")
 	cmd.Flags().StringVar(&flagContent, "content", "", "Content text (reads stdin if not set)")
 	return cmd
+}
+
+// ── rows attachments ───────────────────────────────────────────────────────
+
+func newRowsAttachmentsCmd(cli *CLI) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "attachments",
+		Short: "Manage FILE column attachments on rows",
+	}
+	cmd.AddCommand(newRowsAttachmentDownloadCmd(cli))
+	return cmd
+}
+
+func newRowsAttachmentDownloadCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable, flagColumn, flagFile, flagDest string
+
+	cmd := &cobra.Command{
+		Use:   "download <row-id>",
+		Short: "Download a FILE column attachment",
+		Long: `Download a file attached to a FILE column on a row.
+
+The download is authorized in the row, table, board, and column context.
+
+Example:
+  copera rows attachments download <row-id> --board <board-id> --table <table-id> --column <column-id> --file <file-id> -o ./contract.pdf`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			columnID, err := resolveID(nil, flagColumn, "", "column ID (--column)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --column <id> to select the FILE column", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			fileID, err := resolveID(nil, flagFile, "", "file ID (--file)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --file <id> to select the attachment", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			ctx := context.Background()
+			resp, err := client.RowAttachmentDownload(ctx, boardID, tableID, args[0], columnID, fileID)
+			if err != nil {
+				return apiError(cli, err)
+			}
+			defer resp.Body.Close()
+
+			fileName := sanitizeFilename(filenameFromContentDisposition(resp.Header.Get("Content-Disposition"), fileID))
+			dest := flagDest
+			if dest == "" {
+				dest = fileName
+			}
+			dest, err = safePath(dest)
+			if err != nil {
+				cli.Printer.PrintError("invalid_path", err.Error(), "Use --dest with a safe file path", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			outFile, err := os.Create(dest)
+			if err != nil {
+				return exitcodes.New(exitcodes.Error, fmt.Errorf("create output file: %w", err))
+			}
+			defer outFile.Close()
+
+			var reader io.Reader = resp.Body
+			if upload.ShouldShowProgress(cli.Printer.Err) && !cli.Printer.IsJSON() && !cli.flags.quiet {
+				prog := upload.NewBarProgress(cli.Printer.Err)
+				totalBytes := resp.ContentLength
+				if totalBytes < 0 {
+					totalBytes = 0
+				}
+				prog.Init(fileName, totalBytes)
+				reader = &progressReader{r: resp.Body, progress: prog}
+				defer prog.Finish()
+			}
+
+			written, err := io.Copy(outFile, reader)
+			if err != nil {
+				return exitcodes.New(exitcodes.Error, fmt.Errorf("write file: %w", err))
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(map[string]any{
+					"file": fileName,
+					"size": written,
+					"path": dest,
+				})
+			}
+
+			cli.Printer.Info("Downloaded %s (%s)", fileName, humanSize(written))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagColumn, "column", "", "FILE column ID")
+	cmd.Flags().StringVar(&flagFile, "file", "", "Attachment file ID")
+	cmd.Flags().StringVarP(&flagDest, "dest", "o", "", "Destination file path (default: current dir + original filename)")
+	return cmd
+}
+
+func filenameFromContentDisposition(header, fallback string) string {
+	if _, params, err := mime.ParseMediaType(header); err == nil {
+		if filename := params["filename"]; filename != "" {
+			return filename
+		}
+	}
+
+	for _, part := range strings.Split(header, ";") {
+		part = strings.TrimSpace(part)
+		if !strings.HasPrefix(strings.ToLower(part), "filename*=") {
+			continue
+		}
+		_, raw, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		raw = strings.Trim(raw, `"`)
+		if chunks := strings.SplitN(raw, "''", 2); len(chunks) == 2 {
+			raw = chunks[1]
+		}
+		if decoded, err := url.PathUnescape(raw); err == nil && decoded != "" {
+			return decoded
+		}
+	}
+
+	return fallback
 }
 
 // formatColumnValue returns a display string for a row column value.

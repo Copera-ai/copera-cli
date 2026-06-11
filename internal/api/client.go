@@ -85,6 +85,64 @@ func (c *Client) HTTPClient() *http.Client {
 	return c.httpClient
 }
 
+// Download executes an authenticated GET request for a binary response.
+// Unlike do(), successful responses leave the body open for the caller to
+// stream. Non-2xx responses are decoded into APIError using the JSON error
+// shape used by the public API.
+func (c *Client) Download(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("api: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "*/*")
+
+	if c.verbose != nil {
+		fmt.Fprintf(c.verbose, ">> %s %s\n", http.MethodGet, req.URL.String())
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("api: %w", err)
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if c.verbose != nil {
+			fmt.Fprintf(c.verbose, "<< %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+		}
+		return resp, nil
+	}
+
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("api: read response: %w", err)
+	}
+
+	if c.verbose != nil {
+		fmt.Fprintf(c.verbose, "<< %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+		fmt.Fprintf(c.verbose, "<< %s\n", string(respBody))
+	}
+
+	apiErr := &APIError{StatusCode: resp.StatusCode}
+	var errBody struct {
+		Code    string `json:"code"`
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(respBody, &errBody) == nil {
+		apiErr.Code = errBody.Code
+		apiErr.Message = errBody.Error
+		if apiErr.Message == "" {
+			apiErr.Message = errBody.Message
+		}
+	}
+	if apiErr.Message == "" {
+		apiErr.Message = http.StatusText(resp.StatusCode)
+	}
+	return nil, apiErr
+}
+
 // do executes a request, retrying up to 2 extra times on 429 with exponential backoff.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	backoff := 3 * time.Second

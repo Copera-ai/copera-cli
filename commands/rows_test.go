@@ -5,9 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -623,6 +625,82 @@ func TestRowsColumnContentHelpClarifiesModernDescriptionColumns(t *testing.T) {
 	assert.Contains(t, res.Stdout, "rows update-description")
 }
 
+// ── rows attachments download ───────────────────────────────────────────────
+
+func TestRowsAttachmentsDownload_WritesBinaryFile(t *testing.T) {
+	var authHeader string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/column/file_col/file/file1/download": func(w http.ResponseWriter, r *http.Request) {
+			authHeader = r.Header.Get("Authorization")
+			w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''contract%20final.txt")
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("contract bytes"))
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	dest := filepath.Join(t.TempDir(), "downloaded.txt")
+	res := testutil.RunCommand(t, []string{
+		"rows", "attachments", "download", "r1",
+		"--column", "file_col",
+		"--file", "file1",
+		"-o", dest,
+		"--json",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "Bearer tok_test_fake", authHeader)
+
+	body, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Equal(t, "contract bytes", string(body))
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, "contract final.txt", out["file"])
+	assert.Equal(t, float64(len("contract bytes")), out["size"])
+	assert.Equal(t, dest, out["path"])
+}
+
+func TestRowsAttachmentsDownload_MissingColumnOrFile(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	missingColumn := testutil.RunCommand(t, []string{
+		"rows", "attachments", "download", "r1",
+		"--file", "file1",
+	}, "")
+	assert.Equal(t, 2, missingColumn.ExitCode)
+	assert.Contains(t, missingColumn.Stderr, "column")
+
+	missingFile := testutil.RunCommand(t, []string{
+		"rows", "attachments", "download", "r1",
+		"--column", "file_col",
+	}, "")
+	assert.Equal(t, 2, missingFile.ExitCode)
+	assert.Contains(t, missingFile.Stderr, "file")
+}
+
+func TestRowsAttachmentsDownload_APIError(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/column/file_col/file/file1/download": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusForbidden, map[string]any{
+				"code":    "FORBIDDEN",
+				"message": "No file access",
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "attachments", "download", "r1",
+		"--column", "file_col",
+		"--file", "file1",
+		"--json",
+	}, "")
+	assert.Equal(t, 4, res.ExitCode)
+	assert.Contains(t, res.Stderr, "FORBIDDEN: No file access")
+}
+
 // ── rows comment ────────────────────────────────────────────────────────────
 
 func sampleCommentResponse(id string) map[string]any {
@@ -637,6 +715,17 @@ func sampleCommentResponse(id string) map[string]any {
 		"createdAt": "2025-06-01T00:00:00Z",
 		"updatedAt": "2025-06-01T00:00:00Z",
 	}
+}
+
+func sampleCommentResponseWithAttachment(id string) map[string]any {
+	cmt := sampleCommentResponse(id)
+	cmt["attachment"] = map[string]any{
+		"fileId":   "file1",
+		"name":     "contract.pdf",
+		"mimeType": "application/pdf",
+		"size":     1234,
+	}
+	return cmt
 }
 
 func TestRowsComment_JSON(t *testing.T) {
@@ -724,7 +813,7 @@ func TestRowsComments_JSON(t *testing.T) {
 		"GET /board/board1/table/table1/row/r1/comments": func(w http.ResponseWriter, r *http.Request) {
 			testutil.RespondJSON(w, http.StatusOK, map[string]any{
 				"items": []map[string]any{
-					sampleCommentResponse("c1"),
+					sampleCommentResponseWithAttachment("c1"),
 					sampleCommentResponse("c2"),
 				},
 				"pageInfo": map[string]any{
@@ -741,10 +830,15 @@ func TestRowsComments_JSON(t *testing.T) {
 	res := testutil.RunCommand(t, []string{"rows", "comments", "r1", "--json"}, "")
 	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
 
-	var page map[string]any
+	var page api.CommentsPage
 	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &page))
-	items := page["items"].([]any)
-	assert.Len(t, items, 2)
+	require.Len(t, page.Items, 2)
+	require.NotNil(t, page.Items[0].Attachment)
+	assert.Equal(t, "file1", page.Items[0].Attachment.FileID)
+	assert.Equal(t, "contract.pdf", page.Items[0].Attachment.Name)
+	assert.Equal(t, "application/pdf", page.Items[0].Attachment.MimeType)
+	assert.Equal(t, int64(1234), page.Items[0].Attachment.Size)
+	assert.Nil(t, page.Items[1].Attachment)
 }
 
 func TestRowsComments_QueryParams(t *testing.T) {
@@ -817,4 +911,80 @@ func TestRowsComments_HumanOutput(t *testing.T) {
 	assert.Contains(t, res.Stdout, "Alice <alice@example.com>")
 	assert.Contains(t, res.Stdout, "hello world")
 	assert.Contains(t, res.Stderr, "--after "+endCursor)
+}
+
+// ── rows comments attachments download ─────────────────────────────────────
+
+func TestRowsCommentAttachmentsDownload_WritesBinaryFile(t *testing.T) {
+	var authHeader string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/comment/c1/file/file1/download": func(w http.ResponseWriter, r *http.Request) {
+			authHeader = r.Header.Get("Authorization")
+			w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''comment%20file.txt")
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("comment attachment bytes"))
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	dest := filepath.Join(t.TempDir(), "comment-file.txt")
+	res := testutil.RunCommand(t, []string{
+		"rows", "comments", "attachments", "download", "r1",
+		"--comment", "c1",
+		"--file", "file1",
+		"-o", dest,
+		"--json",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "Bearer tok_test_fake", authHeader)
+
+	body, err := os.ReadFile(dest)
+	require.NoError(t, err)
+	assert.Equal(t, "comment attachment bytes", string(body))
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, "comment file.txt", out["file"])
+	assert.Equal(t, float64(len("comment attachment bytes")), out["size"])
+	assert.Equal(t, dest, out["path"])
+}
+
+func TestRowsCommentAttachmentsDownload_MissingCommentOrFile(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	missingComment := testutil.RunCommand(t, []string{
+		"rows", "comments", "attachments", "download", "r1",
+		"--file", "file1",
+	}, "")
+	assert.Equal(t, 2, missingComment.ExitCode)
+	assert.Contains(t, missingComment.Stderr, "comment")
+
+	missingFile := testutil.RunCommand(t, []string{
+		"rows", "comments", "attachments", "download", "r1",
+		"--comment", "c1",
+	}, "")
+	assert.Equal(t, 2, missingFile.ExitCode)
+	assert.Contains(t, missingFile.Stderr, "file")
+}
+
+func TestRowsCommentAttachmentsDownload_APIError(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row/r1/comment/c1/file/file1/download": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusForbidden, map[string]any{
+				"code":    "FORBIDDEN",
+				"message": "No comment attachment access",
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "comments", "attachments", "download", "r1",
+		"--comment", "c1",
+		"--file", "file1",
+		"--json",
+	}, "")
+	assert.Equal(t, 4, res.ExitCode)
+	assert.Contains(t, res.Stderr, "FORBIDDEN: No comment attachment access")
 }
