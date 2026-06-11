@@ -196,6 +196,15 @@ copera rows update-column-content <row-id> --board <board-id> --table <table-id>
 
 copera rows comment <row-id> --board <board-id> --table <table-id> --content "Looks good"
 copera rows comments <row-id> --board <board-id> --table <table-id>
+
+# Download attachments from FILE columns and comments
+copera rows attachments download <row-id> --board <board-id> --table <table-id> --column <column-id> --file <file-id> -o ./contract.pdf
+copera rows comments attachments download <row-id> --board <board-id> --table <table-id> --comment <comment-id> --file <file-id> -o ./contract.pdf
+
+# Authenticate a row using identifier and password columns
+copera rows authenticate --board <board-id> --table <table-id> \
+  --identifier-column <column-id> --identifier-value "user@example.com" \
+  --password-column <column-id> --password-value "secret"
 ```
 
 You can also pipe JSON or text into commands that accept stdin:
