@@ -249,6 +249,15 @@ func (c *Client) RowGet(ctx context.Context, boardID, tableID, rowID string) (*R
 	return &r, nil
 }
 
+func (c *Client) RowGetByRowID(ctx context.Context, boardID, tableID string, rowID int) (*Row, error) {
+	var r Row
+	path := fmt.Sprintf("/board/%s/table/%s/row-number/%d", boardID, tableID, rowID)
+	if err := c.do(ctx, "GET", path, nil, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 func (c *Client) RowCreate(ctx context.Context, boardID, tableID string, input *CreateRowInput) (*Row, error) {
 	var r Row
 	path := fmt.Sprintf("/board/%s/table/%s/row", boardID, tableID)

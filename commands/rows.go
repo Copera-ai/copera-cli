@@ -173,12 +173,38 @@ func resolveFilterFlag(raw string) (string, error) {
 
 func newRowsGetCmd(cli *CLI) *cobra.Command {
 	var flagBoard, flagTable string
+	var flagRow int
 
 	cmd := &cobra.Command{
 		Use:   "get <row-id>",
 		Short: "Get a single row",
-		Args:  cobra.ExactArgs(1),
+		Long: `Get a single row by its internal row ID, or by the visible table row number.
+
+Examples:
+  copera rows get <row-id> --board <B> --table <T>
+  copera rows get --row 42 --board <B> --table <T>`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			rowFlagSet := cmd.Flags().Changed("row")
+			if rowFlagSet && flagRow <= 0 {
+				err := fmt.Errorf("--row must be a positive integer")
+				cli.Printer.PrintError("invalid_row", err.Error(),
+					"Pass --row <positive-number>", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+			if rowFlagSet && len(args) > 0 {
+				err := fmt.Errorf("use either <row-id> or --row, not both")
+				cli.Printer.PrintError("invalid_args", err.Error(),
+					"Remove the positional row ID or remove --row", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+			if !rowFlagSet && len(args) != 1 {
+				err := fmt.Errorf("requires exactly one <row-id> or --row <number>")
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Pass a row ID argument or --row <number>", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
 			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
 				return err
@@ -199,7 +225,12 @@ func newRowsGetCmd(cli *CLI) *cobra.Command {
 			}
 
 			ctx := context.Background()
-			row, err := client.RowGet(ctx, boardID, tableID, args[0])
+			var row *api.Row
+			if rowFlagSet {
+				row, err = client.RowGetByRowID(ctx, boardID, tableID, flagRow)
+			} else {
+				row, err = client.RowGet(ctx, boardID, tableID, args[0])
+			}
 			if err != nil {
 				return apiError(cli, err)
 			}
@@ -251,6 +282,7 @@ func newRowsGetCmd(cli *CLI) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().IntVar(&flagRow, "row", 0, "Visible row number (Row#) to fetch")
 	return cmd
 }
 

@@ -279,6 +279,46 @@ func TestRowsGet_HumanOutput(t *testing.T) {
 	assert.Contains(t, res.Stdout, "DESCRIPTION/RICH TEXT columns use rows column-content/update-column-content with --column")
 }
 
+func TestRowsGet_ByRowNumber(t *testing.T) {
+	var capturedPath string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1/row-number/42": func(w http.ResponseWriter, r *http.Request) {
+			capturedPath = r.URL.Path
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "mongo-row-id", "rowId": 42, "owner": "user1", "table": "table1", "board": "board1",
+				"createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-06-01T00:00:00Z",
+				"columns": []map[string]any{
+					{"columnId": "c1", "value": "Fix the bug"},
+				},
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"rows", "get", "--row", "42", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Equal(t, "/board/board1/table/table1/row-number/42", capturedPath)
+
+	var row map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &row))
+	assert.Equal(t, "mongo-row-id", row["_id"])
+	assert.Equal(t, float64(42), row["rowId"])
+}
+
+func TestRowsGet_RowNumberValidation(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	conflict := testutil.RunCommand(t, []string{"rows", "get", "r1", "--row", "42"}, "")
+	assert.Equal(t, 2, conflict.ExitCode)
+	assert.Contains(t, conflict.Stderr, "invalid_args")
+	assert.Contains(t, conflict.Stderr, "--row, not both")
+
+	nonPositive := testutil.RunCommand(t, []string{"rows", "get", "--row", "0"}, "")
+	assert.Equal(t, 2, nonPositive.ExitCode)
+	assert.Contains(t, nonPositive.Stderr, "--row must be a positive integer")
+}
+
 // ── rows create ──────────────────────────────────────────────────────────────
 
 func TestRowsCreate_JSON(t *testing.T) {
