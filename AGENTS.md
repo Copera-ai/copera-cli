@@ -117,16 +117,17 @@ Note: unsupported column types are silently ignored by the API — the row is cr
 Rows have two different long-text surfaces. Do not mix them up:
 
 - **Fixed legacy row description** — shown by `rows get` as
-  `Description (legacy)`. Read it with `copera rows description <row-id>` and
-  update it with `copera rows update-description <row-id>`.
+  `Description (legacy)`. Read it with `copera rows description <row-id>`.
+  Updating it is no longer supported by the CLI.
 - **RICH TEXT / DESCRIPTION table column cells** — shown under `Columns` with
-  a column ID. Read them with
+  a column ID. A table can have multiple DESCRIPTION columns, so edits must
+  name the target column explicitly. Read them with
   `copera rows column-content <row-id> --column <column-id>` and update them
   with `copera rows update-column-content <row-id> --column <column-id>`.
 
-Never use `update-description` to update a table column named `Description`.
-Run `copera tables get <table-id> --board <board-id> --json`, find the column
-ID, then call `update-column-content --column <column-id>`.
+For a table column named `Description`, run
+`copera tables get <table-id> --board <board-id> --json`, find the column ID,
+then call `update-column-content --column <column-id>`.
 
 ---
 

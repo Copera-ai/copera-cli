@@ -188,7 +188,6 @@ copera rows delete <row-id> --board <board-id> --table <table-id> --force
 
 # Fixed legacy row description, shown by rows get as "Description (legacy)"
 copera rows description <row-id> --board <board-id> --table <table-id>
-copera rows update-description <row-id> --board <board-id> --table <table-id> --content "New description"
 
 # RICH TEXT / DESCRIPTION table column cells (modern long-text columns)
 copera rows column-content <row-id> --board <board-id> --table <table-id> --column <column-id>
@@ -217,12 +216,12 @@ echo "# Notes" | copera rows update-column-content <row-id> --board <board-id> -
 
 Rows have two separate long-text surfaces:
 
-- Fixed legacy row description: use `rows description` and `rows update-description`.
-- RICH TEXT / DESCRIPTION table column cells: use `rows column-content --column <column-id>` and `rows update-column-content --column <column-id>`.
+- Fixed legacy row description: use `rows description` to read it. Updating it is no longer supported by the CLI.
+- RICH TEXT / DESCRIPTION table column cells: tables can have multiple DESCRIPTION columns, so use `rows column-content --column <column-id>` and `rows update-column-content --column <column-id>`.
 
-Do not use `rows update-description` for a table column named `Description`.
-Run `copera tables get <table-id> --board <board-id> --json` to find the
-column ID, then use `rows update-column-content --column <column-id>`.
+For a table column named `Description`, run
+`copera tables get <table-id> --board <board-id> --json` to find the column ID,
+then use `rows update-column-content --column <column-id>`.
 
 ### Docs
 

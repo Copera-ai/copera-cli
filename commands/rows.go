@@ -23,13 +23,21 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rows",
 		Short: "Manage rows within a table",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			err := fmt.Errorf("unknown rows command %q", args[0])
+			cli.Printer.PrintError("unknown_command", err.Error(),
+				"Use 'copera rows --help' to see available commands. Tables can have multiple DESCRIPTION columns; use 'copera rows update-column-content <row-id> --column <column-id>'.", false)
+			return exitcodes.New(exitcodes.Usage, err)
+		},
 	}
 	cmd.AddCommand(
 		newRowsListCmd(cli),
 		newRowsGetCmd(cli),
 		newRowsCreateCmd(cli),
 		newRowsUpdateCmd(cli),
-		newRowsUpdateDescriptionCmd(cli),
 		newRowsDescriptionCmd(cli),
 		newRowsColumnContentCmd(cli),
 		newRowsUpdateColumnContentCmd(cli),
@@ -275,7 +283,7 @@ Examples:
 			}
 			if hasDescriptionColumn {
 				cli.Printer.PrintLine("")
-				cli.Printer.PrintLine("Tip: DESCRIPTION/RICH TEXT columns use rows column-content/update-column-content with --column. The legacy row description uses rows description/update-description.")
+				cli.Printer.PrintLine("Tip: tables can have multiple DESCRIPTION/RICH TEXT columns, so rows column-content/update-column-content require --column. The legacy row description is read-only via rows description.")
 			}
 			return nil
 		},
@@ -444,75 +452,6 @@ Example:
 	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
 	cmd.Flags().StringVar(&flagData, "data", "", "Row data as JSON")
-	return cmd
-}
-
-// ── rows update-description ─────────────────────────────────────────────────
-
-func newRowsUpdateDescriptionCmd(cli *CLI) *cobra.Command {
-	var flagBoard, flagTable string
-	var flagOperation, flagContent string
-
-	cmd := &cobra.Command{
-		Use:   "update-description <row-id>",
-		Short: "Update the legacy row description field",
-		Long: `Update the legacy row-level markdown description field.
-
-This command targets the fixed legacy description shown by rows get as
-"Description (legacy)". It does not update RICH TEXT / Description columns.
-For modern tables with one or more long-text columns, use:
-
-  copera rows update-column-content <row-id> --column <column-id>
-
-Content is read from --content or stdin. The update is processed asynchronously
-(the server returns 202 Accepted immediately).
-
-Operations:
-  replace  — replace entire description (default)
-  append   — add to the end
-  prepend  — add to the beginning`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cfg, err := requireAPIClient(cli)
-			if err != nil {
-				return err
-			}
-
-			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
-			if err != nil {
-				cli.Printer.PrintError("missing_id", err.Error(),
-					"Use --board <id> or set board_id in your profile config", false)
-				return exitcodes.New(exitcodes.Usage, err)
-			}
-
-			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
-			if err != nil {
-				cli.Printer.PrintError("missing_id", err.Error(),
-					"Use --table <id> or set table_id in your profile config", false)
-				return exitcodes.New(exitcodes.Usage, err)
-			}
-
-			content := flagContent
-			if content == "" {
-				content, err = readStdinContent(cli)
-				if err != nil {
-					cli.Printer.PrintError("input_error", err.Error(), "Pipe content via stdin or use --content", false)
-					return exitcodes.New(exitcodes.Usage, err)
-				}
-			}
-
-			if err := client.RowUpdateDescription(context.Background(), boardID, tableID, args[0], flagOperation, content); err != nil {
-				return apiError(cli, err)
-			}
-
-			cli.Printer.Info("Description update queued (operation: %s). Processing is async.", flagOperation)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
-	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
-	cmd.Flags().StringVar(&flagOperation, "operation", "replace", "Update operation: replace|append|prepend")
-	cmd.Flags().StringVar(&flagContent, "content", "", "Content text (reads stdin if not set)")
 	return cmd
 }
 
@@ -1063,11 +1002,10 @@ func newRowsUpdateColumnContentCmd(cli *CLI) *cobra.Command {
 		Short: "Update a RICH TEXT / Description column cell",
 		Long: `Update the markdown content of a RICH TEXT / Description column cell on a row.
 
-Modern tables can have several long-text columns; --column selects which one.
-This is different from the fixed legacy row description. To update that legacy
-field instead, use:
-
-  copera rows update-description <row-id>
+Modern tables can have multiple DESCRIPTION/RICH TEXT columns; --column selects which one.
+This is the supported path for updating long-text description content. The
+fixed legacy row description can still be read with rows description, but it is
+not writable through the CLI.
 
 Content is read from --content or stdin. The update is processed asynchronously
 (the server returns 202 Accepted immediately).

@@ -64,7 +64,7 @@ Designed to be used by both **humans** (interactive, list/tree output) and **LLM
 copera auth login|status|logout
 copera boards list|get          (alias: bases)
 copera tables list|get|export
-copera rows list|get|create|update|delete|description|update-description|column-content|update-column-content|authenticate|comment|comments
+copera rows list|get|create|update|delete|description|column-content|update-column-content|authenticate|comment|comments
 copera docs tree|search|get|content|update|metadata|create|delete
 copera drive tree|search|get|download|upload|mkdir
 copera notifications list|read|unread|delete
@@ -103,15 +103,15 @@ copera schema <command>
 - `POST /board/{boardId}/table/{tableId}/row/{rowId}/comment` — create comment
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/comments` — list comments (paginated)
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/md` — get the fixed legacy row markdown description
-- `POST /board/{boardId}/table/{tableId}/row/{rowId}/md` — update the fixed legacy row description (async, 202); body: `{operation, content}`
+- `POST /board/{boardId}/table/{tableId}/row/{rowId}/md` — legacy API endpoint for updating the fixed row description; not exposed by the CLI
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — get a RICH TEXT (DESCRIPTION) column cell's markdown content; returns `{content}` (empty string when unset)
 - `POST /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — update a RICH TEXT (DESCRIPTION) column cell (async, 202); body: `{operation, content}`
 - `POST /board/{boardId}/table/{tableId}/export` — render table view; body: `{boardId, viewId, format, ...}`; returns inline payload OR `asyncJob` for PDF/ZIP/large renders
 
-Important for agents: `rows update-description` only changes the fixed legacy
-row description shown by `rows get` as `Description (legacy)`. If a table has a
-column named `Description` or type `DESCRIPTION`, fetch the column ID with
-`tables get --json` and update it with
+Important for agents: the CLI no longer supports updating the fixed legacy row
+description shown by `rows get` as `Description (legacy)`. A table can have
+multiple columns named `Description` or type `DESCRIPTION`, so fetch the column
+ID with `tables get --json` and update the intended cell with
 `rows update-column-content <row-id> --column <column-id>`.
 
 ### Docs endpoints (prefix: `/docs/`)

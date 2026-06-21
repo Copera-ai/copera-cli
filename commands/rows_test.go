@@ -276,7 +276,8 @@ func TestRowsGet_HumanOutput(t *testing.T) {
 	assert.Contains(t, res.Stdout, "Title: Fix the bug")
 	assert.Contains(t, res.Stdout, "Related Tasks: Task Alpha, Task Beta")
 	assert.Contains(t, res.Stdout, "Description (column: c4, type: DESCRIPTION): Modern description preview")
-	assert.Contains(t, res.Stdout, "DESCRIPTION/RICH TEXT columns use rows column-content/update-column-content with --column")
+	assert.Contains(t, res.Stdout, "multiple DESCRIPTION/RICH TEXT columns")
+	assert.Contains(t, res.Stdout, "rows column-content/update-column-content require --column")
 }
 
 func TestRowsGet_ByRowNumber(t *testing.T) {
@@ -493,24 +494,6 @@ func TestRowsAuthenticate_MissingFlags(t *testing.T) {
 	assert.Equal(t, 2, res.ExitCode)
 }
 
-// ── rows update-description ─────────────────────────────────────────────────
-
-func TestRowsUpdateDescription_ReadsStdin(t *testing.T) {
-	var capturedBody map[string]string
-	srv := testutil.NewMockServer(t, testutil.MockRoutes{
-		"POST /board/board1/table/table1/row/r1/md": func(w http.ResponseWriter, r *http.Request) {
-			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
-			w.WriteHeader(http.StatusAccepted)
-		},
-	}.Handler())
-	setupHomeWithBoard(t, srv.URL)
-
-	res := testutil.RunCommand(t, []string{"rows", "update-description", "r1"}, "# Updated description")
-	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
-	assert.Equal(t, "replace", capturedBody["operation"])
-	assert.Equal(t, "# Updated description", capturedBody["content"])
-}
-
 // ── rows description ────────────────────────────────────────────────────────
 
 func TestRowsDescription_HumanOutput(t *testing.T) {
@@ -546,28 +529,12 @@ func TestRowsDescription_JSON(t *testing.T) {
 	assert.Equal(t, "raw markdown", out["content"])
 }
 
-func TestRowsUpdateDescription_AppendOperation(t *testing.T) {
-	var capturedBody map[string]string
-	srv := testutil.NewMockServer(t, testutil.MockRoutes{
-		"POST /board/board1/table/table1/row/r1/md": func(w http.ResponseWriter, r *http.Request) {
-			_ = json.NewDecoder(r.Body).Decode(&capturedBody)
-			w.WriteHeader(http.StatusAccepted)
-		},
-	}.Handler())
-	setupHomeWithBoard(t, srv.URL)
-
-	res := testutil.RunCommand(t, []string{"rows", "update-description", "r1", "--operation", "append", "--content", "new section"}, "")
-	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
-	assert.Equal(t, "append", capturedBody["operation"])
-	assert.Equal(t, "new section", capturedBody["content"])
-}
-
-func TestRowsDescriptionHelpClarifiesLegacyVsColumnContent(t *testing.T) {
-	res := testutil.RunCommand(t, []string{"rows", "update-description", "--help"}, "")
-	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
-	assert.Contains(t, res.Stdout, "legacy row-level markdown description")
-	assert.Contains(t, res.Stdout, "does not update RICH TEXT / Description columns")
-	assert.Contains(t, res.Stdout, "rows update-column-content")
+func TestRowsUpdateDescriptionCommandRemoved(t *testing.T) {
+	res := testutil.RunCommand(t, []string{"rows", "update-description", "r1"}, "")
+	require.Equal(t, 2, res.ExitCode)
+	assert.Contains(t, res.Stderr, "unknown rows command")
+	assert.Contains(t, res.Stderr, "multiple DESCRIPTION columns")
+	assert.Contains(t, res.Stderr, "rows update-column-content")
 }
 
 // ── rows column-content ─────────────────────────────────────────────────────
@@ -661,8 +628,9 @@ func TestRowsColumnContentHelpClarifiesModernDescriptionColumns(t *testing.T) {
 	res := testutil.RunCommand(t, []string{"rows", "update-column-content", "--help"}, "")
 	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
 	assert.Contains(t, res.Stdout, "RICH TEXT / Description column cell")
-	assert.Contains(t, res.Stdout, "different from the fixed legacy row description")
-	assert.Contains(t, res.Stdout, "rows update-description")
+	assert.Contains(t, res.Stdout, "multiple DESCRIPTION/RICH TEXT columns")
+	assert.Contains(t, res.Stdout, "supported path for updating long-text description content")
+	assert.Contains(t, res.Stdout, "not writable through the CLI")
 }
 
 // ── rows attachments download ───────────────────────────────────────────────
