@@ -1,10 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -371,4 +377,289 @@ func (c *Client) CommentList(ctx context.Context, boardID, tableID, rowID string
 func (c *Client) CommentAttachmentDownload(ctx context.Context, boardID, tableID, rowID, commentID, fileID string) (*http.Response, error) {
 	path := fmt.Sprintf("/board/%s/table/%s/row/%s/comment/%s/file/%s/download", boardID, tableID, rowID, commentID, fileID)
 	return c.Download(ctx, path)
+}
+
+// ── Board write methods ──────────────────────────────────────────────────────
+
+// CreateBoardInput is the body for POST /board.
+type CreateBoardInput struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	TableName   string `json:"tableName,omitempty"`
+}
+
+// CreatedBoard is the response for POST /board.
+type CreatedBoard struct {
+	ID             string `json:"_id"`
+	Name           string `json:"name"`
+	Description    string `json:"description,omitempty"`
+	DefaultTableID string `json:"defaultTableId,omitempty"`
+}
+
+// UpdateBoardInput is the body for PATCH /board/{boardId}. Fields are optional.
+type UpdateBoardInput struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Icon        *string `json:"icon,omitempty"`
+}
+
+// UpdatedBoard is the response for PATCH /board/{boardId}.
+type UpdatedBoard struct {
+	ID          string `json:"_id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// DeletedResponse is the shape returned by board/table/column/file delete endpoints.
+type DeletedResponse struct {
+	Success bool `json:"success"`
+}
+
+// AddParticipantsInput is the body for POST /board/{boardId}/participants.
+type AddParticipantsInput struct {
+	ParticipantIDs []string `json:"participantIds"`
+}
+
+// BoardParticipants is the response for POST /board/{boardId}/participants.
+type BoardParticipants struct {
+	BoardID            string   `json:"boardId"`
+	ParticipantUserIDs []string `json:"participantUserIds"`
+}
+
+func (c *Client) BoardCreate(ctx context.Context, input *CreateBoardInput) (*CreatedBoard, error) {
+	var b CreatedBoard
+	if err := c.do(ctx, http.MethodPost, "/board", input, &b); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (c *Client) BoardUpdate(ctx context.Context, boardID string, input *UpdateBoardInput) (*UpdatedBoard, error) {
+	var b UpdatedBoard
+	if err := c.do(ctx, http.MethodPatch, fmt.Sprintf("/board/%s", boardID), input, &b); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (c *Client) BoardDelete(ctx context.Context, boardID string) (*DeletedResponse, error) {
+	var d DeletedResponse
+	if err := c.do(ctx, http.MethodDelete, fmt.Sprintf("/board/%s", boardID), nil, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+func (c *Client) BoardAddParticipants(ctx context.Context, boardID string, input *AddParticipantsInput) (*BoardParticipants, error) {
+	var p BoardParticipants
+	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/board/%s/participants", boardID), input, &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (c *Client) BoardRemoveParticipant(ctx context.Context, boardID, participantID string) (*DeletedResponse, error) {
+	var d DeletedResponse
+	if err := c.do(ctx, http.MethodDelete, fmt.Sprintf("/board/%s/participant/%s", boardID, participantID), nil, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// ── Table write methods ──────────────────────────────────────────────────────
+
+// CreateTableInput is the body for POST /board/{boardId}/table.
+type CreateTableInput struct {
+	Name string `json:"name"`
+}
+
+// UpdateTableInput is the body for PATCH /board/{boardId}/table/{tableId}.
+type UpdateTableInput struct {
+	Name string `json:"name"`
+}
+
+// CreatedBoardTable is the response for table create/update.
+type CreatedBoardTable struct {
+	ID      string `json:"_id"`
+	Name    string `json:"name"`
+	BoardID string `json:"boardId"`
+}
+
+func (c *Client) TableCreate(ctx context.Context, boardID string, input *CreateTableInput) (*CreatedBoardTable, error) {
+	var t CreatedBoardTable
+	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/board/%s/table", boardID), input, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (c *Client) TableUpdate(ctx context.Context, boardID, tableID string, input *UpdateTableInput) (*CreatedBoardTable, error) {
+	var t CreatedBoardTable
+	if err := c.do(ctx, http.MethodPatch, fmt.Sprintf("/board/%s/table/%s", boardID, tableID), input, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (c *Client) TableDelete(ctx context.Context, boardID, tableID string) (*DeletedResponse, error) {
+	var d DeletedResponse
+	if err := c.do(ctx, http.MethodDelete, fmt.Sprintf("/board/%s/table/%s", boardID, tableID), nil, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// ── Column write methods ─────────────────────────────────────────────────────
+
+// ColumnOptionInput is a selectable option supplied when creating/updating a column.
+type ColumnOptionInput struct {
+	Label string `json:"label"`
+	Color string `json:"color,omitempty"`
+}
+
+// AddColumnInput is the body for POST /board/{boardId}/table/{tableId}/column.
+// Type must be one of the public creatable column types (UPPERCASE).
+type AddColumnInput struct {
+	Label   string              `json:"label"`
+	Type    string              `json:"type"`
+	Options []ColumnOptionInput `json:"options,omitempty"`
+}
+
+// UpdateColumnInput is the body for PATCH .../column/{columnId}.
+// Options are append-only via AddOptions and only valid for STATUS/DROPDOWN/LABELS.
+type UpdateColumnInput struct {
+	Label      *string             `json:"label,omitempty"`
+	AddOptions []ColumnOptionInput `json:"addOptions,omitempty"`
+}
+
+// ColumnWithOptions is the response for column create/update.
+type ColumnWithOptions struct {
+	ColumnID string         `json:"columnId"`
+	Label    string         `json:"label"`
+	Type     string         `json:"type"`
+	Options  []ColumnOption `json:"options,omitempty"`
+}
+
+// PublicCreatableColumnTypes lists the column types the public API accepts on create.
+var PublicCreatableColumnTypes = []string{
+	"TEXT", "PARAGRAPH", "NUMBER", "MONEY", "DATE", "EMAIL", "PHONE", "WEBSITE",
+	"CHECKBOX", "STATUS", "DROPDOWN", "LABELS", "USERS", "LOCATION", "DESCRIPTION", "FILE",
+}
+
+// IsValidColumnType reports whether t is a public creatable column type (case-sensitive, UPPERCASE).
+func IsValidColumnType(t string) bool {
+	for _, v := range PublicCreatableColumnTypes {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) ColumnAdd(ctx context.Context, boardID, tableID string, input *AddColumnInput) (*ColumnWithOptions, error) {
+	var col ColumnWithOptions
+	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/board/%s/table/%s/column", boardID, tableID), input, &col); err != nil {
+		return nil, err
+	}
+	return &col, nil
+}
+
+func (c *Client) ColumnUpdate(ctx context.Context, boardID, tableID, columnID string, input *UpdateColumnInput) (*ColumnWithOptions, error) {
+	var col ColumnWithOptions
+	if err := c.do(ctx, http.MethodPatch, fmt.Sprintf("/board/%s/table/%s/column/%s", boardID, tableID, columnID), input, &col); err != nil {
+		return nil, err
+	}
+	return &col, nil
+}
+
+// ── Row FILE-column attachment write methods ─────────────────────────────────
+
+// RowAttachmentDelete detaches a file from a FILE-column cell.
+func (c *Client) RowAttachmentDelete(ctx context.Context, boardID, tableID, rowID, columnID, fileID string) (*DeletedResponse, error) {
+	var d DeletedResponse
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/column/%s/file/%s", boardID, tableID, rowID, columnID, fileID)
+	if err := c.do(ctx, http.MethodDelete, path, nil, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// RowAttachmentUpload uploads a file to a FILE-column cell via multipart/form-data.
+// The whole file is buffered so a valid Content-Length is sent (required by the API).
+func (c *Client) RowAttachmentUpload(ctx context.Context, boardID, tableID, rowID, columnID, filePath string) (*Attachment, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("api: open file: %w", err)
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("api: build multipart: %w", err)
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return nil, fmt.Errorf("api: read file: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return nil, fmt.Errorf("api: finalize multipart: %w", err)
+	}
+
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/column/%s/file", boardID, tableID, rowID, columnID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, &buf)
+	if err != nil {
+		return nil, fmt.Errorf("api: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	if c.verbose != nil {
+		fmt.Fprintf(c.verbose, ">> %s %s (multipart, %d bytes)\n", http.MethodPost, req.URL.String(), buf.Len())
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("api: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("api: read response: %w", err)
+	}
+
+	if c.verbose != nil {
+		fmt.Fprintf(c.verbose, "<< %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+		fmt.Fprintf(c.verbose, "<< %s\n", string(respBody))
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		apiErr := &APIError{StatusCode: resp.StatusCode}
+		var errBody struct {
+			Code    string `json:"code"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(respBody, &errBody) == nil {
+			apiErr.Code = errBody.Code
+			apiErr.Message = errBody.Error
+			if apiErr.Message == "" {
+				apiErr.Message = errBody.Message
+			}
+		}
+		if apiErr.Message == "" {
+			apiErr.Message = http.StatusText(resp.StatusCode)
+		}
+		return nil, apiErr
+	}
+
+	var att Attachment
+	if len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, &att); err != nil {
+			return nil, fmt.Errorf("api: decode response: %w", err)
+		}
+	}
+	return &att, nil
 }

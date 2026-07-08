@@ -56,6 +56,51 @@ func TestWorkspaceInfo_Human(t *testing.T) {
 	assert.Contains(t, res.Stdout, "42")
 }
 
+// ── workspace me ──────────────────────────────────────────────────────────────
+
+func TestWorkspaceMe_JSON(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /workspace/me": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "u001", "name": "Mike Johnson", "email": "mike@acme.com",
+				"title": "Engineer", "type": "user", "status": "online",
+				"active": true, "createdAt": "2024-03-10T08:00:00Z",
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"workspace", "me", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, "Mike Johnson", out["name"])
+	assert.Equal(t, "mike@acme.com", out["email"])
+	assert.Equal(t, "u001", out["_id"])
+}
+
+func TestWorkspaceMe_Human(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /workspace/me": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "u001", "name": "Mike Johnson", "email": "mike@acme.com",
+				"title": "Engineer", "type": "user", "status": "online",
+				"active": true, "createdAt": "2024-03-10T08:00:00Z",
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"workspace", "me", "--output", "table"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "Name:")
+	assert.Contains(t, res.Stdout, "Mike Johnson")
+	assert.Contains(t, res.Stdout, "Email:")
+	assert.Contains(t, res.Stdout, "mike@acme.com")
+	assert.Contains(t, res.Stdout, "u001")
+}
+
 // ── workspace members ───────────────────────────────────────────────────────
 
 func TestWorkspaceMembers_JSON(t *testing.T) {
@@ -231,4 +276,69 @@ func TestWorkspaceTeams_Human(t *testing.T) {
 	assert.Contains(t, res.Stdout, "Engineering")
 	assert.Contains(t, res.Stdout, "Members:")
 	assert.Contains(t, res.Stdout, "Design")
+}
+
+// ── workspace team create ────────────────────────────────────────────────────
+
+func TestWorkspaceTeamCreate_JSON(t *testing.T) {
+	var captured map[string]any
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /workspace/team": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&captured)
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "t100", "name": "Platform", "main": false,
+				"participants": []string{"u001", "u002"},
+				"createdBy":    "u001",
+				"createdAt":    "2025-01-01T00:00:00Z", "updatedAt": "2025-01-01T00:00:00Z",
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"workspace", "team", "create",
+		"--name", "Platform",
+		"--participant", "u001", "--participant", "u002",
+		"--json",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+
+	assert.Equal(t, "Platform", captured["name"])
+	parts := captured["participantUserIds"].([]any)
+	assert.Len(t, parts, 2)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, "Platform", out["name"])
+	assert.Equal(t, "t100", out["_id"])
+}
+
+func TestWorkspaceTeamCreate_Human(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /workspace/team": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"_id": "t100", "name": "Platform", "main": false,
+				"participants": []string{},
+				"createdBy":    "u001",
+				"createdAt":    "2025-01-01T00:00:00Z", "updatedAt": "2025-01-01T00:00:00Z",
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"workspace", "team", "create", "--name", "Platform", "--output", "table",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "ID:       t100")
+	assert.Contains(t, res.Stdout, "Name:     Platform")
+}
+
+func TestWorkspaceTeamCreate_MissingName(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"workspace", "team", "create"}, "")
+	assert.Equal(t, 2, res.ExitCode)
+	assert.Contains(t, res.Stderr, "team name is required")
 }

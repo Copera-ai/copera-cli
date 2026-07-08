@@ -397,7 +397,14 @@ func newAuthWhoamiCmd(cli *CLI) *cobra.Command {
 				return err
 			}
 
-			ws, err := client.WorkspaceInfo(context.Background())
+			ctx := context.Background()
+
+			ws, err := client.WorkspaceInfo(ctx)
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			me, err := client.Me(ctx)
 			if err != nil {
 				return apiError(cli, err)
 			}
@@ -407,18 +414,27 @@ func newAuthWhoamiCmd(cli *CLI) *cobra.Command {
 				Token     string `json:"token"`
 				Workspace string `json:"workspace"`
 				Slug      string `json:"slug"`
+				Name      string `json:"name"`
+				Email     string `json:"email"`
+				UserID    string `json:"user_id"`
 			}
 			out := whoamiOut{
 				Profile:   cfg.Profile,
 				Token:     auth.MaskToken(cfg.Token),
 				Workspace: ws.Name,
 				Slug:      ws.Slug,
+				Name:      me.Name,
+				Email:     me.Email,
+				UserID:    me.ID,
 			}
 
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(out)
 			}
 
+			cli.Printer.PrintLine(fmt.Sprintf("User:      %s", out.Name))
+			cli.Printer.PrintLine(fmt.Sprintf("Email:     %s", out.Email))
+			cli.Printer.PrintLine(fmt.Sprintf("User ID:   %s", out.UserID))
 			cli.Printer.PrintLine(fmt.Sprintf("Workspace: %s (%s)", out.Workspace, out.Slug))
 			cli.Printer.PrintLine(fmt.Sprintf("Profile:   %s", out.Profile))
 			cli.Printer.PrintLine(fmt.Sprintf("Token:     %s", out.Token))

@@ -61,18 +61,33 @@ Designed to be used by both **humans** (interactive, list/tree output) and **LLM
 
 ### Implemented Commands
 ```
-copera auth login|status|logout
-copera boards list|get          (alias: bases)
-copera tables list|get|export
+copera auth login|whoami|status|logout
+copera boards list|get|create|update|delete|participants add|remove   (alias: bases)
+copera tables list|get|export|create|update|delete|columns add|update
 copera rows list|get|create|update|delete|description|column-content|update-column-content|authenticate|comment|comments
+copera rows attachments download|upload|delete
+copera rows comments attachments download
 copera docs tree|search|get|content|update|metadata|create|delete
 copera drive tree|search|get|download|upload|mkdir
+copera channels list|create|archive|unarchive
+copera channels message send
+copera channels participants add|remove
+copera channels dm send
+copera workspace info|me|members|teams|team create
+copera bookings list|get
+copera booking-types list
+copera meeting-notes list|get
+copera search <query>
 copera notifications list|read|unread|delete
 copera cache status|clean
 copera update [--version] [--force]
 copera version
 copera completion bash|zsh|fish
 ```
+
+Notes:
+- `rows get` accepts a `--row <number>` flag to look up a row by its visible Row# (alternative to the internal row ID).
+- `auth whoami` shows the authenticated User/Email/User ID plus workspace, active profile, and token source.
 
 ### Not Yet Implemented
 ```
@@ -95,10 +110,21 @@ copera schema <command>
 ### Board endpoints (prefix: `/board/`)
 - `GET /board/list-boards` — list all boards (returns array)
 - `GET /board/{boardId}` — get board
+- `POST /board` — create board
+- `PATCH /board/{boardId}` — update board
+- `DELETE /board/{boardId}` — delete board
+- `POST /board/{boardId}/participants` — add board participant
+- `DELETE /board/{boardId}/participant/{participantId}` — remove board participant
 - `GET /board/{boardId}/tables` — list tables (returns array with columns)
 - `GET /board/{boardId}/table/{tableId}` — get table with columns
+- `POST /board/{boardId}/table` — create table
+- `PATCH /board/{boardId}/table/{tableId}` — update table
+- `DELETE /board/{boardId}/table/{tableId}` — delete table
+- `POST /board/{boardId}/table/{tableId}/column` — add column
+- `PATCH /board/{boardId}/table/{tableId}/column/{columnId}` — update column
 - `GET /board/{boardId}/table/{tableId}/rows` — list rows
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}` — get row
+- `GET /board/{boardId}/table/{tableId}/row-number/{rowNumber}` — get row by visible Row#
 - `POST /board/{boardId}/table/{tableId}/row` — create row
 - `POST /board/{boardId}/table/{tableId}/row/{rowId}/comment` — create comment
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/comments` — list comments (paginated)
@@ -106,6 +132,10 @@ copera schema <command>
 - `POST /board/{boardId}/table/{tableId}/row/{rowId}/md` — legacy API endpoint for updating the fixed row description; not exposed by the CLI
 - `GET /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — get a RICH TEXT (DESCRIPTION) column cell's markdown content; returns `{content}` (empty string when unset)
 - `POST /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/md` — update a RICH TEXT (DESCRIPTION) column cell (async, 202); body: `{operation, content}`
+- `GET /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/file/{fileId}/download` — download a FILE column attachment
+- `POST /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/file` — upload a file to a FILE column cell (multipart)
+- `DELETE /board/{boardId}/table/{tableId}/row/{rowId}/column/{columnId}/file/{fileId}` — delete a FILE column attachment
+- `GET /board/{boardId}/table/{tableId}/row/{rowId}/comment/{commentId}/file/{fileId}/download` — download a row comment attachment
 - `POST /board/{boardId}/table/{tableId}/export` — render table view; body: `{boardId, viewId, format, ...}`; returns inline payload OR `asyncJob` for PDF/ZIP/large renders
 
 Important for agents: the CLI no longer supports updating the fixed legacy row
@@ -123,6 +153,32 @@ ID with `tables get --json` and update the intended cell with
 - `POST /docs/` — create doc; body: `{title, parent?, content?}`
 - `PATCH /docs/{id}` — update properties; body: `{title?, icon?: {type, value}, cover?: {type, value}}`
 - `DELETE /docs/{id}` — soft-delete
+
+### Chat endpoints (prefix: `/chat/`)
+- `GET /chat/channels` — list channels (paginated; supports kind/query filters)
+- `POST /chat/channel/{channelId}/send-message` — send a message to a channel
+- `POST /chat/channel` — create a channel
+- `POST /chat/channel/{channelId}/participants` — add channel participant(s)
+- `DELETE /chat/channel/{channelId}/participant/{participantUserId}` — remove channel participant
+- `POST /chat/channel/{channelId}/archive` — archive a channel
+- `POST /chat/channel/{channelId}/unarchive` — unarchive a channel
+- `POST /chat/direct-message/send-message` — send a direct message to a user
+
+### Workspace endpoints (prefix: `/workspace/`)
+- `GET /workspace/info` — workspace metadata
+- `GET /workspace/me` — the authenticated PAT user's identity (User/Email/User ID)
+- `GET /workspace/members` — list workspace members (paginated)
+- `GET /workspace/teams` — list teams (paginated)
+- `POST /workspace/team` — create a team
+
+### Bookings endpoints
+- `GET /bookings` — list bookings (paginated)
+- `GET /bookings/{id}` — get a booking
+- `GET /booking-types` — list booking types
+
+### Meeting-notes endpoints
+- `GET /meeting-notes` — list meeting notes (paginated)
+- `GET /meeting-notes/{noteId}` — get a meeting note
 
 ### Notifications endpoints (prefix: `/notifications/`)
 - `GET /notifications/?after=&before=` — list notifications owned by the PAT user; returns `{notifications, unreadCount, count}`. Cursors are notification IDs (24-char ObjectId).

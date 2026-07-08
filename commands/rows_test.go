@@ -709,6 +709,140 @@ func TestRowsAttachmentsDownload_APIError(t *testing.T) {
 	assert.Contains(t, res.Stderr, "FORBIDDEN: No file access")
 }
 
+// ── rows attachments upload ─────────────────────────────────────────────────
+
+func TestRowsAttachmentsUpload_Multipart(t *testing.T) {
+	var gotFilename, gotContent, gotContentType string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/column/file_col/file": func(w http.ResponseWriter, r *http.Request) {
+			gotContentType = r.Header.Get("Content-Type")
+			require.NoError(t, r.ParseMultipartForm(10<<20))
+			f, hdr, err := r.FormFile("file")
+			require.NoError(t, err)
+			defer f.Close()
+			gotFilename = hdr.Filename
+			b, _ := io.ReadAll(f)
+			gotContent = string(b)
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"fileId": "newfile1", "name": hdr.Filename, "mimeType": "text/plain", "size": len(b),
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	src := filepath.Join(t.TempDir(), "notes.txt")
+	require.NoError(t, os.WriteFile(src, []byte("hello attachment"), 0o644))
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "attachments", "upload", "r1", src,
+		"--column", "file_col",
+		"--json",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, gotContentType, "multipart/form-data")
+	assert.Equal(t, "notes.txt", gotFilename)
+	assert.Equal(t, "hello attachment", gotContent)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, "newfile1", out["fileId"])
+	assert.Equal(t, "notes.txt", out["name"])
+}
+
+func TestRowsAttachmentsUpload_Human(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/row/r1/column/file_col/file": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"fileId": "newfile1", "name": "notes.txt", "mimeType": "text/plain", "size": 16,
+			})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	src := filepath.Join(t.TempDir(), "notes.txt")
+	require.NoError(t, os.WriteFile(src, []byte("hello attachment"), 0o644))
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "attachments", "upload", "r1", src,
+		"--column", "file_col", "--output", "table",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stdout, "File ID:  newfile1")
+	assert.Contains(t, res.Stdout, "File:     notes.txt")
+}
+
+func TestRowsAttachmentsUpload_MissingFile(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "attachments", "upload", "r1", "/nonexistent/file.txt",
+		"--column", "file_col",
+	}, "")
+	assert.NotEqual(t, 0, res.ExitCode)
+	assert.Contains(t, res.Stderr, "file_error")
+}
+
+// ── rows attachments delete ─────────────────────────────────────────────────
+
+func TestRowsAttachmentsDelete_Force(t *testing.T) {
+	var hit bool
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"DELETE /board/board1/table/table1/row/r1/column/file_col/file/file1": func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{"success": true})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "attachments", "delete", "r1",
+		"--column", "file_col", "--file", "file1", "--force", "--json",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.True(t, hit)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, true, out["deleted"])
+	assert.Equal(t, "file1", out["fileId"])
+}
+
+func TestRowsAttachmentsDelete_ConfirmYes(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"DELETE /board/board1/table/table1/row/r1/column/file_col/file/file1": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{"success": true})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "attachments", "delete", "r1",
+		"--column", "file_col", "--file", "file1", "--output", "table",
+	}, "y\n")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.Contains(t, res.Stderr, "Attachment detached.")
+}
+
+func TestRowsAttachmentsDelete_RequiresForceNonInteractive(t *testing.T) {
+	var hit bool
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"DELETE /board/board1/table/table1/row/r1/column/file_col/file/file1": func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{"success": true})
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"rows", "attachments", "delete", "r1",
+		"--column", "file_col", "--file", "file1", "--no-input",
+	}, "")
+	assert.Equal(t, 2, res.ExitCode)
+	assert.Contains(t, res.Stderr, "confirmation_required")
+	assert.False(t, hit)
+}
+
 // ── rows comment ────────────────────────────────────────────────────────────
 
 func sampleCommentResponse(id string) map[string]any {

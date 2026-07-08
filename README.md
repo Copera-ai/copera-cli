@@ -167,14 +167,25 @@ copera auth logout
 copera boards list
 copera boards list --query "roadmap"
 copera boards get <board-id>
+copera boards create --name "Q3 Roadmap"
+copera boards update <board-id> --name "Q4 Roadmap"
+copera boards delete <board-id> --force
+copera boards participants add --board <board-id> --participant <user-id>
+copera boards participants remove <participant-id> --board <board-id>
 
 copera tables list --board <board-id>
 copera tables list --board <board-id> --query "tasks"
 copera tables get <table-id> --board <board-id>
 copera tables export <table-id> --board <board-id> --view <view-id> --format CSV -o out.csv
+copera tables create --board <board-id> --name "Tasks"
+copera tables update <table-id> --board <board-id> --name "Backlog"
+copera tables delete <table-id> --board <board-id> --force
+copera tables columns add --board <board-id> --table <table-id> --label "Status" --type STATUS --option "Open" --option "Done"
+copera tables columns update <column-id> --board <board-id> --table <table-id> --label "State"
 ```
 
-`copera bases` is an alias for `copera boards`.
+`copera bases` is an alias for `copera boards`. Run `copera <command> --help`
+for the exact flags each write command accepts.
 
 ### Rows
 
@@ -182,6 +193,7 @@ copera tables export <table-id> --board <board-id> --view <view-id> --format CSV
 copera rows list --board <board-id> --table <table-id>
 copera rows list --board <board-id> --table <table-id> --query "oauth"
 copera rows get <row-id> --board <board-id> --table <table-id>
+copera rows get --row 42 --board <board-id> --table <table-id>   # look up by visible Row#
 copera rows create --board <board-id> --table <table-id> --data '{"columns":[{"columnId":"<column-id>","value":"Hello"}]}'
 copera rows update <row-id> --board <board-id> --table <table-id> --data '{"columns":[{"columnId":"<column-id>","value":"Updated"}]}'
 copera rows delete <row-id> --board <board-id> --table <table-id> --force
@@ -196,8 +208,10 @@ copera rows update-column-content <row-id> --board <board-id> --table <table-id>
 copera rows comment <row-id> --board <board-id> --table <table-id> --content "Looks good"
 copera rows comments <row-id> --board <board-id> --table <table-id>
 
-# Download attachments from FILE columns and comments
+# Manage attachments on FILE columns, and download from comments
 copera rows attachments download <row-id> --board <board-id> --table <table-id> --column <column-id> --file <file-id> -o ./contract.pdf
+copera rows attachments upload <row-id> ./contract.pdf --board <board-id> --table <table-id> --column <column-id>
+copera rows attachments delete <row-id> --board <board-id> --table <table-id> --column <column-id> --file <file-id> --force
 copera rows comments attachments download <row-id> --board <board-id> --table <table-id> --comment <comment-id> --file <file-id> -o ./contract.pdf
 
 # Authenticate a row using identifier and password columns
@@ -265,19 +279,48 @@ upload.
 copera channels list
 copera channels list --query "deploy"
 copera channels list --kind dm --participant <user-id>
+copera channels create "deploys" --description "Deploy notifications" --participant <user-id>
+copera channels archive <channel-id> --force
+copera channels unarchive <channel-id>
 
 copera channels message send "Hello" --channel <channel-id>
 copera channels message send "Hello" --user <user-id>
 echo "Deploy done" | copera channels message send --channel <channel-id>
+
+copera channels participants add --channel <channel-id> --participant <user-id>
+copera channels participants remove <participant-user-id> --channel <channel-id> --force
+
+copera channels dm send "Hi there" --user <user-id>
 ```
 
-### Workspace, Search, and Notifications
+### Workspace
 
 ```bash
 copera workspace info
+copera workspace me                       # the authenticated user's identity
 copera workspace members
+copera workspace members --query "jane"
 copera workspace teams
+copera workspace team create --name "Design" --participant <user-id>
+```
 
+### Bookings and Meeting Notes
+
+```bash
+copera bookings list
+copera bookings list --status CONFIRMED --from 2026-01-01T00:00:00Z
+copera bookings get <booking-id>
+copera booking-types list
+
+copera meeting-notes list
+copera meeting-notes list --query "standup"
+copera meeting-notes get <note-id>
+copera meeting-notes get <note-id> --transcript
+```
+
+### Search and Notifications
+
+```bash
 copera search "contract"
 copera search "contract" --type document --type driveContent
 

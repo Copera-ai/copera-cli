@@ -86,6 +86,15 @@ func (c *Client) WorkspaceInfo(ctx context.Context) (*Workspace, error) {
 	return &ws, nil
 }
 
+// Me fetches the authenticated user's workspace member record.
+func (c *Client) Me(ctx context.Context) (*Member, error) {
+	var m Member
+	if err := c.do(ctx, http.MethodGet, "/workspace/me", nil, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 // WorkspaceMembers lists workspace members with optional search and pagination.
 func (c *Client) WorkspaceMembers(ctx context.Context, opts MemberListOpts) (*MembersPage, error) {
 	params := url.Values{}
@@ -109,6 +118,21 @@ func (c *Client) WorkspaceMembers(ctx context.Context, opts MemberListOpts) (*Me
 		return nil, err
 	}
 	return &page, nil
+}
+
+// CreateTeamInput is the body for POST /workspace/team.
+type CreateTeamInput struct {
+	Name               string   `json:"name"`
+	ParticipantUserIDs []string `json:"participantUserIds,omitempty"`
+}
+
+// WorkspaceTeamCreate creates a new team in the workspace.
+func (c *Client) WorkspaceTeamCreate(ctx context.Context, input *CreateTeamInput) (*Team, error) {
+	var t Team
+	if err := c.do(ctx, http.MethodPost, "/workspace/team", input, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 // WorkspaceTeams lists workspace teams with optional search and pagination.

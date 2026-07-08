@@ -59,6 +59,37 @@ type DirectMessageResult struct {
 	Queued    bool   `json:"queued"`
 }
 
+// ChannelCreateInput is the body for POST /chat/channel.
+type ChannelCreateInput struct {
+	Name               string   `json:"name"`
+	Description        string   `json:"description,omitempty"`
+	ParticipantUserIDs []string `json:"participantUserIds,omitempty"`
+	Type               string   `json:"type,omitempty"`
+}
+
+// CreatedChannel is returned after a channel is created.
+type CreatedChannel struct {
+	ID                 string   `json:"_id"`
+	Name               string   `json:"name"`
+	ParticipantUserIDs []string `json:"participantUserIds"`
+}
+
+// ChannelParticipantsInput is the body for POST /chat/channel/{id}/participants.
+type ChannelParticipantsInput struct {
+	ParticipantUserIDs []string `json:"participantUserIds"`
+}
+
+// ChannelParticipants is returned after participants are added to a channel.
+type ChannelParticipants struct {
+	ChannelID          string   `json:"channelId"`
+	ParticipantUserIDs []string `json:"participantUserIds"`
+}
+
+// SuccessResult is the response for participant removal and archive/unarchive.
+type SuccessResult struct {
+	Success bool `json:"success"`
+}
+
 // ChannelList lists channels and DMs visible to the token user.
 func (c *Client) ChannelList(ctx context.Context, opts *ChannelListOptions) (*ChannelListPage, error) {
 	path := "/chat/channels"
@@ -98,6 +129,55 @@ func (c *Client) ChannelList(ctx context.Context, opts *ChannelListOptions) (*Ch
 func (c *Client) SendMessage(ctx context.Context, channelID string, input *SendMessageInput) error {
 	path := fmt.Sprintf("/chat/channel/%s/send-message", channelID)
 	return c.do(ctx, "POST", path, input, nil)
+}
+
+// ChannelCreate creates a new text group channel.
+func (c *Client) ChannelCreate(ctx context.Context, input *ChannelCreateInput) (*CreatedChannel, error) {
+	var result CreatedChannel
+	if err := c.do(ctx, "POST", "/chat/channel", input, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ChannelAddParticipants adds workspace users to a channel.
+func (c *Client) ChannelAddParticipants(ctx context.Context, channelID string, input *ChannelParticipantsInput) (*ChannelParticipants, error) {
+	path := fmt.Sprintf("/chat/channel/%s/participants", channelID)
+	var result ChannelParticipants
+	if err := c.do(ctx, "POST", path, input, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ChannelRemoveParticipant removes a single participant from a channel.
+func (c *Client) ChannelRemoveParticipant(ctx context.Context, channelID, participantUserID string) (*SuccessResult, error) {
+	path := fmt.Sprintf("/chat/channel/%s/participant/%s", channelID, participantUserID)
+	var result SuccessResult
+	if err := c.do(ctx, "DELETE", path, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ChannelArchive archives a channel.
+func (c *Client) ChannelArchive(ctx context.Context, channelID string) (*SuccessResult, error) {
+	path := fmt.Sprintf("/chat/channel/%s/archive", channelID)
+	var result SuccessResult
+	if err := c.do(ctx, "POST", path, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ChannelUnarchive restores an archived channel.
+func (c *Client) ChannelUnarchive(ctx context.Context, channelID string) (*SuccessResult, error) {
+	path := fmt.Sprintf("/chat/channel/%s/unarchive", channelID)
+	var result SuccessResult
+	if err := c.do(ctx, "POST", path, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // SendDirectMessage sends a text message to a workspace user by user ID.

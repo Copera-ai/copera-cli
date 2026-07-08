@@ -1078,7 +1078,172 @@ func newRowsAttachmentsCmd(cli *CLI) *cobra.Command {
 		Use:   "attachments",
 		Short: "Manage FILE column attachments on rows",
 	}
-	cmd.AddCommand(newRowsAttachmentDownloadCmd(cli))
+	cmd.AddCommand(
+		newRowsAttachmentDownloadCmd(cli),
+		newRowsAttachmentUploadCmd(cli),
+		newRowsAttachmentDeleteCmd(cli),
+	)
+	return cmd
+}
+
+// ── rows attachments upload ─────────────────────────────────────────────────
+
+func newRowsAttachmentUploadCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable, flagColumn string
+
+	cmd := &cobra.Command{
+		Use:   "upload <row-id> <file-path>",
+		Short: "Upload a file to a FILE column cell",
+		Long: `Upload a local file to a FILE column cell on a row.
+
+The file is attached to the cell (FILE columns hold an array of attachments).
+
+Example:
+  copera rows attachments upload <row-id> ./contract.pdf --board <B> --table <T> --column <col-id>`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			columnID, err := resolveID(nil, flagColumn, "", "column ID (--column)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --column <id> to select the FILE column", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			filePath := args[1]
+			info, err := os.Stat(filePath)
+			if err != nil {
+				cli.Printer.PrintError("file_error", err.Error(), "", false)
+				return exitcodes.New(exitcodes.Error, err)
+			}
+			if info.IsDir() {
+				cli.Printer.PrintError("file_error", "path is a directory, not a file",
+					"Provide a path to a single file", false)
+				return exitcodes.Newf(exitcodes.Usage, "cannot upload a directory")
+			}
+			if info.Size() == 0 {
+				cli.Printer.PrintError("empty_file", "cannot upload empty file",
+					"File must have content", false)
+				return exitcodes.Newf(exitcodes.Usage, "cannot upload empty file")
+			}
+
+			att, err := client.RowAttachmentUpload(context.Background(), boardID, tableID, args[0], columnID, filePath)
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(att)
+			}
+
+			cli.Printer.PrintLine(fmt.Sprintf("File:     %s", att.Name))
+			cli.Printer.PrintLine(fmt.Sprintf("File ID:  %s", att.FileID))
+			cli.Printer.PrintLine(fmt.Sprintf("Type:     %s", att.MimeType))
+			cli.Printer.PrintLine(fmt.Sprintf("Size:     %s", humanSize(att.Size)))
+			cli.Printer.Info("Uploaded %s.", att.Name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagColumn, "column", "", "FILE column ID")
+	return cmd
+}
+
+// ── rows attachments delete ─────────────────────────────────────────────────
+
+func newRowsAttachmentDeleteCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable, flagColumn, flagFile string
+	var flagForce bool
+
+	cmd := &cobra.Command{
+		Use:   "delete <row-id>",
+		Short: "Detach a file from a FILE column cell",
+		Long: `Remove a file attachment from a FILE column cell on a row.
+
+This detaches the file from the cell; the stored bytes are not deleted.
+
+Example:
+  copera rows attachments delete <row-id> --board <B> --table <T> --column <col-id> --file <file-id>`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			columnID, err := resolveID(nil, flagColumn, "", "column ID (--column)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --column <id> to select the FILE column", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			fileID, err := resolveID(nil, flagFile, "", "file ID (--file)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --file <id> to select the attachment", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			proceed, err := confirmDestructive(cli, flagForce,
+				fmt.Sprintf("Detach file %s from row %s? [y/N]: ", fileID, args[0]))
+			if err != nil {
+				return err
+			}
+			if !proceed {
+				return nil
+			}
+
+			resp, err := client.RowAttachmentDelete(context.Background(), boardID, tableID, args[0], columnID, fileID)
+			if err != nil {
+				return apiError(cli, err)
+			}
+
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(map[string]any{"deleted": resp.Success, "fileId": fileID})
+			}
+			cli.Printer.Info("Attachment detached.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagColumn, "column", "", "FILE column ID")
+	cmd.Flags().StringVar(&flagFile, "file", "", "Attachment file ID")
+	cmd.Flags().BoolVar(&flagForce, "force", false, "Skip confirmation prompt")
 	return cmd
 }
 
