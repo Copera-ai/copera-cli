@@ -815,6 +815,7 @@ func TestRowsAttachmentsDelete_ConfirmYes(t *testing.T) {
 		},
 	}.Handler())
 	setupHomeWithBoard(t, srv.URL)
+	testutil.SetEnv(t, "CI", "")
 
 	res := testutil.RunCommand(t, []string{
 		"rows", "attachments", "delete", "r1",

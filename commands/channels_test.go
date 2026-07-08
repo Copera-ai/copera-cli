@@ -431,6 +431,7 @@ func TestChannelsParticipantsRemove_ConfirmPrompt(t *testing.T) {
 		},
 	}.Handler())
 	setupHomeWithChannel(t, srv.URL)
+	testutil.SetEnv(t, "CI", "")
 
 	res := testutil.RunCommand(t, []string{"channels", "participants", "remove", "user1", "--output", "table"}, "y\n")
 	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
@@ -478,6 +479,7 @@ func TestChannelsArchive_ArgAndConfirm(t *testing.T) {
 		},
 	}.Handler())
 	setupHome(t, srv.URL)
+	testutil.SetEnv(t, "CI", "")
 
 	res := testutil.RunCommand(t, []string{"channels", "archive", "argchan"}, "y\n")
 	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
