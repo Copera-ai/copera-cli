@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -83,6 +86,80 @@ func (c *Client) SetVerbose(w io.Writer) { c.verbose = w }
 // (e.g., uploading file parts to S3 presigned URLs).
 func (c *Client) HTTPClient() *http.Client {
 	return c.httpClient
+}
+
+// DoJSON executes an authenticated JSON request against a public API path.
+// It is intended for newer API resources whose response shapes are deliberately
+// open-ended while the server contracts are still evolving.
+func (c *Client) DoJSON(ctx context.Context, method, path string, body, out any) error {
+	return c.do(ctx, method, path, body, out)
+}
+
+// UploadFile executes an authenticated multipart upload using the form field
+// name "file". The caller is responsible for enforcing resource-specific size
+// limits before calling this method.
+func (c *Client) UploadFile(ctx context.Context, path, filePath string, out any) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("api: open upload: %w", err)
+	}
+	defer file.Close()
+
+	var payload bytes.Buffer
+	writer := multipart.NewWriter(&payload)
+	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return fmt.Errorf("api: create multipart field: %w", err)
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return fmt.Errorf("api: read upload: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("api: close multipart body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, &payload)
+	if err != nil {
+		return fmt.Errorf("api: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("api: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("api: read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		apiErr := &APIError{StatusCode: resp.StatusCode}
+		var errBody struct {
+			Code    string `json:"code"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(respBody, &errBody) == nil {
+			apiErr.Code = errBody.Code
+			apiErr.Message = errBody.Error
+			if apiErr.Message == "" {
+				apiErr.Message = errBody.Message
+			}
+		}
+		if apiErr.Message == "" {
+			apiErr.Message = http.StatusText(resp.StatusCode)
+		}
+		return apiErr
+	}
+	if out != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, out); err != nil {
+			return fmt.Errorf("api: decode response: %w", err)
+		}
+	}
+	return nil
 }
 
 // Download executes an authenticated GET request for a binary response.

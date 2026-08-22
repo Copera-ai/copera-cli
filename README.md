@@ -168,6 +168,9 @@ copera boards list
 copera boards list --query "roadmap"
 copera boards get <board-id>
 copera boards create --name "Q3 Roadmap"
+copera boards create --name "CRM" \
+  --column '{"label":"Contact","type":"CONTACT"}' \
+  --column '{"label":"Follow up","type":"DATE","format":"DATE_ISO"}'
 copera boards update <board-id> --name "Q4 Roadmap"
 copera boards delete <board-id> --force
 copera boards participants add --board <board-id> --participant <user-id>
@@ -192,6 +195,11 @@ for the exact flags each write command accepts.
 ```bash
 copera rows list --board <board-id> --table <table-id>
 copera rows list --board <board-id> --table <table-id> --query "oauth"
+copera rows list --board <board-id> --table <table-id> --offset 0 --limit 100
+copera rows query --data @query.json
+copera rows aggregate <board-id> <table-id> --data @aggregation.json
+copera rows bulk <board-id> <table-id> --data @operations.json
+copera rows views <board-id> <table-id>
 copera rows get <row-id> --board <board-id> --table <table-id>
 copera rows get --row 42 --board <board-id> --table <table-id>   # look up by visible Row#
 copera rows create --board <board-id> --table <table-id> --data '{"columns":[{"columnId":"<column-id>","value":"Hello"}]}'
@@ -252,6 +260,7 @@ copera docs update <doc-id> --content "Replacement content"
 copera docs update <doc-id> --operation append --content "More content"
 copera docs metadata <doc-id> --title "New title"
 copera docs delete <doc-id> --force
+copera docs generate --data @document.json
 ```
 
 ### Drive
@@ -304,18 +313,57 @@ copera workspace teams
 copera workspace team create --name "Design" --participant <user-id>
 ```
 
-### Bookings and Meeting Notes
+### Tempo, Agenda, Inbox, Automations, and Bookings
 
 ```bash
+copera tempo calendars list                 # `time` is an alias
+copera tempo calendars create --field name="Focus"
+copera tempo shelf create --data '{"title":"Prepare review"}'
+copera tempo shelf schedule <item-id> --data @schedule.json
+
+copera agenda events list --query-param from=2026-09-01T00:00:00Z
+copera agenda events create --data @event.json
+copera agenda events respond <event-id> --field status=ACCEPTED
+
+copera inbox list
+copera inbox threads list <inbox-id> --query-param page=1
+copera inbox send --data @message.json
+copera inbox attachments upload <inbox-id> --file ./contract.pdf
+copera inbox delete <inbox-id> --data @email-ids.json --force
+
+copera automations list
+copera automations run <automation-id> --data @trigger.json
+copera automations retry <run-id>
+
 copera bookings list
 copera bookings list --status CONFIRMED --from 2026-01-01T00:00:00Z
 copera bookings get <booking-id>
+copera bookings cancel <booking-id> --field reason="Customer request" --force
 copera booking-types list
+copera booking-types create --data @booking-type.json
+copera booking-host profile get
+copera booking-host schedules create --data @schedule.json
+copera booking-host links create <booking-type-id> --field maxUses=1
 
 copera meeting-notes list
 copera meeting-notes list --query "standup"
 copera meeting-notes get <note-id>
 copera meeting-notes get <note-id> --transcript
+```
+
+Newer structured commands accept `--data '{...}'`, `--data @file.json`, or
+`--data -` for stdin. Repeatable `--field key=value` flags override top-level
+JSON fields, and `--query-param key=value` adds URL query parameters. Destructive
+commands require interactive confirmation or `--force`.
+
+Inbox requires a Personal Access Token with `access_inbox`; it is deliberately
+available through REST and the CLI, not through hosted MCP.
+
+### Exports
+
+```bash
+copera exports job <job-id>
+copera exports result-set --data '{"resultSetId":"<id>","format":"CSV"}'
 ```
 
 ### Search and Notifications

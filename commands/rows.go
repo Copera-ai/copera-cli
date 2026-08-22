@@ -47,6 +47,7 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 		newRowsCommentCmd(cli),
 		newRowsCommentsCmd(cli),
 	)
+	cmd.AddCommand(rowParityCommands(cli)...)
 	return cmd
 }
 
@@ -54,6 +55,7 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 
 func newRowsListCmd(cli *CLI) *cobra.Command {
 	var flagBoard, flagTable, flagQuery, flagFilter, flagSort string
+	var flagOffset, flagLimit int
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -117,13 +119,31 @@ Examples:
 			}
 
 			opts := &api.RowListOptions{Query: flagQuery, Filter: filterJSON, Sort: flagSort}
-
-			rows, err := client.RowList(context.Background(), boardID, tableID, opts)
+			paginated := cmd.Flags().Changed("offset") || cmd.Flags().Changed("limit")
+			if cmd.Flags().Changed("offset") {
+				opts.Offset = &flagOffset
+			}
+			if cmd.Flags().Changed("limit") {
+				opts.Limit = &flagLimit
+			}
+			var rows []api.Row
+			var page *api.RowsPage
+			if paginated {
+				page, err = client.RowListPage(context.Background(), boardID, tableID, opts)
+				if err == nil {
+					rows = page.Rows
+				}
+			} else {
+				rows, err = client.RowList(context.Background(), boardID, tableID, opts)
+			}
 			if err != nil {
 				return apiError(cli, err)
 			}
 
 			if cli.Printer.IsJSON() {
+				if paginated {
+					return cli.Printer.PrintJSON(page)
+				}
 				return cli.Printer.PrintJSON(rows)
 			}
 
@@ -146,6 +166,8 @@ Examples:
 	cmd.Flags().StringVar(&flagQuery, "query", "", "Search visible row columns")
 	cmd.Flags().StringVar(&flagFilter, "filter", "", "Filter JSON (inline or @file)")
 	cmd.Flags().StringVar(&flagSort, "sort", "", "Sort spec, e.g. col_a:asc,col_b:desc")
+	cmd.Flags().IntVar(&flagOffset, "offset", 0, "Skip matching rows and opt into paginated output")
+	cmd.Flags().IntVar(&flagLimit, "limit", 0, "Page size (1-1000) and opt into paginated output")
 	return cmd
 }
 

@@ -219,6 +219,18 @@ type RowListOptions struct {
 	Query  string
 	Filter string
 	Sort   string
+	Offset *int
+	Limit  *int
+}
+
+// RowsPage is returned only when offset or limit is explicitly provided.
+// Omitting both retains the public API's legacy bare-array response.
+type RowsPage struct {
+	Rows    []Row `json:"rows"`
+	Total   int   `json:"total"`
+	Offset  int   `json:"offset"`
+	Limit   int   `json:"limit"`
+	HasMore bool  `json:"hasMore"`
 }
 
 func (c *Client) RowList(ctx context.Context, boardID, tableID string, opts *RowListOptions) ([]Row, error) {
@@ -234,6 +246,12 @@ func (c *Client) RowList(ctx context.Context, boardID, tableID string, opts *Row
 		if opts.Sort != "" {
 			q.Set("sort", opts.Sort)
 		}
+		if opts.Offset != nil {
+			q.Set("offset", fmt.Sprintf("%d", *opts.Offset))
+		}
+		if opts.Limit != nil {
+			q.Set("limit", fmt.Sprintf("%d", *opts.Limit))
+		}
 		if encoded := q.Encode(); encoded != "" {
 			path = path + "?" + encoded
 		}
@@ -244,6 +262,37 @@ func (c *Client) RowList(ctx context.Context, boardID, tableID string, opts *Row
 		return nil, err
 	}
 	return rows, nil
+}
+
+// RowListPage opts into the paginated envelope response. At least one of
+// Offset or Limit must be non-nil.
+func (c *Client) RowListPage(ctx context.Context, boardID, tableID string, opts *RowListOptions) (*RowsPage, error) {
+	if opts == nil || (opts.Offset == nil && opts.Limit == nil) {
+		return nil, fmt.Errorf("row pagination requires offset or limit")
+	}
+	path := fmt.Sprintf("/board/%s/table/%s/rows", boardID, tableID)
+	q := url.Values{}
+	if opts.Query != "" {
+		q.Set("q", opts.Query)
+	}
+	if opts.Filter != "" {
+		q.Set("filter", opts.Filter)
+	}
+	if opts.Sort != "" {
+		q.Set("sort", opts.Sort)
+	}
+	if opts.Offset != nil {
+		q.Set("offset", fmt.Sprintf("%d", *opts.Offset))
+	}
+	if opts.Limit != nil {
+		q.Set("limit", fmt.Sprintf("%d", *opts.Limit))
+	}
+	path += "?" + q.Encode()
+	var page RowsPage
+	if err := c.do(ctx, http.MethodGet, path, nil, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
 }
 
 func (c *Client) RowGet(ctx context.Context, boardID, tableID, rowID string) (*Row, error) {
@@ -383,9 +432,24 @@ func (c *Client) CommentAttachmentDownload(ctx context.Context, boardID, tableID
 
 // CreateBoardInput is the body for POST /board.
 type CreateBoardInput struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	TableName   string `json:"tableName,omitempty"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	TableName   string                 `json:"tableName,omitempty"`
+	Columns     []BoardBlueprintColumn `json:"columns,omitempty"`
+}
+
+// BoardBlueprintColumn describes a custom column created with a board's
+// initial table. The API validates which formats/options apply to each type.
+type BoardBlueprintColumn struct {
+	Label   string              `json:"label"`
+	Type    string              `json:"type"`
+	Format  string              `json:"format,omitempty"`
+	Options []BoardColumnOption `json:"options,omitempty"`
+}
+
+type BoardColumnOption struct {
+	Label string `json:"label"`
+	Color string `json:"color,omitempty"`
 }
 
 // CreatedBoard is the response for POST /board.
@@ -394,6 +458,7 @@ type CreatedBoard struct {
 	Name           string `json:"name"`
 	Description    string `json:"description,omitempty"`
 	DefaultTableID string `json:"defaultTableId,omitempty"`
+	Columns        any    `json:"columns,omitempty"`
 }
 
 // UpdateBoardInput is the body for PATCH /board/{boardId}. Fields are optional.

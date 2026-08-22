@@ -25,6 +25,7 @@ func newDocsCmd(cli *CLI) *cobra.Command {
 		newDocsMetadataCmd(cli),
 		newDocsCreateCmd(cli),
 		newDocsDeleteCmd(cli),
+		newEndpointCmd(cli, endpointSpec{Use: "generate", Short: "Generate a PDF, spreadsheet, CSV, Markdown, or HTML document", Method: "POST", Path: "/documents/generate", Body: true, BodyRequired: true}),
 	)
 	return cmd
 }
@@ -502,4 +503,3 @@ func readStdinContent(cli *CLI) (string, error) {
 	}
 	return content, nil
 }
-
