@@ -19,6 +19,7 @@ func newBookingsCmd(cli *CLI) *cobra.Command {
 		newBookingsListCmd(cli),
 		newBookingsGetCmd(cli),
 	)
+	cmd.AddCommand(bookingLifecycleCommands(cli)...)
 	return cmd
 }
 
@@ -146,6 +147,7 @@ func newBookingTypesCmd(cli *CLI) *cobra.Command {
 	cmd.AddCommand(
 		newBookingTypesListCmd(cli),
 	)
+	cmd.AddCommand(bookingTypeManagementCommands(cli)...)
 	return cmd
 }
 

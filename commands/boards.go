@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -415,6 +416,8 @@ func parseColumnOptions(raw []string) []api.ColumnOptionInput {
 
 func newBoardsCreateCmd(cli *CLI) *cobra.Command {
 	var flagName, flagDescription, flagTableName string
+	var flagData string
+	var flagColumns []string
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -430,23 +433,48 @@ Example:
 				return err
 			}
 
-			if flagName == "" {
+			payload, err := readObjectInput(cli, flagData, false)
+			if err != nil {
+				return usageError(cli, err)
+			}
+			if payload == nil {
+				payload = map[string]any{}
+			}
+			if cmd.Flags().Changed("name") {
+				payload["name"] = flagName
+			}
+			if cmd.Flags().Changed("description") {
+				payload["description"] = flagDescription
+			}
+			if cmd.Flags().Changed("table-name") {
+				payload["tableName"] = flagTableName
+			}
+			if len(flagColumns) > 0 {
+				columns := make([]any, 0, len(flagColumns))
+				for _, raw := range flagColumns {
+					var column map[string]any
+					if err := json.Unmarshal([]byte(raw), &column); err != nil {
+						return usageError(cli, fmt.Errorf("invalid --column JSON: %w", err))
+					}
+					columns = append(columns, column)
+				}
+				payload["columns"] = columns
+			}
+			name, _ := payload["name"].(string)
+			if name == "" {
 				cli.Printer.PrintError("missing_input", "board name is required",
-					"Use --name <board-name>", false)
+					"Use --name <board-name> or provide name in --data", false)
 				return exitcodes.Newf(exitcodes.Usage, "board name is required")
 			}
 
-			board, err := client.BoardCreate(context.Background(), &api.CreateBoardInput{
-				Name:        flagName,
-				Description: flagDescription,
-				TableName:   flagTableName,
-			})
+			var board api.CreatedBoard
+			err = client.DoJSON(context.Background(), "POST", "/board", payload, &board)
 			if err != nil {
 				return apiError(cli, err)
 			}
 
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(board)
+				return cli.Printer.PrintJSON(&board)
 			}
 
 			cli.Printer.PrintLine(fmt.Sprintf("ID:              %s", board.ID))
@@ -463,6 +491,8 @@ Example:
 	cmd.Flags().StringVar(&flagName, "name", "", "Board name (required)")
 	cmd.Flags().StringVar(&flagDescription, "description", "", "Board description")
 	cmd.Flags().StringVar(&flagTableName, "table-name", "", "Name for the initial table (default: Table)")
+	cmd.Flags().StringVar(&flagData, "data", "", "Full board JSON inline, @file, or - for stdin")
+	cmd.Flags().StringArrayVar(&flagColumns, "column", nil, `Initial column JSON, e.g. {"label":"Due","type":"DATE","format":"DATE_ISO"} (repeatable)`)
 	return cmd
 }
 
