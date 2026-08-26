@@ -331,6 +331,14 @@ copera inbox send --data @message.json
 copera inbox attachments upload <inbox-id> --file ./contract.pdf
 copera inbox delete <inbox-id> --data @email-ids.json --force
 
+copera omni channels list
+copera omni conversations list <channel-id> --query-param filter=MINE
+copera omni conversations get <conversation-id>
+copera omni messages list <conversation-id>
+copera omni reply <conversation-id> --field text="On it!"
+copera omni whatsapp send <channel-id> --field phoneNumber=+5511999990000 --field text="Hello"
+copera omni whatsapp start <channel-id> --field phoneNumber=+5511999990000
+
 copera automations list
 copera automations run <automation-id> --data @trigger.json
 copera automations retry <run-id>
@@ -356,8 +364,11 @@ Newer structured commands accept `--data '{...}'`, `--data @file.json`, or
 JSON fields, and `--query-param key=value` adds URL query parameters. Destructive
 commands require interactive confirmation or `--force`.
 
-Inbox requires a Personal Access Token with `access_inbox`; it is deliberately
-available through REST and the CLI, not through hosted MCP.
+Inbox requires a Personal Access Token with `access_inbox`, and Omni requires
+`access_omni`; both are deliberately available through REST and the CLI, not
+through hosted MCP. `copera omni whatsapp send` finds the open conversation for
+the number (reopening a closed one, or starting a new outbound thread) before
+delivering the text.
 
 ### Exports
 

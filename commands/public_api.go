@@ -274,6 +274,38 @@ func newInboxAttachmentUploadCmd(cli *CLI) *cobra.Command {
 	return cmd
 }
 
+func newOmniCmd(cli *CLI) *cobra.Command {
+	cmd := &cobra.Command{Use: "omni", Short: "Omni shared inbox: channels, conversations, replies, outbound WhatsApp"}
+
+	channels := &cobra.Command{Use: "channels", Short: "Omni channels"}
+	addEndpoints(channels, cli,
+		endpointSpec{Use: "list", Short: "List Omni channels visible to the token user", Method: http.MethodGet, Path: "/omni/channels"},
+	)
+
+	conversations := &cobra.Command{Use: "conversations", Aliases: []string{"inbox"}, Short: "Read conversations"}
+	addEndpoints(conversations, cli,
+		endpointSpec{Use: "list <channel-id>", Short: "List conversations (use --query-param filter=ALL|MINE|UNASSIGNED|BOT|WAITING|CLOSED|NEEDS_HUMAN, search=, cursor=, limit=)", Method: http.MethodGet, Path: "/omni/channels/{0}/conversations", Args: 1},
+		endpointSpec{Use: "get <conversation-id>", Short: "Get a conversation", Method: http.MethodGet, Path: "/omni/conversations/{0}", Args: 1},
+	)
+
+	messages := &cobra.Command{Use: "messages", Short: "Read messages"}
+	addEndpoints(messages, cli,
+		endpointSpec{Use: "list <conversation-id>", Short: "List a conversation's messages, newest first (--query-param cursor=, limit=)", Method: http.MethodGet, Path: "/omni/conversations/{0}/messages", Args: 1},
+	)
+
+	whatsapp := &cobra.Command{Use: "whatsapp", Short: "Outbound WhatsApp"}
+	addEndpoints(whatsapp, cli,
+		endpointSpec{Use: "send <channel-id>", Short: "Send a WhatsApp text to a phone number: reuses the open conversation, reopens a closed one, or starts a new one (--field phoneNumber=+55... --field text=... [--field sourceId=...])", Method: http.MethodPost, Path: "/omni/channels/{0}/whatsapp/messages", Args: 1, Body: true, BodyRequired: true},
+		endpointSpec{Use: "start <channel-id>", Short: "Start (or reopen) an outbound conversation with a phone number without sending (--field phoneNumber=+55... [--field sourceId=...])", Method: http.MethodPost, Path: "/omni/channels/{0}/conversations", Args: 1, Body: true, BodyRequired: true},
+	)
+
+	addEndpoints(cmd, cli,
+		endpointSpec{Use: "reply <conversation-id>", Short: "Reply to a conversation (--field text=... [--field replyToMessageId=...])", Method: http.MethodPost, Path: "/omni/conversations/{0}/messages", Args: 1, Body: true, BodyRequired: true},
+	)
+	cmd.AddCommand(channels, conversations, messages, whatsapp)
+	return cmd
+}
+
 func newAutomationsCmd(cli *CLI) *cobra.Command {
 	cmd := &cobra.Command{Use: "automations", Short: "Inspect and operate automations"}
 	addEndpoints(cmd, cli,

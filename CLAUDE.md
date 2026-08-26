@@ -78,6 +78,11 @@ copera bookings list|get
 copera booking-types list
 copera meeting-notes list|get
 copera search <query>
+copera omni channels list
+copera omni conversations list|get
+copera omni messages list
+copera omni reply
+copera omni whatsapp send|start
 copera notifications list|read|unread|delete
 copera cache status|clean
 copera update [--version] [--force]

@@ -124,3 +124,46 @@ func TestRowsListPaginationIsOptIn(t *testing.T) {
 	require.Equal(t, 0, res.ExitCode, res.Stderr)
 	assert.Contains(t, res.Stdout, `"total": 12`)
 }
+
+func TestOmniWhatsAppSendMergesFieldsAndTargetsChannel(t *testing.T) {
+	var body map[string]any
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /omni/channels/channel1/whatsapp/messages": func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{
+				"conversation": map[string]any{"id": "conv1"},
+				"message":      map[string]any{"id": "msg1"},
+				"created":      true,
+				"reopened":     false,
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{
+		"omni", "whatsapp", "send", "channel1",
+		"--field", "phoneNumber=+5511999990000", "--field", "text=Hello", "--json",
+	}, "")
+	require.Equal(t, 0, res.ExitCode, res.Stderr)
+	assert.Equal(t, "+5511999990000", body["phoneNumber"])
+	assert.Equal(t, "Hello", body["text"])
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out))
+	assert.Equal(t, true, out["created"])
+}
+
+func TestOmniConversationsListForwardsFilterQuery(t *testing.T) {
+	var gotFilter string
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /omni/channels/channel1/conversations": func(w http.ResponseWriter, r *http.Request) {
+			gotFilter = r.URL.Query().Get("filter")
+			testutil.RespondJSON(w, http.StatusOK, map[string]any{"conversations": []any{}, "nextCursor": nil, "hasMore": false})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"omni", "conversations", "list", "channel1", "--query-param", "filter=MINE", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, res.Stderr)
+	assert.Equal(t, "MINE", gotFilter)
+}
