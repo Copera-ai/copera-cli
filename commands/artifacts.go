@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -308,9 +309,12 @@ stored; JSON output wraps it with its path, media type and digest.
 					Text:          text,
 				})
 			}
-			fmt.Fprint(cli.Printer.Out, text)
+			// Print the file byte-exact; only a terminal gets a closing newline.
 			if text != "" && !strings.HasSuffix(text, "\n") && cli.Printer.IsTable() {
-				fmt.Fprintln(cli.Printer.Out)
+				text += "\n"
+			}
+			if _, err := io.WriteString(cli.Printer.Out, text); err != nil {
+				return exitcodes.New(exitcodes.Error, fmt.Errorf("write output: %w", err))
 			}
 			return nil
 		},
