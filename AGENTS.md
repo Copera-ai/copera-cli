@@ -131,6 +131,26 @@ then call `update-column-content --column <column-id>`.
 
 ---
 
+## Building an Artifact as a Real App
+
+To build a Copera artifact (a prototype made of pages) as a real app, pull its
+hand-off pack into an empty folder and follow `HANDOFF.md`:
+
+```bash
+copera artifacts list --search "launch" --json      # find the artifact ID
+copera artifacts handoff <artifact-id> --out ./app --json
+```
+
+The folder holds `HANDOFF.md` (what to do, in order), the Spec at its own path
+(read it first — it is the source of truth), `NOTES.md` (rules pinned to pages),
+`design/design.json` + `design/assets/` (set up the shared design first),
+`pages.json` (pages and navigation links) and every source file at its own
+path. Large files are already fetched. Files listed in the summary's `skipped`
+with reason `sensitive` looked like secrets: never guess them, ask the owner.
+The command refuses a non-empty `--out` (exit code 5) unless `--force`.
+
+---
+
 ## Docs Discovery
 
 Docs have no list-all endpoint. The two discovery tools are `tree` and `search`.
@@ -282,6 +302,9 @@ copera docs search "keyword" --json
 
 # Get doc content
 copera docs content $DOC_ID
+
+# Pull an artifact's hand-off pack to build it as a real app
+copera artifacts handoff $ARTIFACT_ID --out ./app --json
 
 # Check auth
 copera auth status --json

@@ -69,6 +69,7 @@ copera rows attachments download|upload|delete
 copera rows comments attachments download
 copera docs tree|search|get|content|update|metadata|create|delete
 copera drive tree|search|get|download|upload|mkdir
+copera artifacts list|get|versions|source|design|starters|handoff
 copera channels list|create|archive|unarchive
 copera channels message send
 copera channels participants add|remove
@@ -158,6 +159,17 @@ ID with `tables get --json` and update the intended cell with
 - `POST /docs/` — create doc; body: `{title, parent?, content?}`
 - `PATCH /docs/{id}` — update properties; body: `{title?, icon?: {type, value}, cover?: {type, value}}`
 - `DELETE /docs/{id}` — soft-delete
+
+### Artifacts endpoints (prefix: `/artifacts/`, read-only in the CLI)
+- `GET /artifacts/?scope=mine|shared&search=&after=&limit=` — list artifacts (connection: `edges[].node`, `endCursor`, `hasNextPage`)
+- `GET /artifacts/starters` — curated design starters
+- `GET /artifacts/{id}` — metadata + `currentVersion` (manifest and file inventory)
+- `GET /artifacts/{id}/versions?after=&limit=` — immutable versions
+- `GET /artifacts/{id}/versions/{versionId}` — one version
+- `GET /artifacts/{id}/versions/{versionId}/source?path=&cursor=|startOffset=` — bounded UTF-8 slice; follow `nextCursor` until `eof`. A credential-shaped file is refused (400)
+- `GET /artifacts/{id}/versions/{versionId}/design` — shared design export
+- `GET /artifacts/{id}/handoff?versionId=&maxInlineBytes=` — hand-off pack; `files[].omitted` / `spec.omitted` is `over_budget` (fetch via source) or `sensitive` (never fetch); `design.assets[].url` expires in ~5 minutes
+- All artifact endpoints need a PAT with drive access; a 403 also means Artifacts is not enabled in the workspace. Patch/create/asset-admit endpoints are not exposed by the CLI.
 
 ### Chat endpoints (prefix: `/chat/`)
 - `GET /chat/channels` — list channels (paginated; supports kind/query filters)

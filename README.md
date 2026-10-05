@@ -282,6 +282,47 @@ Uploads support multipart transfer, configurable chunk size, concurrent part
 uploads, progress output in interactive terminals, and recursive directory
 upload.
 
+### Artifacts
+
+Artifact commands require a Personal Access Token with drive access, and
+Artifacts enabled in the workspace (a 403 means one of the two is missing).
+
+```bash
+copera artifacts list
+copera artifacts list --scope shared --search "launch"
+copera artifacts get <artifact-id>
+copera artifacts versions <artifact-id>
+copera artifacts source <artifact-id> --path src/App.tsx --output plain > App.tsx
+copera artifacts design <artifact-id> --version <version-id> --json
+copera artifacts starters
+copera artifacts handoff <artifact-id> --out ./my-app
+```
+
+`copera artifacts handoff` pulls everything a coding agent (or you) needs to
+build the artifact as a real app into one folder:
+
+```
+my-app/
+├── HANDOFF.md            next steps, the artifact URL, how to build
+├── SPEC.md               the Spec, at its own path (the source of truth)
+├── NOTES.md              notes grouped by page, Spec notes first
+├── pages.json            pages and the navigation links between them
+├── design/
+│   ├── design.json       shared design digest, paths and asset metadata
+│   └── assets/           logos, fonts and images
+└── src/...               every source file at its own path
+```
+
+Files too large to inline are fetched page by page until the end and checked
+against their digest. Files that look like they hold a key or password are
+never fetched and are reported as skipped. Every path is validated before
+anything is written, so a pack can never write outside the folder. `--out`
+defaults to `./<slug-of-title>`; a non-empty folder is refused (exit code 5)
+unless `--force`. `--version` pins a version; `--max-inline-bytes` (default and
+maximum 1048576) sets how much source the server inlines. With `--json` the
+command prints a summary: `dir`, `filesWritten`, `fetched`, `skipped`
+(`{path, reason}`), `truncated` and `warnings`.
+
 ### Channels
 
 ```bash
