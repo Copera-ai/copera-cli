@@ -34,6 +34,7 @@ in the workspace.`,
 		newArtifactsSourceCmd(cli),
 		newArtifactsDesignCmd(cli),
 		newArtifactsStartersCmd(cli),
+		newArtifactsHandoffCmd(cli),
 	)
 	return cmd
 }
