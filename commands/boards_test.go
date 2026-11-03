@@ -593,3 +593,158 @@ func TestTablesExport_WriteToFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "id,title\n1,hello\n", string(data))
 }
+
+func TestTablesColumnsAdd_ConfigurationParity(t *testing.T) {
+	for _, tc := range []struct{ name, columnType, config string }{
+		{"sla", "SLA", `{"slaConfig":{"mode":"COUNTDOWN","goalMs":3600000,"startCondition":{"type":"ON_CREATE"},"thresholds":{"warningPct":0.7,"criticalPct":0.9}}}`},
+		{"number", "NUMBER", `{"numberOptions":{"decimalPlaces":2,"allowNegative":false},"defaultValue":0}`},
+		{"money", "MONEY", `{"format":"CURRENCY_USD"}`},
+		{"link", "LINK", `{"tableRef":"aaaaaaaaaaaaaaaaaaaaaaaa","syncLink":false,"linkMode":"SINGLE","maxLinks":1}`},
+		{"lookup", "LOOKUP", `{"linkingColumnRef":"aaaaaaaaaaaaaaaaaaaaaaaa","columnRef":"bbbbbbbbbbbbbbbbbbbbbbbb"}`},
+		{"rollup", "ROLLUP", `{"linkingColumnRef":"aaaaaaaaaaaaaaaaaaaaaaaa","columnRef":"bbbbbbbbbbbbbbbbbbbbbbbb","aggregator":"SUM"}`},
+		{"formula", "FORMULA", `{"formula":"1 + 2"}`},
+		{"created by", "CREATED_BY", `{}`}, {"created at", "CREATED_AT", `{}`},
+		{"modified by", "LAST_MODIFIED_BY", `{}`}, {"updated at", "UPDATED_AT", `{}`},
+		{"contact", "CONTACT", `{}`}, {"checklist", "CHECKLIST", `{}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured map[string]json.RawMessage
+			srv := testutil.NewMockServer(t, testutil.MockRoutes{
+				"POST /board/board1/table/table1/column": func(w http.ResponseWriter, r *http.Request) {
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+					testutil.RespondJSON(w, http.StatusOK, captured)
+				},
+			}.Handler())
+			setupHomeWithBoard(t, srv.URL)
+			res := testutil.RunCommand(t, []string{"tables", "columns", "add", "--label", "Test", "--type", tc.columnType, "--config", tc.config, "--json"}, "")
+			require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+			expected := make(map[string]json.RawMessage)
+			require.NoError(t, json.Unmarshal([]byte(tc.config), &expected))
+			for key, value := range expected {
+				assert.JSONEq(t, string(value), string(captured[key]))
+			}
+			assert.JSONEq(t, `"`+tc.columnType+`"`, string(captured["type"]))
+			// The same configuration is preserved in create receipts.
+			for key, value := range expected {
+				var receipt map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal([]byte(res.Stdout), &receipt))
+				assert.JSONEq(t, string(value), string(receipt[key]))
+			}
+		})
+	}
+}
+
+func TestTablesColumnsUpdate_SLAReplacement(t *testing.T) {
+	var captured map[string]json.RawMessage
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"PATCH /board/board1/table/table1/column/col1": func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+			testutil.RespondJSON(w, http.StatusOK, captured)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+	res := testutil.RunCommand(t, []string{"tables", "columns", "update", "col1", "--sla-config", `{"mode":"STOPWATCH"}`, "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.JSONEq(t, `{"mode":"STOPWATCH"}`, string(captured["slaConfig"]))
+}
+
+func TestTablesColumnsAdd_RejectsInvalidSLA(t *testing.T) {
+	for _, config := range []string{
+		`{}`, `{"slaConfig":{"mode":"COUNTDOWN"}}`, `{"slaConfig":{"mode":"COUNTUP"}}`,
+		`{"slaConfig":{"mode":"INVALID"}}`, `{"slaConfig":{"mode":"STOPWATCH","goalMs":-1}}`,
+		`{"slaConfig":{"mode":"STOPWATCH","thresholds":{"warningPct":0.9,"criticalPct":0.7}}}`,
+		`{"slaConfig":{"mode":"STOPWATCH","pauseCondition":{"type":"ON_CREATE"}}}`,
+		`{"slaConfig":{"mode":"STOPWATCH","startCondition":{"type":"STATUS_CHANGE"}}}`,
+		`{"slaConfig":{"mode":"STOPWATCH","startCondition":{"type":"ON_CREATE"}}}`,
+		`{"slaConfig":{"mode":"STOPWATCH","startCondition":{"type":"STATUS_CHANGE","statusColumnId":"aaaaaaaaaaaaaaaaaaaaaaaa","statusValues":["bbbbbbbbbbbbbbbbbbbbbbbb"]}}}`,
+		`{"slaConfig":{"mode":"STOPWATCH","typo":true}}`,
+	} {
+		t.Run(config, func(t *testing.T) {
+			srv := testutil.NewMockServer(t, testutil.MockRoutes{
+				"POST /board/board1/table/table1/column": func(w http.ResponseWriter, r *http.Request) { t.Error("invalid input reached HTTP") },
+			}.Handler())
+			setupHomeWithBoard(t, srv.URL)
+			res := testutil.RunCommand(t, []string{"tables", "columns", "add", "--label", "Timer", "--type", "SLA", "--config", config}, "")
+			assert.Equal(t, 2, res.ExitCode, "stderr: %s", res.Stderr)
+		})
+	}
+}
+
+func TestTablesGet_PreservesColumnConfiguration(t *testing.T) {
+	const config = `{"columnId":"timer","label":"Timer","type":"SLA","slaConfig":{"mode":"COUNTDOWN","goalMs":3600000,"startCondition":{"type":"ON_CREATE"}}}`
+	const numericConfig = `{"columnId":"amount","label":"Amount","type":"MONEY","format":"CURRENCY_USD","numberOptions":{"decimalPlaces":2,"allowNegative":false},"defaultValue":0}`
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /board/board1/table/table1": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := w.Write([]byte(`{"_id":"table1","name":"Tasks","columns":[` + config + `,` + numericConfig + `]}`))
+			require.NoError(t, err)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+	res := testutil.RunCommand(t, []string{"tables", "get", "table1", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	var table struct {
+		Columns []json.RawMessage `json:"columns"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &table))
+	require.Len(t, table.Columns, 2)
+	var column map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(table.Columns[0], &column))
+	assert.JSONEq(t, `{"mode":"COUNTDOWN","goalMs":3600000,"startCondition":{"type":"ON_CREATE"}}`, string(column["slaConfig"]))
+	var numericColumn map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(table.Columns[1], &numericColumn))
+	assert.JSONEq(t, `"CURRENCY_USD"`, string(numericColumn["format"]))
+	assert.JSONEq(t, `{"decimalPlaces":2,"allowNegative":false}`, string(numericColumn["numberOptions"]))
+	assert.JSONEq(t, `0`, string(numericColumn["defaultValue"]))
+}
+
+func TestTablesColumnsAdd_OptionMetadata(t *testing.T) {
+	var captured struct {
+		Options []json.RawMessage `json:"options"`
+	}
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/column": func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+			testutil.RespondJSON(w, http.StatusOK, captured)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+	const option = `{"label":"Completed","color":"green","order":0,"statusGroup":"DONE"}`
+	res := testutil.RunCommand(t, []string{"tables", "columns", "add", "--label", "Stage", "--type", "STATUS", "--option-json", option, "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	require.Len(t, captured.Options, 1)
+	assert.JSONEq(t, option, string(captured.Options[0]))
+}
+
+func TestTablesColumnsUpdate_OptionMetadataAndRemoval(t *testing.T) {
+	var captured map[string]json.RawMessage
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"PATCH /board/board1/table/table1/column/col1": func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+			testutil.RespondJSON(w, http.StatusOK, captured)
+		},
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+	const option = `{"optionId":"aaaaaaaaaaaaaaaaaaaaaaaa","label":"Completed","color":"green","order":0,"statusGroup":"DONE"}`
+	res := testutil.RunCommand(t, []string{"tables", "columns", "update", "col1", "--update-option", option, "--delete-option", "bbbbbbbbbbbbbbbbbbbbbbbb", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.JSONEq(t, `[`+option+`]`, string(captured["updateOptions"]))
+	assert.JSONEq(t, `["bbbbbbbbbbbbbbbbbbbbbbbb"]`, string(captured["deleteOptionIds"]))
+}
+
+func TestTablesColumnsOptionMetadata_RejectsInvalidInput(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /board/board1/table/table1/column":       func(w http.ResponseWriter, r *http.Request) { t.Error("invalid option reached HTTP") },
+		"PATCH /board/board1/table/table1/column/col1": func(w http.ResponseWriter, r *http.Request) { t.Error("invalid option reached HTTP") },
+	}.Handler())
+	setupHomeWithBoard(t, srv.URL)
+	for _, args := range [][]string{
+		{"tables", "columns", "add", "--label", "Stage", "--type", "STATUS", "--option-json", `{"label":"Done","statusGroup":"CLOSED"}`},
+		{"tables", "columns", "add", "--label", "Stage", "--type", "STATUS", "--option-json", `{"statusGroup":"DONE"}`},
+		{"tables", "columns", "update", "col1", "--update-option", `{"label":"Done"}`},
+		{"tables", "columns", "update", "col1", "--update-option", `{"optionId":"aaaaaaaaaaaaaaaaaaaaaaaa","statusGroup":"CLOSED"}`},
+	} {
+		res := testutil.RunCommand(t, args, "")
+		assert.Equal(t, 2, res.ExitCode, "stderr: %s", res.Stderr)
+	}
+}

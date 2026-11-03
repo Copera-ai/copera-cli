@@ -32,8 +32,72 @@ type ColumnOption struct {
 	StatusGroup string `json:"statusGroup,omitempty"` // TODO | IN_PROGRESS | DONE — STATUS only
 }
 
+// SLACondition describes a timer trigger. Status references require STATUS_CHANGE.
+type SLACondition struct {
+	Type           string   `json:"type"`
+	StatusColumnID string   `json:"statusColumnId,omitempty"`
+	StatusValues   []string `json:"statusValues,omitempty"`
+}
+type SLAThresholds struct {
+	WarningPct  *float64 `json:"warningPct"`
+	CriticalPct *float64 `json:"criticalPct"`
+}
+type SLAConfig struct {
+	Mode           string         `json:"mode"`
+	GoalMs         *float64       `json:"goalMs,omitempty"`
+	StartCondition *SLACondition  `json:"startCondition,omitempty"`
+	PauseCondition *SLACondition  `json:"pauseCondition,omitempty"`
+	StopCondition  *SLACondition  `json:"stopCondition,omitempty"`
+	Thresholds     *SLAThresholds `json:"thresholds,omitempty"`
+	CalendarID     string         `json:"calendarId,omitempty"`
+}
+type ColumnNumberOptions struct {
+	DecimalPlaces   *float64 `json:"decimalPlaces,omitempty"`
+	Prefix          string   `json:"prefix,omitempty"`
+	Suffix          string   `json:"suffix,omitempty"`
+	Separator       string   `json:"separator,omitempty"`
+	AllowNegative   *bool    `json:"allowNegative,omitempty"`
+	Abbreviation    string   `json:"abbreviation,omitempty"`
+	ShowProgressBar *bool    `json:"showProgressBar,omitempty"`
+	DurationFormat  string   `json:"durationFormat,omitempty"`
+	PercentScale    string   `json:"percentScale,omitempty"`
+}
+type ColumnFilterCondition struct {
+	ColumnID  string          `json:"columnId"`
+	ValueType string          `json:"valueType"`
+	Operator  string          `json:"operator"`
+	Value     json.RawMessage `json:"value,omitempty"`
+	Date      string          `json:"date,omitempty"`
+	DateStart string          `json:"dateStart,omitempty"`
+	DateEnd   string          `json:"dateEnd,omitempty"`
+}
+type ColumnFilter struct {
+	Conditions    []ColumnFilterCondition `json:"conditions"`
+	MatchStrategy string                  `json:"matchStrategy,omitempty"`
+}
+
+// ColumnConfiguration carries the public type-specific configuration on writes and reads.
+type ColumnConfiguration struct {
+	Format           string               `json:"format,omitempty"`
+	NumberOptions    *ColumnNumberOptions `json:"numberOptions,omitempty"`
+	DefaultValue     json.RawMessage      `json:"defaultValue,omitempty"`
+	Formula          string               `json:"formula,omitempty"`
+	TableRef         string               `json:"tableRef,omitempty"`
+	SyncLink         *bool                `json:"syncLink,omitempty"`
+	LinkMode         string               `json:"linkMode,omitempty"`
+	MaxLinks         *int                 `json:"maxLinks,omitempty"`
+	DisplayColumnID  string               `json:"displayColumnId,omitempty"`
+	RestrictToViewID string               `json:"restrictToViewId,omitempty"`
+	LinkingColumnRef string               `json:"linkingColumnRef,omitempty"`
+	ColumnRef        string               `json:"columnRef,omitempty"`
+	Aggregator       string               `json:"aggregator,omitempty"`
+	Filter           *ColumnFilter        `json:"filter,omitempty"`
+	SLAConfig        *SLAConfig           `json:"slaConfig,omitempty"`
+}
+
 // Column describes a table column.
 type Column struct {
+	ColumnConfiguration
 	ColumnID string         `json:"columnId"`
 	Label    string         `json:"label"`
 	Type     string         `json:"type"`
@@ -577,14 +641,25 @@ func (c *Client) TableDelete(ctx context.Context, boardID, tableID string) (*Del
 // ── Column write methods ─────────────────────────────────────────────────────
 
 // ColumnOptionInput is a selectable option supplied when creating/updating a column.
+type ColumnOptionUpdateInput struct {
+	OptionID    string   `json:"optionId"`
+	Label       *string  `json:"label,omitempty"`
+	Color       *string  `json:"color,omitempty"`
+	Order       *float64 `json:"order,omitempty"`
+	StatusGroup *string  `json:"statusGroup,omitempty"`
+}
+
 type ColumnOptionInput struct {
-	Label string `json:"label"`
-	Color string `json:"color,omitempty"`
+	Order       *float64 `json:"order,omitempty"`
+	StatusGroup string   `json:"statusGroup,omitempty"`
+	Label       string   `json:"label"`
+	Color       string   `json:"color,omitempty"`
 }
 
 // AddColumnInput is the body for POST /board/{boardId}/table/{tableId}/column.
 // Type must be one of the public creatable column types (UPPERCASE).
 type AddColumnInput struct {
+	ColumnConfiguration
 	Label   string              `json:"label"`
 	Type    string              `json:"type"`
 	Options []ColumnOptionInput `json:"options,omitempty"`
@@ -593,12 +668,16 @@ type AddColumnInput struct {
 // UpdateColumnInput is the body for PATCH .../column/{columnId}.
 // Options are append-only via AddOptions and only valid for STATUS/DROPDOWN/LABELS.
 type UpdateColumnInput struct {
-	Label      *string             `json:"label,omitempty"`
-	AddOptions []ColumnOptionInput `json:"addOptions,omitempty"`
+	UpdateOptions   []ColumnOptionUpdateInput `json:"updateOptions,omitempty"`
+	DeleteOptionIDs []string                  `json:"deleteOptionIds,omitempty"`
+	SLAConfig       *SLAConfig                `json:"slaConfig,omitempty"`
+	Label           *string                   `json:"label,omitempty"`
+	AddOptions      []ColumnOptionInput       `json:"addOptions,omitempty"`
 }
 
 // ColumnWithOptions is the response for column create/update.
 type ColumnWithOptions struct {
+	ColumnConfiguration
 	ColumnID string         `json:"columnId"`
 	Label    string         `json:"label"`
 	Type     string         `json:"type"`
@@ -609,6 +688,7 @@ type ColumnWithOptions struct {
 var PublicCreatableColumnTypes = []string{
 	"TEXT", "PARAGRAPH", "NUMBER", "MONEY", "DATE", "EMAIL", "PHONE", "WEBSITE",
 	"CHECKBOX", "STATUS", "DROPDOWN", "LABELS", "USERS", "LOCATION", "DESCRIPTION", "FILE",
+	"CONTACT", "CHECKLIST", "LINK", "LOOKUP", "ROLLUP", "FORMULA", "CREATED_BY", "CREATED_AT", "LAST_MODIFIED_BY", "UPDATED_AT", "SLA",
 }
 
 // IsValidColumnType reports whether t is a public creatable column type (case-sensitive, UPPERCASE).
