@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -678,4 +679,64 @@ func TestDesignsScreenshot(t *testing.T) {
 	image, err := os.ReadFile(file)
 	require.NoError(t, err)
 	assert.Equal(t, "mobile", string(image))
+}
+
+func TestDesignsCheckClassifiesVendorAndMedia(t *testing.T) {
+	dir := t.TempDir()
+	const tracked = "vendor/authored.js"
+	state := struct {
+		Kind    string            `json:"kind"`
+		Runtime string            `json:"runtime"`
+		Files   map[string]string `json:"files"`
+	}{"website", "static_web", map[string]string{tracked: digestOf("old")}}
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+	writePublishFixture(t, filepath.Join(dir, ".copera", "design.json"), data)
+	writePublishFixture(t, filepath.Join(dir, tracked), []byte("const authored = true;"))
+
+	vendor := "/*" + strings.Repeat("x", 1<<20) + "*/"
+	media := "\x00\x00\x00\x18ftypmp42" + strings.Repeat("\x00", 5<<20)
+	const vendorPath, mediaPath = "vendor/npm/chart/1.2.3/chart.JS", "movie.MP4"
+	writePublishFixture(t, filepath.Join(dir, vendorPath), []byte(vendor))
+	writePublishFixture(t, filepath.Join(dir, mediaPath), []byte(media))
+
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+			reader, err := r.MultipartReader()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			project, err := reader.NextPart()
+			if !assert.NoError(t, err) {
+				return
+			}
+			var input api.ArtifactCheckInput
+			assert.NoError(t, json.NewDecoder(project).Decode(&input))
+			assert.Equal(t, []api.ArtifactContentFile{{Path: tracked, MediaType: "text/javascript", Content: "const authored = true;"}}, input.Files)
+			for _, file := range []struct{ path, mime, digest string }{
+				{mediaPath, "video/mp4", digestOf(media)},
+				{vendorPath, "application/javascript", digestOf(vendor)},
+			} {
+				part, err := reader.NextPart()
+				if !assert.NoError(t, err) {
+					return
+				}
+				_, params, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+				assert.NoError(t, err)
+				assert.Equal(t, file.path, params["filename"])
+				assert.Equal(t, file.mime, part.Header.Get("Content-Type"))
+				hash := sha256.New()
+				_, err = io.Copy(hash, part)
+				assert.NoError(t, err)
+				assert.Equal(t, file.digest, hex.EncodeToString(hash.Sum(nil)))
+			}
+			_, err = reader.NextPart()
+			assert.ErrorIs(t, err, io.EOF)
+			testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	result := testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
+	require.Equal(t, 0, result.ExitCode, result.Stderr)
 }

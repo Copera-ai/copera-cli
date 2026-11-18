@@ -3,10 +3,12 @@ package commands
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -67,6 +69,33 @@ type designFile struct {
 	Data      []byte
 	MediaType string
 	Binary    bool
+	Upload    *api.ArtifactUpload
+}
+
+func (file designFile) checksum() string {
+	if file.Upload != nil {
+		return file.Upload.ContentDigest
+	}
+	return sha256Hex(file.Data)
+}
+
+func (file designFile) uploadPart(name string) api.ArtifactCheckFile {
+	upload := file.Upload
+	if upload == nil {
+		upload = &api.ArtifactUpload{
+			ByteLength: int64(len(file.Data)), ContentDigest: file.checksum(),
+			Open: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(file.Data)), nil },
+		}
+	}
+	return api.ArtifactCheckFile{Path: name, MediaType: file.MediaType, ArtifactUpload: *upload}
+}
+
+func (file designFile) write(dst io.Writer) error {
+	if file.Upload != nil {
+		return file.Upload.CopyTo(dst)
+	}
+	_, err := dst.Write(file.Data)
+	return err
 }
 
 func openDesignDir(dir string, create bool) (*os.Root, error) {
@@ -163,7 +192,7 @@ func checkDesignSymlinks(root *os.Root, local string) error {
 	return nil
 }
 
-func readDesignFile(root *os.Root, name string) ([]byte, error) {
+func openDesignFile(root *os.Root, name string) (*os.File, error) {
 	local, err := designRelativePath(name)
 	if err != nil {
 		return nil, err
@@ -178,10 +207,23 @@ func readDesignFile(root *os.Root, name string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("design path %q is not a regular file", name)
 	}
-	return root.ReadFile(local)
+	return root.Open(local)
+}
+
+func readDesignFile(root *os.Root, name string) ([]byte, error) {
+	file, err := openDesignFile(root, name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(file)
 }
 
 func writeDesignFile(root *os.Root, name string, data []byte) error {
+	return writeDesignContent(root, name, designFile{Data: data})
+}
+
+func writeDesignContent(root *os.Root, name string, file designFile) error {
 	local, err := designRelativePath(name)
 	if err != nil {
 		return err
@@ -200,8 +242,7 @@ func writeDesignFile(root *os.Root, name string, data []byte) error {
 		return err
 	}
 	defer func() { _ = root.Remove(temp) }()
-	_, writeErr := f.Write(data)
-	if err := errors.Join(writeErr, f.Close()); err != nil {
+	if err := errors.Join(file.write(f), f.Close()); err != nil {
 		return err
 	}
 	return root.Rename(temp, local)
@@ -225,6 +266,9 @@ func loadDesignState(root *os.Root) (*designState, error) {
 func loadDesignBase(root *os.Root, state *designState) (map[string]designFile, error) {
 	base := make(map[string]designFile, len(state.Files))
 	paths := make(designPaths)
+	baseState := *state
+	baseState.PendingAssets = nil
+	pinned := designPinnedAssetTypes(&baseState)
 	for name, digest := range state.Files {
 		if err := validateDesignContentPath(name); err != nil {
 			return nil, err
@@ -235,20 +279,32 @@ func loadDesignBase(root *os.Root, state *designState) (map[string]designFile, e
 		if raw, err := hex.DecodeString(digest); err != nil || len(raw) != 32 {
 			return nil, fmt.Errorf("invalid base checksum for %q", name)
 		}
-		data, err := readDesignFile(root, path.Join(designBaseDir, digest))
-		if err != nil {
-			return nil, fmt.Errorf("read base of %q: %w", name, err)
+		filename := path.Join(designBaseDir, digest)
+		mediaType := pinned[name]
+		var file designFile
+		if mediaType != "" {
+			upload, err := captureDesignUpload(name, designAssetLimit(mediaType), func() (*os.File, error) {
+				return openDesignFile(root, filename)
+			})
+			if err != nil {
+				return nil, fmt.Errorf("read base of %q: %w", name, err)
+			}
+			file = designFile{MediaType: mediaType, Binary: true, Upload: &upload}
+		} else {
+			data, err := readDesignSource(root, filename)
+			if err != nil {
+				return nil, fmt.Errorf("read base of %q: %w", name, err)
+			}
+			file = newLocalDesignFile(name, data)
+			if media := state.MediaTypes[name]; media != "" {
+				file.MediaType = media
+			}
 		}
-		if sha256Hex(data) != digest {
+		if file.checksum() != digest {
 			return nil, fmt.Errorf("base of %q does not match its checksum", name)
-		}
-		file := newLocalDesignFile(name, data)
-		if media := state.MediaTypes[name]; media != "" {
-			file.MediaType = media
 		}
 		base[name] = file
 	}
-	markDesignAssets(state, base)
 	return base, nil
 }
 
@@ -257,9 +313,9 @@ func saveDesignState(root *os.Root, state *designState, base map[string]designFi
 	state.MediaTypes = make(map[string]string, len(base))
 	written := make(map[string]bool, len(base))
 	for name, file := range base {
-		digest := sha256Hex(file.Data)
+		digest := file.checksum()
 		if !written[digest] {
-			if err := writeDesignFile(root, path.Join(designBaseDir, digest), file.Data); err != nil {
+			if err := writeDesignContent(root, path.Join(designBaseDir, digest), file); err != nil {
 				return err
 			}
 			written[digest] = true
@@ -337,14 +393,6 @@ func newLocalDesignFile(name string, data []byte) designFile {
 		file.MediaType = "text/tsx"
 	case ".jsx":
 		file.MediaType = "text/jsx"
-	case ".png":
-		return designFile{Data: data, Binary: true, MediaType: "image/png"}
-	case ".jpg", ".jpeg":
-		return designFile{Data: data, Binary: true, MediaType: "image/jpeg"}
-	case ".webp":
-		return designFile{Data: data, Binary: true, MediaType: "image/webp"}
-	case ".woff2":
-		return designFile{Data: data, Binary: true, MediaType: "font/woff2"}
 	default:
 		file.MediaType = "text/plain"
 	}
@@ -357,15 +405,130 @@ func newLocalDesignFile(name string, data []byte) designFile {
 	return file
 }
 
-func scanDesignFiles(root *os.Root) (map[string]designFile, error) {
-	files, _, err := scanDesignTree(root)
+const designSourceFileLimit = 1 << 20
+const designAssetUploadLimit = 50 << 20
+
+func designAssetMediaType(name string) string {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".avif":
+		return "image/avif"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".ogg", ".opus":
+		return "audio/ogg"
+	case ".m4a":
+		return "audio/mp4"
+	case ".mp4":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".woff2":
+		return "font/woff2"
+	case ".otf":
+		return "font/otf"
+	case ".ttf":
+		return "font/ttf"
+	case ".pdf":
+		return "application/pdf"
+	}
+	if !strings.HasPrefix(name, "vendor/") {
+		return ""
+	}
+	switch strings.ToLower(path.Ext(name)) {
+	case ".js":
+		return "application/javascript"
+	case ".css":
+		return "text/css"
+	case ".json":
+		return "application/json"
+	default:
+		return ""
+	}
+}
+
+func designAssetLimit(mediaType string) int64 {
+	switch {
+	case strings.HasPrefix(mediaType, "video/"):
+		return designAssetUploadLimit
+	case strings.HasPrefix(mediaType, "audio/"):
+		return 20 << 20
+	case strings.HasPrefix(mediaType, "image/"), mediaType == "application/pdf":
+		return 10 << 20
+	default:
+		return 5 << 20
+	}
+}
+
+func captureDesignUpload(name string, maxBytes int64, open func() (*os.File, error)) (api.ArtifactUpload, error) {
+	reopen := func() (io.ReadCloser, error) {
+		file, err := open()
+		if err != nil {
+			return nil, err
+		}
+		info, err := file.Stat()
+		if err == nil && !info.Mode().IsRegular() {
+			err = fmt.Errorf("%q must be a regular file", name)
+		}
+		if err == nil && info.Size() > maxBytes {
+			err = fmt.Errorf("%q exceeds the %s upload limit", name, humanSize(maxBytes))
+		}
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		return file, nil
+	}
+	file, err := reopen()
+	if err != nil {
+		return api.ArtifactUpload{}, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	n, err := io.Copy(hash, io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return api.ArtifactUpload{}, err
+	}
+	if n > maxBytes {
+		return api.ArtifactUpload{}, fmt.Errorf("%q exceeds the %s upload limit", name, humanSize(maxBytes))
+	}
+	return api.ArtifactUpload{ByteLength: n, ContentDigest: hex.EncodeToString(hash.Sum(nil)), Open: reopen}, nil
+}
+
+func readDesignSource(root *os.Root, name string) ([]byte, error) {
+	file, err := openDesignFile(root, name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, designSourceFileLimit+1))
+	if err == nil && len(data) > designSourceFileLimit {
+		err = fmt.Errorf("source %q exceeds the %s file limit", name, humanSize(designSourceFileLimit))
+	}
+	return data, err
+}
+
+func scanDesignFiles(root *os.Root, state *designState) (map[string]designFile, error) {
+	files, _, err := scanDesignTree(root, state)
 	return files, err
 }
 
-func scanDesignTree(root *os.Root) (map[string]designFile, designPaths, error) {
+func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, designPaths, error) {
 	files := make(map[string]designFile)
 	paths := make(designPaths)
+	pinned := designPinnedAssetTypes(state)
 	tree := root.FS()
+	var assetBytes int64
+	var assetCount int
 	err := fs.WalkDir(tree, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || name == "." {
 			return err
@@ -408,7 +571,35 @@ func scanDesignTree(root *os.Root) (map[string]designFile, designPaths, error) {
 		if entry.IsDir() {
 			return nil
 		}
-		data, err := readDesignFile(root, name)
+		mediaType := pinned[name]
+		if mediaType == "" {
+			mediaType = designAssetMediaType(name)
+			if state != nil && strings.HasPrefix(name, "vendor/") {
+				_, tracked := state.Files[name]
+				if tracked && vendorDesignAssetMediaType(mediaType) {
+					mediaType = ""
+				}
+			}
+		}
+		if mediaType != "" {
+			if utf8.RuneCountInString(name) > 240 {
+				return fmt.Errorf("asset path %q exceeds 240 characters", name)
+			}
+			upload, err := captureDesignUpload(name, designAssetLimit(mediaType), func() (*os.File, error) {
+				return openDesignFile(root, name)
+			})
+			if err != nil {
+				return err
+			}
+			assetBytes += upload.ByteLength
+			assetCount++
+			if assetCount > 128 || assetBytes > 256<<20 {
+				return fmt.Errorf("Design exceeds 128 assets or 256 MiB of asset data")
+			}
+			files[name] = designFile{MediaType: mediaType, Binary: true, Upload: &upload}
+			return nil
+		}
+		data, err := readDesignSource(root, name)
 		if err != nil {
 			return err
 		}
@@ -418,8 +609,16 @@ func scanDesignTree(root *os.Root) (map[string]designFile, designPaths, error) {
 	return files, paths, err
 }
 
+func vendorDesignAssetMediaType(mediaType string) bool {
+	return mediaType == "application/javascript" || mediaType == "text/css" || mediaType == "application/json"
+}
+
 // A pinned asset may use an extension also allowed for text source.
-func markDesignAssets(state *designState, files map[string]designFile) {
+func designPinnedAssetTypes(state *designState) map[string]string {
+	if state == nil {
+		return nil
+	}
+	pinned := make(map[string]string, len(state.Manifest.Assets)+len(state.PendingAssets))
 	aliases := make(map[string]string, len(state.AssetPaths))
 	for name, canonical := range state.AssetPaths {
 		aliases[canonical] = name
@@ -429,9 +628,13 @@ func markDesignAssets(state *designState, files map[string]designFile) {
 		if alias, exists := aliases[name]; exists {
 			name = alias
 		}
-		if file, exists := files[name]; exists {
-			file.Binary, file.MediaType = true, asset.MediaType
-			files[name] = file
-		}
+		pinned[name] = asset.MediaType
 	}
+	for name, asset := range state.PendingAssets {
+		if alias, exists := aliases[name]; exists {
+			name = alias
+		}
+		pinned[name] = asset.MediaType
+	}
+	return pinned
 }

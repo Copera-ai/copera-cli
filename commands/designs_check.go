@@ -75,7 +75,7 @@ func designCheckDigest(cfg *config.Config, state *designState, files map[string]
 	snapshot.BuildState = ""
 	snapshot.PendingAssets = nil
 	for name, file := range files {
-		checksum := sha256Hex(file.Data)
+		checksum := file.checksum()
 		fingerprints[name] = fileFingerprint{checksum, file.MediaType, file.Binary}
 		if file.Binary {
 			canonical := designCanonicalAssetPath(name, state.AssetPaths)
@@ -137,7 +137,7 @@ func openDesignForBuild(cli *CLI, args []string) (*os.Root, *designState, map[st
 		_ = root.Close()
 		return nil, nil, nil, err
 	}
-	files, err := scanDesignFiles(root)
+	files, err := scanDesignFiles(root, state)
 	if err != nil {
 		_ = root.Close()
 		return nil, nil, nil, err
@@ -187,7 +187,7 @@ func designTextFiles(files map[string]designFile, base map[string]string) []api.
 	text := make([]api.ArtifactContentFile, 0)
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		file := files[name]
-		if !file.Binary && base[name] != sha256Hex(file.Data) {
+		if !file.Binary && base[name] != file.checksum() {
 			text = append(text, api.ArtifactContentFile{Path: name, MediaType: file.MediaType, Content: string(file.Data)})
 		}
 	}
@@ -208,7 +208,7 @@ func designManifestForFiles(state *designState, files map[string]designFile) api
 		if file, ok := files[designLocalAssetPath(asset.Path, state.AssetPaths)]; ok {
 			if !file.Binary {
 				asset.MediaType = file.MediaType
-				asset.ContentDigest = sha256Hex(file.Data)
+				asset.ContentDigest = file.checksum()
 			}
 			manifest.Assets = append(manifest.Assets, asset)
 		}
@@ -247,7 +247,7 @@ func checkDesign(ctx context.Context, cli *CLI, client *api.Client, root *os.Roo
 			return false
 		}
 		// An updated file must replace the old pin in the dry run.
-		if asset.ContentDigest != sha256Hex(file.Data) {
+		if asset.ContentDigest != file.checksum() {
 			return true
 		}
 		pinned[name] = true
@@ -264,12 +264,12 @@ func checkDesign(ctx context.Context, cli *CLI, client *api.Client, root *os.Roo
 		if err := validateDesignContentPath(canonical); err != nil {
 			return nil, err
 		}
-		if asset := state.PendingAssets[canonical]; state.ID != "" && asset.matches(sha256Hex(file.Data)) {
+		if asset := state.PendingAssets[canonical]; state.ID != "" && asset.matches(file.checksum()) {
 			manifest.Assets = append(manifest.Assets, asset.ArtifactAsset)
 			manifestChanged = true
 			continue
 		}
-		binaries = append(binaries, api.ArtifactCheckFile{Path: canonical, MediaType: file.MediaType, Data: file.Data})
+		binaries = append(binaries, file.uploadPart(canonical))
 	}
 	if state.ID != "" && manifestChanged {
 		// Unlike push, check treats source files outside the folder as removed.

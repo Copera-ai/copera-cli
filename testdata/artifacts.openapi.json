@@ -895,7 +895,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Create a Design with source and optional images or fonts in version 1. Send JSON for text source, or multipart/form-data with that same JSON in a project part and repeated file parts for binaries. Set each file part filename to its project-relative path. New files follow direct asset upload path, type and size rules. A reused Design snapshot cannot be combined with new binary file parts. Multipart must arrive within 30 seconds.",
+        "description": "Create a Design with source and optional assets in version 1. Send JSON for source, or multipart/form-data with that same JSON in a project part and at most 128 file parts for assets. Set each file part filename to its project-relative path. Assets follow direct upload rules, including vendor/ paths for JavaScript, CSS and JSON. Multipart permits 10.5 MiB of project metadata, 256 MiB of assets and 268 MiB total within 120 seconds. A reused Design snapshot cannot be combined with new asset parts. The retained workspace asset quota returns 409 with reason workspace_asset_quota.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1999,7 +1999,7 @@
                     "type": "array",
                     "items": {
                       "format": "binary",
-                      "description": "One PNG, JPEG, WebP or WOFF2 per file part. Use its relative path as the filename, for example assets/hero.png",
+                      "description": "One admitted asset per file part. Use its relative path as the filename, for example assets/hero.png or vendor/chart.js.",
                       "type": "string"
                     }
                   }
@@ -2800,6 +2800,27 @@
                     },
                     "ref": {
                       "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
                     }
                   },
                   "required": [
@@ -2926,6 +2947,12 @@
                     },
                     "ref": {
                       "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "maxBytes": {
+                      "type": "integer"
                     }
                   },
                   "required": [
@@ -3062,9 +3089,10 @@
                       "type": "string",
                       "enum": [
                         "budget_unavailable",
-                        "upload_busy"
+                        "upload_busy",
+                        "builder_unavailable"
                       ],
-                      "description": "budget_unavailable: the budget of Design pushes and checks could not be read: try again; upload_busy: too many multipart creates are in progress"
+                      "description": "budget_unavailable: the budget of Design pushes and checks could not be read: try again; upload_busy: too many multipart creates are in progress; builder_unavailable: the configured builder cannot accept the requested packages or hosted assets yet"
                     },
                     "retryAfterSeconds": {
                       "minimum": 1,
@@ -3090,7 +3118,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Creates a Design from a zip that GET /artifacts/{artifactId}/versions/{versionId}/archive (or the app's source download) produced: send it as multipart/form-data with the zip in the field file (up to 26 MiB) and a JSON field metadata with the idempotencyKey. The zip's images and fonts are re-admitted as new assets of the new Design, so a Design can move to another workspace or account. The Design is stored as written by the tool in metadata.tool (default other), its build is queued, and source-quality findings come back as warnings. A zip with credential-shaped text, files named like AI tool or editor settings, unsupported or unsafe entries (path tricks, links, encrypted entries) or contents that do not match the archive's own inventory is refused with 400, as is a title or description with credential-shaped text. Refused source paths report agent_config_name, invalid_path or reserved_build_file. The whole body must arrive within 120 seconds (later: 408, reason upload_timeout, and the connection is closed). A person has one archive upload at a time and the server a few: another answers 503, reason upload_busy, with Retry-After. A move from an archive queues a build, so it spends a unit of the budget of Design pushes and checks per token and per workspace: when it is used up the answer is 429 with Retry-After, reason push_budget, before the body is read; when the budget cannot be read, 503 with reason budget_unavailable. Needs a token with the Designs permission.",
+        "description": "Creates a Design from a v1 or v2 portable zip that GET /artifacts/{artifactId}/versions/{versionId}/archive (or the app's source download) produced. Send it as multipart/form-data with the zip in the field file (up to 264 MiB for v2, 26 MiB for v1) and a JSON field metadata with the idempotencyKey. The zip's files and assets are validated and the assets get fresh IDs. The Design is stored as written by the tool in metadata.tool (default other), its build is queued, and source-quality findings come back as warnings. A zip with credential-shaped text, files named like AI tool or editor settings, unsupported or unsafe entries (path tricks, links, encrypted entries) or contents that do not match the archive's own inventory is refused with 400, as is a title or description with credential-shaped text. Refused source paths report agent_config_name, invalid_path or reserved_build_file. The whole body must arrive within 120 seconds (later: 408, reason upload_timeout, and the connection is closed). A person has one archive upload at a time and the server a few: another answers 503, reason upload_busy, with Retry-After. A move from an archive queues a build, so it spends a unit of the budget of Design pushes and checks per token and per workspace: when it is used up the answer is 429 with Retry-After, reason push_budget, before the body is read; when the budget cannot be read, 503 with reason budget_unavailable. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -3099,7 +3127,7 @@
                 "properties": {
                   "file": {
                     "format": "binary",
-                    "description": "The portable zip, sent as the form part named file (up to 26 MiB)",
+                    "description": "The portable zip, sent as the form part named file (up to 264 MiB)",
                     "type": "string"
                   },
                   "metadata": {
@@ -3873,7 +3901,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -3998,7 +4026,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -4051,7 +4079,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -4104,7 +4132,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -4233,7 +4261,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -4259,7 +4287,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "A dry run of what a push or a create would store: the folder goes through the same rules as a push (paths, sizes, credential-shaped text, agent and editor setting names, packages) and then through a full build and render. Answers whether it builds, the findings with file, line and column, source-quality advice, AI look warnings and screenshots of the default page, including distinct dark renders. No Design, version, build record or asset is created. An optional idempotencyKey replays the stored answer for the same request for ten minutes, except a refunded refusal is processed again. A different input with the same key answers 409. Send JSON for text and already pinned assets, or multipart/form-data with the same JSON in a project field and repeated file parts for new images and fonts. Set each file part filename to its project-relative path. New files follow the direct upload path, type and size rules and must fit the asset budget with the pinned files. Multipart must arrive within 30 seconds or it answers 408. The JSON may weigh up to 10.5 MiB, like a push. Requests that exceed the transport size limits answer 413. A check takes the build service's one slot, so it counts like a push against the same budget before the body is parsed. When the budget is used up the answer is 429 with Retry-After and reason check_budget; when the build service is busy, being updated or too slow, or the budget cannot be read, the answer is 503 with its reason and retryAfterSeconds. A busy or unavailable builder, including an upstream 502 or 504 before a build ran, returns the budget unit. Invalid inputs and replays spend a unit. A builder refusal of the source answers 400 with reason builder_rejected_source and a bounded message. Needs a token with the Designs permission.",
+        "description": "A dry run of what a push or a create would store: the folder goes through the same rules as a push (paths, sizes, credential-shaped text, agent and editor setting names, packages) and then through a full build and render. Answers whether it builds, the findings with file, line and column, source-quality advice, AI look warnings and screenshots of the default page, including distinct dark renders. No Design, version, build record or asset is created. An optional idempotencyKey replays the stored answer for the same request for ten minutes, except a refunded refusal is processed again. A different input with the same key answers 409. Send JSON for text and already pinned assets, or multipart/form-data with the same JSON in a project field and at most 128 file parts for new assets. Set each filename to its project-relative path. New files follow the direct upload path, type and size rules and must fit the asset budget with the pinned files. Multipart permits 10.5 MiB of project metadata, 256 MiB of assets and 268 MiB total within 120 seconds or it answers 408. The JSON may weigh up to 10.5 MiB, like a push. Requests that exceed the transport size limits answer 413. A check takes the build service's one slot, so it counts like a push against the same budget before the body is parsed. When the budget is used up the answer is 429 with Retry-After and reason check_budget; when the build service is busy, being updated or too slow, or the budget cannot be read, the answer is 503 with its reason and retryAfterSeconds. A busy or unavailable builder, including an upstream 502 or 504 before a build ran, returns the budget unit. Invalid inputs and replays spend a unit. A builder refusal of the source answers 400 with reason builder_rejected_source and a bounded message. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -4271,7 +4299,7 @@
                     "pattern": "^[0-9a-fA-F]{24}$",
                     "minLength": 24,
                     "maxLength": 24,
-                    "description": "The Design the folder belongs to: its pinned images and fonts and its page list are read from it. Leave it out to check a Design that does not exist yet",
+                    "description": "The Design the folder belongs to: its pinned assets and page list are read from it. Leave it out to check a Design that does not exist yet",
                     "type": "string"
                   },
                   "baseVersionId": {
@@ -4988,7 +5016,7 @@
                     "type": "array",
                     "items": {
                       "format": "binary",
-                      "description": "One PNG, JPEG, WebP or WOFF2 per file part. Set its filename to the relative asset path, for example assets/hero.png. Paths follow the direct asset upload rules. The files are only used for this build",
+                      "description": "One admitted asset per file part. Use its relative path as the filename, for example assets/hero.png or vendor/chart.js. The files are only used for this check.",
                       "type": "string"
                     }
                   }
@@ -5580,7 +5608,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -5663,7 +5691,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -6862,6 +6890,11 @@
             "lang": "bash",
             "label": "cURL (starting template)",
             "source": "curl -X GET \"https://api.copera.app/public/v1/artifacts/guide?kind=landing_page&runtime=static\" \\\n  -H \"Authorization: Bearer YOUR_TOKEN\" | jq \".template\""
+          },
+          {
+            "lang": "bash",
+            "label": "cURL (curated React packages)",
+            "source": "curl -X GET \"https://api.copera.app/public/v1/artifacts/guide?runtime=react\" \\\n  -H \"Authorization: Bearer YOUR_TOKEN\" | jq \".facts.packages\""
           }
         ],
         "responses": {
@@ -6875,7 +6908,7 @@
                   "properties": {
                     "version": {
                       "minimum": 1,
-                      "description": "The guide's version: it changes when a rule or a fact does",
+                      "description": "The guide's version. Version 3 describes curated React packages, hosted assets and local vendor files.",
                       "type": "integer"
                     },
                     "kind": {
@@ -7134,19 +7167,22 @@
                           "type": "object",
                           "properties": {
                             "mediaTypes": {
-                              "description": "Binary files are uploaded as assets, never sent inline",
+                              "description": "MIME types for uploaded images, fonts, audio, video, PDFs and vendor files. Expanded types require hosted asset support.",
                               "type": "array",
                               "items": {
                                 "type": "string"
                               }
                             },
                             "maxFiles": {
+                              "description": "Assets in one Design",
                               "type": "integer"
                             },
                             "maxFileBytes": {
+                              "description": "Absolute per-asset byte ceiling. Lower limits apply by media type.",
                               "type": "integer"
                             },
                             "maxTotalBytes": {
+                              "description": "Total asset bytes in one Design",
                               "type": "integer"
                             }
                           },
@@ -10593,7 +10629,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Uploads one PNG, JPEG, WebP or WOFF2 file straight to a Design, so a push can name it in authoringManifest.assets. Send multipart/form-data with the file in the field file (up to 5 MiB; a Design holds 20 MiB of assets) and optional JSON in the field metadata. The type is read from the bytes: a file that is not what its type or name says is refused, and a too-large file answers 413. Set metadata.path to keep the original relative asset path, or omit it for a generated path. To replace an asset, upload the new bytes at the same path and push a manifest that pins the new asset ID. Earlier versions keep their original bytes. Sending the same bytes again with the same path choice, usage and altText answers with the asset already stored, even when the Design holds as many assets as it may. An upload that no version places counts toward the Design's assets for 24 hours, then stops counting and is removed. The whole body must arrive within 30 seconds (later: 408, reason upload_timeout, and the connection is closed). A person has one asset upload at a time and the server a few: another answers 503, reason upload_busy, with Retry-After. Needs a token with the Designs permission.",
+        "description": "Send multipart/form-data with one file and optional JSON in the field metadata. The byte limits are 10 MiB for PNG, JPEG, WebP, GIF, AVIF and PDF, 20 MiB for MP3, PCM WAV, Ogg Opus/Vorbis and AAC-LC M4A, 50 MiB for H.264 MP4 and VP8/VP9 WebM, and 5 MiB for WOFF2, OTF, TTF, JavaScript, CSS and JSON. A Design holds up to 128 assets and 256 MiB when hosted asset delivery is enabled. Types are verified against the bytes and recognized suffix. The API returns 400 for asset_type_invalid, asset_media_limits or digest_mismatch, 413 for upload_too_large, and 409 for workspace_asset_quota. Set metadata.path to preserve a relative path. JavaScript, CSS and JSON require a path under vendor/. Upload new bytes to the same path and pin the returned ID to replace an asset. Earlier versions retain their original bytes. An identical upload of path, bytes, usage and altText reuses the admitted asset. Unplaced uploads count for 24 hours. Uploads must arrive within 120 seconds or return 408 with reason upload_timeout. A full upload gate returns 503 with reason upload_busy and Retry-After. New types and sizes require hosted asset delivery. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -10602,7 +10638,7 @@
                 "properties": {
                   "file": {
                     "format": "binary",
-                    "description": "The PNG, JPEG, WebP or WOFF2 file, sent as the form part named file (up to 5 MiB)",
+                    "description": "The asset, sent as the form part named file (up to 50 MiB, with a lower limit for some file types)",
                     "type": "string"
                   },
                   "metadata": {
@@ -10613,11 +10649,11 @@
                       "path": {
                         "minLength": 1,
                         "maxLength": 240,
-                        "description": "Relative source path for the asset, such as assets/hero.png. The extension must match the file bytes, the path must be unused, and design/assets/ is reserved for generated path names. Defaults to a generated path.",
+                        "description": "Relative asset path, such as assets/hero.png or vendor/chart.js. The extension must match the file bytes. JavaScript, CSS and JSON require a path under vendor/. Other types default to a generated path. An upload can replace any asset path in the base version, including generated paths under design/assets/.",
                         "type": "string"
                       },
                       "usage": {
-                        "description": "What the asset is for. Left out, WOFF2 bytes are a font and anything else an image",
+                        "description": "Images accept image, logo or reference and default to image. Fonts use font. All other assets use reference.",
                         "anyOf": [
                           {
                             "type": "string",
@@ -10804,7 +10840,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -10929,7 +10965,60 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
+                      "type": "integer"
+                    },
+                    "retryAfterSeconds": {
+                      "description": "upload_busy: try again after this many seconds",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
+                    },
+                    "maxBytes": {
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -10982,7 +11071,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -11099,7 +11188,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -11430,6 +11519,7 @@
           "public",
           "Public API Artifacts"
         ],
+        "description": "Import one completed owned Drive upload as an image, font, audio, video or PDF. The API verifies the file's bytes and returns a generated path. JavaScript, CSS and JSON require a named upload under vendor/ through the multipart asset route. The direct asset type and size limits apply. A full workspace returns 409 with reason workspace_asset_quota.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -11606,6 +11696,27 @@
                     },
                     "ref": {
                       "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
                     }
                   },
                   "required": [
@@ -11687,6 +11798,51 @@
               }
             }
           },
+          "408": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
           "409": {
             "description": "Default Response",
             "content": {
@@ -11702,6 +11858,42 @@
                     },
                     "ref": {
                       "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "maxBytes": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "maxBytes": {
+                      "type": "integer"
                     }
                   },
                   "required": [
@@ -11766,6 +11958,51 @@
                     },
                     "ref": {
                       "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
                     }
                   },
                   "required": [
@@ -18458,8 +18695,29 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Answers with a link, valid for 60 seconds, to the Design's portable zip: its source files, its pages and shared design, and its images and fonts. Issuing the link is logged and its stored zip is scheduled for deletion when the link expires. Send the zip to POST /artifacts/archives (here or in another workspace or account) to make a Design from it. A version that holds credential-shaped text is refused, as its source is, and files named like AI tool or editor settings are left out and listed in omittedPaths. Needs a token with the Designs permission.",
+        "description": "Answers with a link, valid for 60 seconds, to the Design's portable zip: its source files, pages, shared design and exact asset bytes. Choose archiveVersion=2 for media, vendor files or larger assets. The default format is 1 and answers 409 with archive_version_required if it cannot retain every asset. The selected format is returned only if requested. Issuing the link is logged and its stored zip is scheduled for deletion when the link expires. Send the zip to POST /artifacts/archives to make a Design in an authorized workspace. Credential-shaped text is refused, and files named like AI tool or editor settings are left out and listed in omittedPaths. Needs a token with the Designs permission.",
         "parameters": [
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                {
+                  "type": "number",
+                  "enum": [
+                    2
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "archiveVersion",
+            "required": false
+          },
           {
             "schema": {
               "pattern": "^[0-9a-fA-F]{24}$",
@@ -18520,6 +18778,22 @@
                       "pattern": "^[a-f0-9]{64}$",
                       "type": "string"
                     },
+                    "archiveVersion": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "enum": [
+                            1
+                          ]
+                        },
+                        {
+                          "type": "number",
+                          "enum": [
+                            2
+                          ]
+                        }
+                      ]
+                    },
                     "omittedPaths": {
                       "description": "Files of the version left out of the archive because their names read as AI tool or editor settings (.claude, AGENTS.md, .cursor, ...). Empty for every version written after those names were refused",
                       "type": "array",
@@ -18578,7 +18852,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -18665,6 +18939,59 @@
               }
             }
           },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
+                    },
+                    "maxBytes": {
+                      "description": "The exceeded file, form or workspace limit in bytes",
+                      "type": "integer"
+                    },
+                    "retryAfterSeconds": {
+                      "description": "upload_busy: try again after this many seconds",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
           "413": {
             "description": "Default Response",
             "content": {
@@ -18703,7 +19030,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -18820,7 +19147,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {

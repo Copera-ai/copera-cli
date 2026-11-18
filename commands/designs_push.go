@@ -193,8 +193,8 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		file := files[name]
 		if file.Binary {
-			binaries = append(binaries, api.ArtifactCheckFile{Path: name, MediaType: file.MediaType, Data: file.Data})
-			keyParts = append(keyParts, name, sha256Hex(file.Data))
+			binaries = append(binaries, file.uploadPart(name))
+			keyParts = append(keyParts, name, file.checksum())
 		}
 	}
 	input.IdempotencyKey, err = designPushKey(strings.Join(keyParts, "\x00"), input)
@@ -233,10 +233,18 @@ func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os
 		Tool: designTool(), ChangeSummary: summary, Files: designTextFiles(files, textBase),
 	}
 	for _, name := range slices.Sorted(maps.Keys(base)) {
-		if _, found := files[name]; found {
-			continue
-		}
 		canonical := designCanonicalAssetPath(name, state.AssetPaths)
+		if file, found := files[name]; found {
+			// A tracked vendor source stays source until explicitly admitted.
+			// Converting it to a pin removes the previous source at that path.
+			wasPinned := slices.ContainsFunc(state.Manifest.Assets, func(asset api.ArtifactAsset) bool {
+				return asset.Path == canonical
+			})
+			if !file.Binary || !vendorDesignAssetMediaType(file.MediaType) || wasPinned ||
+				!state.PendingAssets[canonical].matches(file.checksum()) {
+				continue
+			}
+		}
 		if err := validateDesignContentPath(canonical); err != nil {
 			return nil, false, err
 		}
@@ -292,11 +300,11 @@ func pushDesignAssets(ctx context.Context, client *api.Client, root *os.Root, st
 			return manifest, nil, err
 		}
 		asset := assets[canonical]
-		digest := sha256Hex(file.Data)
+		digest := file.checksum()
 		if asset.ID == "" || asset.ContentDigest != digest {
 			pending := state.PendingAssets[canonical]
 			if !pending.matches(digest) {
-				uploaded, err := client.ArtifactAssetUpload(ctx, state.ID, canonical, file.Data, asset.Usage, asset.AltText)
+				uploaded, err := client.ArtifactAssetUpload(ctx, state.ID, file.uploadPart(canonical), asset.Usage, asset.AltText)
 				if err != nil {
 					return manifest, nil, fmt.Errorf("upload %s: %w", name, err)
 				}
