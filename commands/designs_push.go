@@ -32,7 +32,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				cli.Printer.PrintError("invalid_flag", msg, "", false)
 				return exitcodes.Newf(exitcodes.Usage, "%s", msg)
 			}
-			root, state, files, err := openDesignForBuild(args)
+			root, state, files, err := openDesignForBuild(cli, args)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -52,7 +52,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				state.BaseVersionID, state.HeadRevision = head.CurrentVersion.ID, head.HeadRevision
 			}
 			if !noCheck {
-				report, err := checkDesign(ctx, client, root, state, files, force)
+				report, err := checkDesign(ctx, cli, client, root, state, files, force)
 				if err != nil {
 					return designPushError(cli, err, designPushProgress(state))
 				}
@@ -81,7 +81,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			if wait {
-				return waitForDesignBuild(ctx, cli, client, root, state, progress)
+				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, progress)
 			}
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(pushed)
@@ -336,7 +336,15 @@ func designPushKey(prefix string, input interface{}) (string, error) {
 
 func sendDesignPush(ctx context.Context, cli *CLI, client *api.Client, id string, input api.ArtifactPushInput, wait bool) (*api.ArtifactPushResult, error) {
 	if !wait {
-		return client.ArtifactPush(ctx, id, input)
+		result, err := client.ArtifactPush(ctx, id, input)
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict &&
+			apiErr.Reason == "writer_busy" && apiErr.RetryAfterSeconds > 0 {
+			busy := *apiErr
+			busy.Message = fmt.Sprintf("%s (retry in %d seconds)", apiErr.Message, apiErr.RetryAfterSeconds)
+			return result, &busy
+		}
+		return result, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
@@ -372,7 +380,7 @@ func sendDesignPush(ctx context.Context, cli *CLI, client *api.Client, id string
 	}
 }
 
-func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, progress string) error {
+func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, progress string) error {
 	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
 	for {
 		build, err := client.ArtifactBuild(ctx, state.ID, state.BaseVersionID, wait)
@@ -397,15 +405,24 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 
 		report := &designBuildReport{
 			State: build.State, FailureCode: build.FailureCode, ArtifactBuildFindings: build.ArtifactBuildFindings,
+			Version: version,
 		}
 		for _, shot := range build.Screenshots {
 			data, err := downloadHandoffAsset(ctx, client, shot.URL)
 			if err != nil {
-				return designPushError(cli, fmt.Errorf("download Design screenshot: %w", err), progress)
+				if build.State != "ready" {
+					return designPushError(cli, fmt.Errorf("download Design screenshot: %w", err), progress)
+				}
+				cli.Printer.Info("Warning: download Design screenshot: %s", err)
+				continue
 			}
-			name, err := saveDesignShot(root, shot.PageID, shot.Width, data)
+			name, err := saveDesignShot(root, shot.PageID, shot.Width, "", data)
 			if err != nil {
-				return designPushError(cli, err, progress)
+				if build.State != "ready" {
+					return designPushError(cli, err, progress)
+				}
+				cli.Printer.Info("Warning: save Design screenshot: %s", err)
+				continue
 			}
 			report.Screenshots = append(report.Screenshots, name)
 		}

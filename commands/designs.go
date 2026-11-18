@@ -193,7 +193,14 @@ func newDesignLogCmd(cli *CLI) *cobra.Command {
 			for i, entry := range entries {
 				date := entry.Date.Format(time.RFC3339)
 				origin, author := display(entry.Origin), display(entry.AuthorKind)
-				tool, summary := display(entry.Tool), display(entry.ChangeSummary)
+				tool := "-"
+				switch {
+				case author == "ai" || (entry.AuthorKind == nil && origin == "ai_chat"):
+					tool = "Copera AI"
+				case entry.Tool != nil && *entry.Tool != "":
+					tool = *entry.Tool
+				}
+				summary := display(entry.ChangeSummary)
 				if table != nil {
 					table.Row(entry.Version, date, origin, author, tool, summary)
 					continue

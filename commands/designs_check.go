@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"slices"
@@ -21,7 +22,7 @@ func newDesignCheckCmd(cli *CLI) *cobra.Command {
 		Short: "Build and render a local Design without saving a version",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, state, files, err := openDesignForBuild(args)
+			root, state, files, err := openDesignForBuild(cli, args)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -30,7 +31,7 @@ func newDesignCheckCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := checkDesign(cmd.Context(), client, root, state, files, false)
+			report, err := checkDesign(cmd.Context(), cli, client, root, state, files, false)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -39,7 +40,7 @@ func newDesignCheckCmd(cli *CLI) *cobra.Command {
 	}
 }
 
-func openDesignForBuild(args []string) (*os.Root, *designState, map[string]designFile, error) {
+func openDesignForBuild(cli *CLI, args []string) (*os.Root, *designState, map[string]designFile, error) {
 	dir := "."
 	if len(args) > 0 {
 		dir = args[0]
@@ -57,6 +58,33 @@ func openDesignForBuild(args []string) (*os.Root, *designState, map[string]desig
 	if err != nil {
 		_ = root.Close()
 		return nil, nil, nil, err
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		info, err := root.Lstat(name)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			_ = root.Close()
+			return nil, nil, nil, err
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if info.Size() == int64(len(designRules)) {
+			content, err := readDesignFile(root, name)
+			if errors.Is(err, fs.ErrPermission) || errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				_ = root.Close()
+				return nil, nil, nil, err
+			}
+			if string(content) == designRules {
+				continue
+			}
+		}
+		cli.Printer.Info("%s is a local file of this folder and is not saved in the Design.", name)
 	}
 	return root, state, files, nil
 }
@@ -118,7 +146,7 @@ func designLocalAssetPath(canonical string, paths map[string]string) string {
 	return canonical
 }
 
-func checkDesign(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile, force bool) (*designBuildReport, error) {
+func checkDesign(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, files map[string]designFile, force bool) (*designBuildReport, error) {
 	input := api.ArtifactCheckInput{
 		ArtifactID: state.ID, BaseVersionID: state.BaseVersionID,
 		IncludeScreenshots: true, Files: designTextFiles(files, nil),
@@ -177,14 +205,23 @@ func checkDesign(ctx context.Context, client *api.Client, root *os.Root, state *
 	}
 	report := &designBuildReport{
 		State: "ready", ArtifactBuildFindings: result.ArtifactBuildFindings, Warnings: result.Warnings,
+		DarkScheme: result.DarkScheme,
 	}
 	if !result.OK {
 		report.State = "failed"
 	}
 	for _, shot := range result.Screenshots {
-		name, err := saveDesignShot(root, shot.PageID, shot.Width, shot.Data)
+		scheme := shot.Scheme
+		if scheme == "" {
+			scheme = "light"
+		}
+		name, err := saveDesignShot(root, shot.PageID, shot.Width, scheme, shot.Data)
 		if err != nil {
-			return nil, err
+			if !result.OK {
+				return nil, err
+			}
+			cli.Printer.Info("Warning: save Design screenshot: %s", err)
+			continue
 		}
 		report.Screenshots = append(report.Screenshots, name)
 	}
@@ -195,15 +232,25 @@ type designBuildReport struct {
 	State       string                `json:"state"`
 	FailureCode string                `json:"failureCode,omitempty"`
 	Warnings    []api.ArtifactWarning `json:"warnings,omitempty"`
+	Version     *api.ArtifactVersion  `json:"version,omitempty"`
+	DarkScheme  *bool                 `json:"darkScheme,omitempty"`
 	api.ArtifactBuildFindings
 	Screenshots []string `json:"screenshots"`
 }
 
-func saveDesignShot(root *os.Root, page string, width int, data []byte) (string, error) {
+func saveDesignShot(root *os.Root, page string, width int, scheme string, data []byte) (string, error) {
 	if page == "" || page == "." || page == ".." || strings.ContainsAny(page, "/\\") || width <= 0 {
 		return "", fmt.Errorf("invalid screenshot page or width")
 	}
-	name := fmt.Sprintf(".copera/shots/%s-%d.webp", page, width)
+	name := fmt.Sprintf(".copera/shots/%s-%d", page, width)
+	switch scheme {
+	case "light", "dark":
+		name += "-" + scheme
+	case "":
+	default:
+		return "", fmt.Errorf("invalid screenshot scheme %q", scheme)
+	}
+	name += ".webp"
 	if err := writeDesignFile(root, name, data); err != nil {
 		return "", err
 	}
@@ -216,7 +263,13 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 			return err
 		}
 	} else {
+		if report.Version != nil {
+			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", report.Version.Version, report.Version.ID))
+		}
 		cli.Printer.PrintLine("Build: " + report.State)
+		if report.DarkScheme != nil && !*report.DarkScheme {
+			cli.Printer.PrintLine("darkScheme: false")
+		}
 		for _, diagnostic := range report.Diagnostics {
 			message := fmt.Sprintf("%s: %s", diagnostic.Severity, diagnostic.Message)
 			if diagnostic.FilePath != "" {

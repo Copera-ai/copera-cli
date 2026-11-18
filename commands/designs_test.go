@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,6 +68,28 @@ func TestDesignsOpenAndLog(t *testing.T) {
 	for _, value := range []string{"VERSION", "DATE", "ORIGIN", "AUTHOR", "TOOL", "CHANGE SUMMARY", "4", "2026-10-02T10:00:00Z", "public_api", "user", "claude_code", "Add contact page"} {
 		assert.Contains(t, table.Stdout, value)
 	}
+}
+
+func TestDesignsLogCoperaAITool(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+			ai, user, aiChat := "ai", "user", "ai_chat"
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactVersionConnection{
+				Edges: []api.ArtifactVersionEdge{
+					{Node: api.ArtifactVersion{Version: 3, AuthorKind: &ai, Origin: &aiChat}},
+					{Node: api.ArtifactVersion{Version: 2, AuthorKind: &user, Origin: &aiChat}},
+					{Node: api.ArtifactVersion{Version: 1}},
+				},
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"designs", "log", artID, "--output", "table"}, "")
+	require.Equal(t, 0, res.ExitCode, res.Stderr)
+	assert.Regexp(t, `(?m)^ +3 │ [^│]+ │ ai_chat +│ ai +│ Copera AI +│`, res.Stdout)
+	assert.Regexp(t, `(?m)^ +2 │ [^│]+ │ ai_chat +│ user +│ - +│`, res.Stdout)
+	assert.Regexp(t, `(?m)^ +1 │ [^│]+ │ unavailable +│ unavailable +│ - +│`, res.Stdout)
 }
 
 func TestDesignsGuide(t *testing.T) {

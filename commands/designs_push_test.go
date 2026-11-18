@@ -89,7 +89,7 @@ func TestDesignsCheck(t *testing.T) {
 	assert.Contains(t, res.Stdout, designEntrypoint+":7:2")
 	assert.Contains(t, res.Stdout, "invalid syntax")
 	assert.Contains(t, res.Stdout, "page crashed")
-	image, err := os.ReadFile(filepath.Join(dir, ".copera", "shots", "home-390.webp"))
+	image, err := os.ReadFile(filepath.Join(dir, ".copera", "shots", "home-390-light.webp"))
 	require.NoError(t, err)
 	assert.Equal(t, "shot", string(image))
 }
@@ -342,12 +342,40 @@ func TestDesignsFirstPushRejected(t *testing.T) {
 	assert.Equal(t, before, readFile(t, stateFile))
 }
 
+func TestDesignsPushWriterBusyWithoutWait(t *testing.T) {
+	dir := designPublishFolder(t)
+	var attempts atomic.Int32
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+			attempts.Add(1)
+			testutil.RespondJSON(w, http.StatusConflict, struct {
+				Message           string `json:"message"`
+				Reason            string `json:"reason"`
+				RetryAfterSeconds int    `json:"retryAfterSeconds"`
+			}{"Copera AI is editing this Design", "writer_busy", 17})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit", "--no-check", "--json"}, "")
+	assert.Equal(t, 5, res.ExitCode, res.Stderr)
+	assert.Contains(t, res.Stderr, "17 seconds")
+	assert.Empty(t, res.Stdout)
+	assert.EqualValues(t, 1, attempts.Load())
+}
+
 func TestDesignsPushReplacesImageInPlace(t *testing.T) {
-	const (
-		localPath = "assets/logo.png"
-		assetPath = "assets/brand/logo.png"
-		png       = "\x89PNG\r\n\x1a\n"
-	)
+	testDesignsPushReplacesImageInPlace(t, "assets/logo.png", "assets/brand/logo.png", map[string]string{"assets/logo.png": "assets/brand/logo.png"})
+}
+
+func TestDesignsPushReplacesGeneratedAssetInPlace(t *testing.T) {
+	const assetPath = "design/assets/dddddddddddddddddddddddd.png"
+	testDesignsPushReplacesImageInPlace(t, assetPath, assetPath, nil)
+}
+
+func testDesignsPushReplacesImageInPlace(t *testing.T, localPath, assetPath string, aliases map[string]string) {
+	t.Helper()
+	const png = "\x89PNG\r\n\x1a\n"
 	dir := t.TempDir()
 	oldAsset := api.ArtifactAsset{
 		ID: "dddddddddddddddddddddddd", Path: assetPath, ContentDigest: digestOf(png + "old"),
@@ -367,7 +395,7 @@ func TestDesignsPushReplacesImageInPlace(t *testing.T) {
 	}{
 		ID: artID, BaseVersionID: verID, HeadRevision: 1,
 		Files:      map[string]string{"index.html": digestOf("<p>Home</p>"), localPath: oldAsset.ContentDigest},
-		AssetPaths: map[string]string{localPath: assetPath},
+		AssetPaths: aliases,
 		Manifest:   api.ArtifactManifest{Assets: []api.ArtifactAsset{oldAsset}},
 	})
 	require.NoError(t, err)
@@ -405,7 +433,7 @@ func TestDesignsPushReplacesImageInPlace(t *testing.T) {
 		},
 		"POST /artifacts/" + artID + "/assets": func(w http.ResponseWriter, r *http.Request) {
 			uploads.Add(1)
-			metadata := assertDesignUpload(t, r, "logo.png", png+"new")
+			metadata := assertDesignUpload(t, r, filepath.Base(assetPath), png+"new")
 			if !assert.Equal(t, assetPath, metadata["path"]) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
@@ -444,7 +472,7 @@ func TestDesignsPushReplacesImageInPlace(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(readFile(t, stateFile)), &saved))
 	assert.Equal(t, replacement.ContentDigest, saved.Files[localPath])
-	assert.Equal(t, map[string]string{localPath: assetPath}, saved.AssetPaths)
+	assert.Equal(t, aliases, saved.AssetPaths)
 	assert.Equal(t, []api.ArtifactAsset{replacement}, saved.Manifest.Assets)
 }
 

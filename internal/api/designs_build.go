@@ -96,12 +96,14 @@ type ArtifactBuildFindings struct {
 }
 
 type ArtifactCheckResult struct {
-	OK       bool              `json:"ok"`
-	Warnings []ArtifactWarning `json:"warnings"`
+	OK         bool              `json:"ok"`
+	Warnings   []ArtifactWarning `json:"warnings"`
+	DarkScheme *bool             `json:"darkScheme"`
 	ArtifactBuildFindings
 	Screenshots []struct {
 		PageID string `json:"pageId"`
 		Width  int    `json:"width"`
+		Scheme string `json:"scheme"`
 		Data   []byte `json:"data"`
 	} `json:"screenshots"`
 }

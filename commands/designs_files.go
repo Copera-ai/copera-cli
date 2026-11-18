@@ -326,7 +326,8 @@ func scanDesignFiles(root *os.Root) (map[string]designFile, error) {
 func scanDesignTree(root *os.Root) (map[string]designFile, designPaths, error) {
 	files := make(map[string]designFile)
 	paths := make(designPaths)
-	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
+	tree := root.FS()
+	err := fs.WalkDir(tree, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || name == "." {
 			return err
 		}
@@ -347,6 +348,19 @@ func scanDesignTree(root *os.Root) (map[string]designFile, designPaths, error) {
 			return nil
 		}
 		if err := validateDesignContentPath(name); err != nil {
+			if entry.IsDir() {
+				var firstFile string
+				_ = fs.WalkDir(tree, name, func(child string, member fs.DirEntry, walkErr error) error {
+					if walkErr != nil || member.IsDir() {
+						return walkErr
+					}
+					firstFile = child
+					return fs.SkipAll
+				})
+				if firstFile != "" {
+					return fmt.Errorf("%w (first file: %q)", err, firstFile)
+				}
+			}
 			return err
 		}
 		if err := paths.add(name, entry.IsDir()); err != nil {

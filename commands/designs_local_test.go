@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/copera/copera-cli/internal/api"
+	"github.com/copera/copera-cli/internal/output"
 	"github.com/copera/copera-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -213,6 +214,106 @@ func TestDesignPullRefusesServerAgentFile(t *testing.T) {
 	assert.NotZero(t, res.ExitCode)
 	assert.Contains(t, res.Stderr, name)
 	assert.NoDirExists(t, dir)
+}
+
+func TestDesignsRefusedFolderNamesFirstFile(t *testing.T) {
+	dir := designPublishFolder(t)
+	writePublishFixture(t, filepath.Join(dir, ".claude", "settings.json"), []byte("{}"))
+	writePublishFixture(t, filepath.Join(dir, ".claude", "z-last.json"), []byte("{}"))
+	srv := testutil.NewMockServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
+	assert.NotZero(t, res.ExitCode)
+	var refusal output.StructuredError
+	require.NoError(t, json.Unmarshal([]byte(res.Stderr), &refusal))
+	assert.Contains(t, refusal.Message, "refused name \".claude\"")
+	assert.Contains(t, refusal.Message, ".claude/settings.json")
+	assert.NotContains(t, refusal.Message, ".claude/z-last.json")
+}
+
+func TestDesignsRootHelperFilesAreLocal(t *testing.T) {
+	const name, source = "index.html", "<h1>Design</h1>\n"
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/" + artID: func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, designPullFixture(name, source, 1))
+		},
+		"GET /artifacts/" + artID + "/handoff": func(w http.ResponseWriter, _ *http.Request) {
+			content := source
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactHandoff{
+				Files: []api.ArtifactHandoffFile{{Path: name, Content: &content}},
+			})
+		},
+		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
+		},
+		"GET /artifacts/guide": designGuideResponse,
+		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+			var input api.ArtifactCheckInput
+			if assert.NoError(t, json.NewDecoder(r.Body).Decode(&input)) && assert.Len(t, input.Files, 1) {
+				assert.Equal(t, name, input.Files[0].Path)
+			}
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactCheckResult{OK: true})
+		},
+		"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+			var input api.ArtifactPushInput
+			if assert.NoError(t, json.NewDecoder(r.Body).Decode(&input)) && assert.Len(t, input.Files, 1) {
+				assert.Equal(t, name, input.Files[0].Path)
+			}
+			testutil.RespondJSON(w, http.StatusCreated, api.ArtifactPushResult{
+				Outcome: "created", ArtifactID: artID, Version: designPullFixture(name, "edited\n", 2).CurrentVersion, HeadRevision: 2, BuildState: "queued",
+			})
+		},
+		"GET /artifacts/" + artID + "/versions/" + ver2ID: func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, designPullFixture(name, "edited\n", 2).CurrentVersion)
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	dir := t.TempDir()
+	pull := []string{"designs", "pull", artID, dir, "--json"}
+	check := []string{"designs", "check", dir, "--json"}
+	res := testutil.RunCommand(t, pull, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	helperFiles := []string{"AGENTS.md", "CLAUDE.md"}
+	rules := readFile(t, filepath.Join(dir, helperFiles[0]))
+	assert.Contains(t, rules, designRulesSentence)
+	res = testutil.RunCommand(t, check, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	assert.Empty(t, res.Stderr)
+
+	for _, helper := range helperFiles {
+		writePublishFixture(t, filepath.Join(dir, helper), []byte("edited helper"))
+	}
+	writePublishFixture(t, filepath.Join(dir, name), []byte("edited\n"))
+	push := []string{"designs", "push", dir, "--no-check", "-m", "Edit design", "--json"}
+	for _, args := range [][]string{check, push} {
+		res := testutil.RunCommand(t, args, "")
+		assert.Zero(t, res.ExitCode, res.Stderr)
+		assert.Equal(t, "AGENTS.md is a local file of this folder and is not saved in the Design.\n"+
+			"CLAUDE.md is a local file of this folder and is not saved in the Design.\n", res.Stderr, args[1])
+	}
+
+	for _, helper := range helperFiles {
+		nested := filepath.Join(dir, "nested", helper)
+		writePublishFixture(t, nested, []byte(rules))
+		res = testutil.RunCommand(t, check, "")
+		assert.NotZero(t, res.ExitCode)
+		assert.Contains(t, res.Stderr, "nested/"+helper)
+		require.NoError(t, os.Remove(nested))
+	}
+	// A fresh pull treats existing root helper files as local, too.
+	fresh := t.TempDir()
+	for _, helper := range helperFiles {
+		writePublishFixture(t, filepath.Join(fresh, helper), []byte("edited helper"))
+	}
+	res = testutil.RunCommand(t, []string{"designs", "pull", artID, fresh, "--json"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	for _, helper := range helperFiles {
+		assert.Equal(t, rules, readFile(t, filepath.Join(fresh, helper)))
+	}
 }
 
 func TestDesignStatusAndDiff(t *testing.T) {

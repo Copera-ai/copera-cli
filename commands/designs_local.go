@@ -180,7 +180,7 @@ func readDesignSystem(ctx context.Context, client *api.Client, name string) (str
 	return selected.ID, append(data, '\n'), err
 }
 
-func checkDesignPullTargets(root *os.Root, remote map[string]designFile, managed bool) error {
+func checkDesignPullTargets(root *os.Root, remote map[string]designFile) error {
 	check := func(name string) error {
 		local := filepath.FromSlash(name)
 		if err := checkDesignSymlinks(root, local); err != nil {
@@ -198,17 +198,6 @@ func checkDesignPullTargets(root *os.Root, remote map[string]designFile, managed
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md", ".copera/guide/README.md", ".copera/guide/facts.json"} {
 		if err := check(name); err != nil {
 			return err
-		}
-	}
-	if !managed {
-		for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
-			content, err := readDesignFile(root, name)
-			switch {
-			case err == nil && string(content) != designRules:
-				return fmt.Errorf("design pull would overwrite existing %q; choose a different folder", name)
-			case err != nil && !errors.Is(err, fs.ErrNotExist):
-				return err
-			}
 		}
 	}
 	for _, file := range remote {
@@ -505,7 +494,7 @@ func applyDesignPull(root *os.Root, state *designState, remote map[string]design
 			return nil, err
 		}
 	}
-	if err := checkDesignPullTargets(root, remote, previous != nil); err != nil {
+	if err := checkDesignPullTargets(root, remote); err != nil {
 		return nil, err
 	}
 	var replacedDirs []string
