@@ -27,6 +27,7 @@ type CLI struct {
 	Printer    *output.Printer
 	Stdin      io.Reader
 	CacheStore cache.Store // nil = use disk (default); set to MemStore in tests
+	homeDir    string
 
 	flags struct {
 		token   string
@@ -50,6 +51,7 @@ func (c *CLI) LoadConfig() (*config.Config, error) {
 	return config.Load(config.LoadOpts{
 		FlagProfile: c.flags.profile,
 		FlagToken:   c.flags.token,
+		HomeDir:     c.homeDir,
 	})
 }
 
@@ -101,6 +103,9 @@ Documentation: https://developers.copera.ai/`,
 		newRowsCmd(cli),
 		newChannelsCmd(cli),
 		newDriveCmd(cli),
+		newDesignsCmd(cli),
+		newConnectCmd(cli),
+		newDisconnectCmd(cli),
 		newWorkspaceCmd(cli),
 		newTimeCmd(cli),
 		newAgendaCmd(cli),
@@ -125,7 +130,8 @@ Documentation: https://developers.copera.ai/`,
 		updateOnce.Do(func() {
 			if cli.flags.json || cli.flags.quiet || os.Getenv("CI") == "true" ||
 				os.Getenv("COPERA_NO_UPDATE_CHECK") == "1" || build.Version == "dev" ||
-				cmd.Name() == "update" || isCompletionCmd(cmd) || !stderrIsTTY(stderr) {
+				cmd.Name() == "update" || cmd.Name() == "connect" || cmd.Name() == "disconnect" ||
+				isCompletionCmd(cmd) || !stderrIsTTY(stderr) {
 				return
 			}
 			updateResult = updater.CheckVersion(context.Background(), cache.SharedDir(), false)
@@ -169,13 +175,15 @@ func Execute() error {
 // ExecOpts holds optional overrides for CLI execution (used by tests).
 type ExecOpts struct {
 	CacheStore cache.Store
+	HomeDir    string
 }
 
 // ExecuteWithWriters runs the CLI with injected args and I/O — used by tests.
 func ExecuteWithWriters(args []string, stdin io.Reader, stdout, stderr io.Writer, opts ...ExecOpts) error {
 	cmd, cli := newRootCmd(stdin, stdout, stderr)
-	if len(opts) > 0 && opts[0].CacheStore != nil {
+	if len(opts) > 0 {
 		cli.CacheStore = opts[0].CacheStore
+		cli.homeDir = opts[0].HomeDir
 	}
 	cmd.SetArgs(args)
 	cmd.SetIn(stdin)

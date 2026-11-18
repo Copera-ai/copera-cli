@@ -62,6 +62,8 @@ Designed to be used by both **humans** (interactive, list/tree output) and **LLM
 ### Implemented Commands
 ```
 copera auth login|whoami|status|logout
+copera connect [<tool>|--list] [--yes] [--dry-run]
+copera disconnect <tool> [--yes]
 copera boards list|get|create|update|delete|participants add|remove   (alias: bases)
 copera tables list|get|export|create|update|delete|columns add|update
 copera rows list|get|create|update|delete|description|column-content|update-column-content|authenticate|comment|comments
@@ -69,6 +71,10 @@ copera rows attachments download|upload|delete
 copera rows comments attachments download
 copera docs tree|search|get|content|update|metadata|create|delete
 copera drive tree|search|get|download|upload|mkdir
+copera designs list|get|open|versions|log|guide|init|pull|status|diff|check|push|screenshot
+copera designs assets add
+copera designs export|import|rename|trash|restore|fork
+copera designs source|design|starters|handoff  (group alias: artifacts)
 copera channels list|create|archive|unarchive
 copera channels message send
 copera channels participants add|remove
@@ -158,6 +164,17 @@ ID with `tables get --json` and update the intended cell with
 - `POST /docs/` — create doc; body: `{title, parent?, content?}`
 - `PATCH /docs/{id}` — update properties; body: `{title?, icon?: {type, value}, cover?: {type, value}}`
 - `DELETE /docs/{id}` — soft-delete
+
+### Design read endpoints (prefix: `/artifacts/`)
+- `GET /artifacts/?scope=mine|shared&search=&after=&limit=` — list artifacts (connection: `edges[].node`, `endCursor`, `hasNextPage`)
+- `GET /artifacts/starters` — curated design starters
+- `GET /artifacts/{id}` — metadata + `currentVersion` (manifest and file inventory)
+- `GET /artifacts/{id}/versions?after=&limit=` — immutable versions
+- `GET /artifacts/{id}/versions/{versionId}` — one version
+- `GET /artifacts/{id}/versions/{versionId}/source?path=&cursor=|startOffset=` — bounded UTF-8 slice; follow `nextCursor` until `eof`. A credential-shaped file is refused (400)
+- `GET /artifacts/{id}/versions/{versionId}/design` — shared design export
+- `GET /artifacts/{id}/handoff?versionId=&maxInlineBytes=` — hand-off pack; `files[].omitted` / `spec.omitted` is `over_budget` (fetch via source) or `sensitive` (never fetch); `design.assets[].url` expires in ~5 minutes
+- The read commands above need a PAT with Drive access. The authoring commands need Designs permission.
 
 ### Chat endpoints (prefix: `/chat/`)
 - `GET /chat/channels` — list channels (paginated; supports kind/query filters)

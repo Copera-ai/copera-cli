@@ -161,6 +161,22 @@ copera auth whoami
 copera auth logout
 ```
 
+### Connect a coding tool
+
+```bash
+copera connect [--list]
+copera connect <tool> [--yes] [--dry-run]
+copera disconnect <tool> [--yes]
+```
+
+Connect installs the user-level `copera-designs/SKILL.md` for `claude-code`
+(or `claude`), `codex`, `cursor`, or `opencode`. Codex, Cursor, and OpenCode
+share one skill file. Codex also gets a dedicated `rules/copera.rules` file.
+Writes are limited to those files and the ownership record at
+`~/.copera/connect.json`, all separate from the tools' settings files.
+Disconnect removes tracked files whose contents still match the record, keeping
+the shared skill until its last tool disconnects.
+
 ### Boards and Tables
 
 ```bash
@@ -281,6 +297,85 @@ copera drive mkdir "New Folder"
 Uploads support multipart transfer, configurable chunk size, concurrent part
 uploads, progress output in interactive terminals, and recursive directory
 upload.
+
+### Designs
+
+`artifacts` is an alias for `designs`. The original read commands require a
+Personal Access Token with Drive access. The authoring commands require a
+token with Designs permission.
+
+```bash
+copera designs list --scope shared --search "launch"
+copera designs get <id>
+copera designs open <id|url>
+copera designs versions <id>
+copera designs log <id|url> [--json]
+copera designs guide [--kind K]
+copera designs init <dir> --kind K [--runtime static|react] [--system NAME_OR_ID]
+copera designs pull <id|url> [dir] [--version N]
+copera designs status [dir]
+copera designs diff [dir]
+copera designs check [dir]
+copera designs push [dir] -m SUMMARY [--wait] [--no-check] [--force]
+copera designs screenshot [dir|id] [--page P] [--viewport W] -o FILE
+copera designs assets add <file> [--path P]
+copera designs export <id> -o FILE.zip
+copera designs import FILE.zip [--workspace W]
+copera designs rename <id> <title>
+copera designs trash <id>
+copera designs restore <id> --version N
+copera designs fork <id>
+copera designs source <id> --path src/App.tsx --output plain > App.tsx
+copera designs design <id> --version <version-id> --json
+copera designs starters
+copera designs handoff <id> --out ./my-app
+```
+
+With `import --workspace`, the CLI verifies that the active token belongs to
+the named workspace. Select a workspace's token with `--profile`.
+`screenshot --viewport` selects a width already rendered by the build.
+
+`init --kind` accepts product kinds (`landing_page`, `web_app`, `deck`,
+`report`, `dashboard`) and API kinds such as `website` and `presentation`.
+When the guide offers a template for the selected kind and runtime, `init`
+writes the template files and uses its project settings.
+
+`check` uses multipart for local binaries that still need uploading and
+JSON otherwise. The first `push` creates the Design and saves text and
+binaries together in version 1. If Copera rejects the create, the CLI
+reports that no Design was created.
+On later pushes, editing an image in place uploads the new bytes at the same
+project-relative path. Earlier versions keep the previous image. Separate
+asset uploads honor `Retry-After` on HTTP 503, with up to five attempts.
+Use `assets add --path` to choose the asset's path explicitly.
+
+`log` shows the version number, date, origin, author kind, tool, and change
+summary in the table and in JSON.
+
+`copera designs handoff` pulls everything a coding agent (or you) needs to
+build the artifact as a real app into one folder:
+
+```
+my-app/
+├── HANDOFF.md            next steps, the artifact URL, how to build
+├── SPEC.md               the Spec, at its own path (the source of truth)
+├── NOTES.md              notes grouped by page, Spec notes first
+├── pages.json            pages and the navigation links between them
+├── design/
+│   ├── design.json       shared design digest, paths and asset metadata
+│   └── assets/           logos, fonts and images
+└── src/...               every source file at its own path
+```
+
+Files too large to inline are fetched page by page until the end and checked
+against their digest. Files that look like they hold a key or password are
+never fetched and are reported as skipped. Every path is validated before
+anything is written, so a pack can never write outside the folder. `--out`
+defaults to `./<slug-of-title>`; a non-empty folder is refused (exit code 5)
+unless `--force`. `--version` pins a version; `--max-inline-bytes` (default and
+maximum 1048576) sets how much source the server inlines. With `--json` the
+command prints a summary: `dir`, `filesWritten`, `fetched`, `skipped`
+(`{path, reason}`), `truncated` and `warnings`.
 
 ### Channels
 

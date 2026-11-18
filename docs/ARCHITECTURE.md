@@ -136,6 +136,7 @@ Each file maps to a command group and follows this structure:
 ```
 root.go       — root command, global flags (--token, --profile, --output, --json, --quiet, --no-input)
 auth.go       — auth login|status|logout
+connect.go    — connect [<tool>|--list], disconnect <tool>
 docs.go       — docs tree|list|search|get|update
 send.go       — send message
 boards.go     — boards list|get  (alias: bases)

@@ -131,6 +131,55 @@ then call `update-column-content --column <column-id>`.
 
 ---
 
+## Designs
+
+Use a token with Designs permission for authoring. `artifacts` remains an
+alias for `designs`.
+
+```bash
+copera designs init ./design --kind landing_page --runtime static
+copera designs check ./design --json
+copera designs push ./design -m "Add first screen" --json
+copera designs log <design-id> --json
+# From the Design folder after it has a remote Design:
+copera designs assets add <file> [--path P]
+```
+
+`init` accepts the product kinds `landing_page`, `web_app`, `deck`, `report`
+and `dashboard`, and the API's kind names. When the guide returns a template,
+`init` writes its files and applies its project settings. `check` sends new
+binaries with the text in a multipart dry run and uses JSON otherwise.
+
+The first `push` creates the Design and saves text and binaries together in
+version 1. If Copera rejects the create, the CLI reports that no Design was
+created. On later pushes, editing an image in place uploads the new bytes
+under the same project-relative path. Earlier versions keep the previous
+image. Separate asset uploads honor `Retry-After` on HTTP 503, with up to
+five attempts. `assets add --path` sets the asset path explicitly.
+
+`log --json` returns the number, date, origin, author kind, tool, and change
+summary for each version.
+
+### Building an Artifact as a Real App
+
+To build a Copera artifact (a prototype made of pages) as a real app, pull its
+hand-off pack into an empty folder and follow `HANDOFF.md`:
+
+```bash
+copera artifacts list --search "launch" --json      # find the artifact ID
+copera artifacts handoff <artifact-id> --out ./app --json
+```
+
+The folder holds `HANDOFF.md` (what to do, in order), the Spec at its own path
+(read it first — it is the source of truth), `NOTES.md` (rules pinned to pages),
+`design/design.json` + `design/assets/` (set up the shared design first),
+`pages.json` (pages and navigation links) and every source file at its own
+path. Large files are already fetched. Files listed in the summary's `skipped`
+with reason `sensitive` looked like secrets: never guess them, ask the owner.
+The command refuses a non-empty `--out` (exit code 5) unless `--force`.
+
+---
+
 ## Docs Discovery
 
 Docs have no list-all endpoint. The two discovery tools are `tree` and `search`.
@@ -282,6 +331,9 @@ copera docs search "keyword" --json
 
 # Get doc content
 copera docs content $DOC_ID
+
+# Pull an artifact's hand-off pack to build it as a real app
+copera artifacts handoff $ARTIFACT_ID --out ./app --json
 
 # Check auth
 copera auth status --json
