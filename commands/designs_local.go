@@ -20,18 +20,25 @@ import (
 )
 
 func newDesignInitCmd(cli *CLI) *cobra.Command {
-	var kind, runtime, system string
+	var kind, runtime, system, template string
 	cmd := &cobra.Command{
 		Use:   "init <dir>",
 		Short: "Set up a local Design project",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(kind) == "" {
+			requestRuntime := runtime
+			if template != "" && !cmd.Flags().Changed("runtime") {
+				requestRuntime = ""
+			}
+			if err := validateDesignTemplate(kind, requestRuntime, template); err != nil {
+				return designUsageError(cli, err)
+			}
+			if template == "" && strings.TrimSpace(kind) == "" {
 				err := fmt.Errorf("kind must not be empty")
 				cli.Printer.PrintError("invalid_flag", err.Error(), "", false)
 				return exitcodes.New(exitcodes.Usage, err)
 			}
-			if runtime != "static" && runtime != "react" {
+			if template == "" && runtime != "static" && runtime != "react" {
 				err := fmt.Errorf("runtime must be static or react")
 				cli.Printer.PrintError("invalid_flag", err.Error(), "", false)
 				return exitcodes.New(exitcodes.Usage, err)
@@ -52,7 +59,7 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			guide, err := client.ArtifactGuide(ctx, kind, runtime)
+			guide, err := client.ArtifactGuide(ctx, kind, requestRuntime, template)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -116,7 +123,7 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 	cmd.Flags().StringVar(&kind, "kind", "", "Design kind")
 	cmd.Flags().StringVar(&runtime, "runtime", "static", "Design runtime (static or react)")
 	cmd.Flags().StringVar(&system, "system", "", "Saved design system name or ID")
-	_ = cmd.MarkFlagRequired("kind")
+	cmd.Flags().StringVar(&template, "template", "", "Starter template (review)")
 	return cmd
 }
 
@@ -387,7 +394,7 @@ func newDesignPullCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			kind := defaultDesignKind(version.AuthoringManifest)
-			guide, err := client.ArtifactGuide(ctx, kind, version.Runtime)
+			guide, err := client.ArtifactGuide(ctx, kind, version.Runtime, "")
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -400,6 +407,11 @@ func newDesignPullCmd(cli *CLI) *cobra.Command {
 				ID: id, Workspace: workspace.ID, BaseVersionID: version.ID, HeadRevision: artifact.HeadRevision,
 				Kind: kind, Runtime: version.Runtime, Entrypoint: version.Entrypoint,
 				Manifest: version.AuthoringManifest,
+			}
+			for _, declaration := range version.MemberRuntimeDeclarations {
+				state.Capabilities = append(state.Capabilities, api.ArtifactProjectCapability{
+					Kind: declaration.Kind, ContractVersion: declaration.ContractVersion, Collections: declaration.Collections,
+				})
 			}
 			if state.Kind == "" {
 				state.Kind = guide.Kind

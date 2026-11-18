@@ -42,7 +42,7 @@ type designState struct {
 	Runtime          string                          `json:"runtime"`
 	Entrypoint       string                          `json:"entrypoint,omitempty"`
 	Presentation     *api.ArtifactPresentation       `json:"presentation,omitempty"`
-	Capabilities     []api.ArtifactProjectCapability `json:"capabilities,omitempty"`
+	Capabilities     []api.ArtifactProjectCapability `json:"capabilities,omitzero"`
 	Manifest         api.ArtifactManifest            `json:"manifest"`
 	Dependencies     []api.ArtifactDependency        `json:"dependencies,omitempty"`
 	AssetPaths       map[string]string               `json:"assetPaths,omitempty"`

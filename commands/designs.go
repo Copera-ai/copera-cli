@@ -224,17 +224,20 @@ func newDesignLogCmd(cli *CLI) *cobra.Command {
 }
 
 func newDesignGuideCmd(cli *CLI) *cobra.Command {
-	var kind string
+	var kind, runtime, template string
 	cmd := &cobra.Command{
 		Use:   "guide",
 		Short: "Print the Copera Design authoring guide",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateDesignTemplate(kind, runtime, template); err != nil {
+				return designUsageError(cli, err)
+			}
 			client, _, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
-			guide, err := client.ArtifactGuide(cmd.Context(), kind, "")
+			guide, err := client.ArtifactGuide(cmd.Context(), kind, runtime, template)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -248,5 +251,26 @@ func newDesignGuideCmd(cli *CLI) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "Design kind")
+	cmd.Flags().StringVar(&runtime, "runtime", "", "Design runtime (static or react)")
+	cmd.Flags().StringVar(&template, "template", "", "Starter template (review)")
 	return cmd
+}
+
+func validateDesignTemplate(kind, runtime, template string) error {
+	switch template {
+	case "":
+		return nil
+	case "review":
+		if (kind != "" && kind != "web_app") || (runtime != "" && runtime != "static" && runtime != "static_web") {
+			return fmt.Errorf("the review template requires the web_app kind and static runtime")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown template, expected review")
+	}
+}
+
+func designUsageError(cli *CLI, err error) error {
+	cli.Printer.PrintError("invalid_input", err.Error(), "", false)
+	return exitcodes.New(exitcodes.Usage, err)
 }

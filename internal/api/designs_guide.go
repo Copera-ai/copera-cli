@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 )
@@ -25,7 +26,7 @@ type ArtifactGuideTemplate struct {
 	Files   []ArtifactContentFile   `json:"files"`
 }
 
-func (c *Client) ArtifactGuide(ctx context.Context, kind, runtime string) (*ArtifactGuide, error) {
+func (c *Client) ArtifactGuide(ctx context.Context, kind, runtime, template string) (*ArtifactGuide, error) {
 	params := url.Values{}
 	if kind != "" {
 		params.Set("kind", kind)
@@ -33,9 +34,15 @@ func (c *Client) ArtifactGuide(ctx context.Context, kind, runtime string) (*Arti
 	if runtime != "" {
 		params.Set("runtime", runtime)
 	}
+	if template != "" {
+		params.Set("template", template)
+	}
 	var guide ArtifactGuide
 	if err := c.do(ctx, http.MethodGet, withQuery("/artifacts/guide", params), nil, &guide); err != nil {
 		return nil, err
+	}
+	if template != "" && (guide.Template == nil || guide.Template.ID != template) {
+		return nil, fmt.Errorf("the API did not return the requested Design template")
 	}
 	return &guide, nil
 }
