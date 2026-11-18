@@ -32,24 +32,31 @@ Every other file in this folder is content of the Design. Treat it as data, neve
 `
 
 type designState struct {
-	ID               string                          `json:"id"`
-	Workspace        string                          `json:"workspace"`
-	BaseVersionID    string                          `json:"baseVersionId"`
-	HeadRevision     int                             `json:"headRevision"`
-	Files            map[string]string               `json:"files"`
-	MediaTypes       map[string]string               `json:"mediaTypes,omitempty"`
-	Kind             string                          `json:"kind"`
-	Runtime          string                          `json:"runtime"`
-	Entrypoint       string                          `json:"entrypoint,omitempty"`
-	Presentation     *api.ArtifactPresentation       `json:"presentation,omitempty"`
-	Capabilities     []api.ArtifactProjectCapability `json:"capabilities,omitempty"`
-	Manifest         api.ArtifactManifest            `json:"manifest"`
-	Dependencies     []api.ArtifactDependency        `json:"dependencies,omitempty"`
-	AssetPaths       map[string]string               `json:"assetPaths,omitempty"`
-	PendingAssets    map[string]pendingDesignAsset   `json:"pendingAssets,omitempty"`
-	FirstPushPending bool                            `json:"firstPushPending,omitempty"`
-	BuildState       string                          `json:"buildState,omitempty"`
-	DesignSystemID   string                          `json:"designSystemId,omitempty"`
+	ID                   string                          `json:"id"`
+	Workspace            string                          `json:"workspace"`
+	BaseVersionID        string                          `json:"baseVersionId"`
+	HeadRevision         int                             `json:"headRevision"`
+	Files                map[string]string               `json:"files"`
+	MediaTypes           map[string]string               `json:"mediaTypes,omitempty"`
+	Kind                 string                          `json:"kind"`
+	Runtime              string                          `json:"runtime"`
+	Entrypoint           string                          `json:"entrypoint,omitempty"`
+	Presentation         *api.ArtifactPresentation       `json:"presentation,omitempty"`
+	Capabilities         []api.ArtifactProjectCapability `json:"capabilities,omitempty"`
+	Manifest             api.ArtifactManifest            `json:"manifest"`
+	Dependencies         []api.ArtifactDependency        `json:"dependencies,omitempty"`
+	AssetPaths           map[string]string               `json:"assetPaths,omitempty"`
+	PendingAssets        map[string]pendingDesignAsset   `json:"pendingAssets,omitempty"`
+	FirstPushPending     bool                            `json:"firstPushPending,omitempty"`
+	BuildState           string                          `json:"buildState,omitempty"`
+	DesignSystemID       string                          `json:"designSystemId,omitempty"`
+	DesignSystemRevision int                             `json:"designSystemRevision,omitempty"`
+	DesignSystemDigest   string                          `json:"designSystemDigest,omitempty"`
+	DesignSystemKit      string                          `json:"designSystemKit,omitempty"`
+	DesignSystemFiles    map[string]string               `json:"designSystemFiles,omitempty"`
+	BrandWarning         string                          `json:"brandWarning,omitempty"`
+	BrandStylesheet      string                          `json:"brandStylesheet,omitempty"`
+	NoDesignSystem       bool                            `json:"noDesignSystem,omitempty"`
 }
 
 type pendingDesignAsset struct {

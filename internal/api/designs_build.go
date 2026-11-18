@@ -142,12 +142,15 @@ type ArtifactPushResult struct {
 }
 
 type ArtifactCreateInput struct {
-	Title          string `json:"title"`
-	ChangeSummary  string `json:"changeSummary,omitempty"`
-	Tool           string `json:"tool"`
-	IdempotencyKey string `json:"idempotencyKey"`
-	DesignSystemID string `json:"designSystemId,omitempty"`
-	Project        struct {
+	Title                string `json:"title"`
+	ChangeSummary        string `json:"changeSummary,omitempty"`
+	Tool                 string `json:"tool"`
+	IdempotencyKey       string `json:"idempotencyKey"`
+	DesignSystemID       string `json:"designSystemId,omitempty"`
+	DesignSystemRevision int    `json:"designSystemRevision,omitempty"`
+	DesignSystemKit      string `json:"designSystemKit,omitempty"`
+	NoDesignSystem       bool   `json:"noDesignSystem,omitempty"`
+	Project              struct {
 		ArtifactProjectSettings
 		SchemaVersion int                   `json:"schemaVersion"`
 		Files         []ArtifactContentFile `json:"files"`
@@ -155,7 +158,7 @@ type ArtifactCreateInput struct {
 }
 
 type ArtifactCreateResult struct {
-	Artifact
+	ArtifactGetResult
 	Warnings []ArtifactWarning `json:"warnings"`
 }
 
@@ -240,6 +243,10 @@ func (c *Client) ArtifactCreate(ctx context.Context, input ArtifactCreateInput, 
 		return nil, fmt.Errorf("api: build multipart Design create: %w", err)
 	}
 	var result ArtifactCreateResult
-	err = c.do(ctx, http.MethodPost, "/artifacts/", payload, &result)
+	if input.DesignSystemRevision != 0 || input.NoDesignSystem {
+		err = c.doDesignMutation(ctx, "/artifacts/", payload, &result)
+	} else {
+		err = c.do(ctx, http.MethodPost, "/artifacts/", payload, &result)
+	}
 	return &result, err
 }

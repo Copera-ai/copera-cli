@@ -58,6 +58,7 @@ type APIError struct {
 	Message           string `json:"error"`
 	Reason            string
 	ChangedPaths      []string
+	CurrentRevision   int
 	RetryAfterSeconds int
 }
 
@@ -259,9 +260,13 @@ func (c *Client) Download(ctx context.Context, path string) (*http.Response, err
 
 // do executes a request, retrying up to 2 extra times on 429 with exponential backoff.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	return c.doBounded(ctx, method, path, body, out, 0)
+}
+
+func (c *Client) doBounded(ctx context.Context, method, path string, body, out any, limit int64) error {
 	backoff := 3 * time.Second
 	for attempt := 0; ; attempt++ {
-		err := c.doOnce(ctx, method, path, body, out)
+		err := c.doOnce(ctx, method, path, body, out, limit)
 		if err == nil {
 			return nil
 		}
@@ -283,7 +288,7 @@ type multipartRequest struct {
 	contentType string
 }
 
-func (c *Client) doOnce(ctx context.Context, method, path string, body, out any) error {
+func (c *Client) doOnce(ctx context.Context, method, path string, body, out any, limit int64) error {
 	var bodyReader io.Reader
 	contentType := "application/json"
 	if multipart, ok := body.(multipartRequest); ok {
@@ -326,31 +331,54 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 		return nil
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	var reader io.Reader = resp.Body
+	if limit > 0 {
+		reader = io.LimitReader(reader, limit+1)
+	}
+	respBody, err := io.ReadAll(reader)
 	if err != nil {
 		return fmt.Errorf("api: read response: %w", err)
 	}
 
+	if limit > 0 && int64(len(respBody)) > limit {
+		return fmt.Errorf("api: Design system response exceeds the allowed size")
+	}
 	if c.verbose != nil {
 		fmt.Fprintf(c.verbose, "<< %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
-		fmt.Fprintf(c.verbose, "<< %s\n", string(respBody))
+		if limit == 0 {
+			fmt.Fprintf(c.verbose, "<< %s\n", string(respBody))
+		}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := &APIError{StatusCode: resp.StatusCode}
-		var errBody struct {
+		type errorDetails struct {
 			Code              string   `json:"code"`
-			Error             string   `json:"error"`
-			Message           string   `json:"message"`
 			Reason            string   `json:"reason"`
 			ChangedPaths      []string `json:"changedPaths"`
+			Paths             []string `json:"paths"`
+			CurrentRevision   int      `json:"currentRevision"`
 			RetryAfterSeconds int      `json:"retryAfterSeconds"`
 		}
+		var errBody struct {
+			errorDetails
+			Error   string        `json:"error"`
+			Message string        `json:"message"`
+			Info    *errorDetails `json:"info"`
+		}
 		if json.Unmarshal(respBody, &errBody) == nil {
-			apiErr.Code = errBody.Code
-			apiErr.Reason = errBody.Reason
-			apiErr.ChangedPaths = errBody.ChangedPaths
-			apiErr.RetryAfterSeconds = errBody.RetryAfterSeconds
+			details := errBody.errorDetails
+			if errBody.Info != nil && errBody.Info.Code != "" {
+				details = *errBody.Info
+			}
+			apiErr.Code = details.Code
+			apiErr.Reason = details.Reason
+			apiErr.ChangedPaths = details.ChangedPaths
+			if len(apiErr.ChangedPaths) == 0 {
+				apiErr.ChangedPaths = details.Paths
+			}
+			apiErr.CurrentRevision = details.CurrentRevision
+			apiErr.RetryAfterSeconds = details.RetryAfterSeconds
 			apiErr.Message = errBody.Error
 			if apiErr.Message == "" {
 				apiErr.Message = errBody.Message

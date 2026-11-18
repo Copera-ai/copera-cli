@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/exitcodes"
@@ -267,7 +269,7 @@ func newDesignRestoreCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			version, err := designVersion(ctx, client, head, number)
+			version, err := designVersion(ctx, client, &head.Artifact, number)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -293,30 +295,81 @@ func newDesignRestoreCmd(cli *CLI) *cobra.Command {
 }
 
 func newDesignForkCmd(cli *CLI) *cobra.Command {
-	return &cobra.Command{
+	var plain bool
+	var version, title, out string
+	cmd := &cobra.Command{
 		Use:   "fork <id>",
 		Short: "Copy a Design into a new private Design",
-		Args:  cobra.ExactArgs(1),
+		Args:  systemArgs(cli, cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := designID(args[0])
 			if err != nil {
-				return designError(cli, err)
+				return systemUsage(cli, err)
+			}
+			if cmd.Flags().Changed("version") && !validSystemHex(version, 24) {
+				return systemUsage(cli, fmt.Errorf("expected a 24-character lowercase version ID"))
+			}
+			title := strings.TrimSpace(title)
+			if cmd.Flags().Changed("title") && (title == "" || !utf8.ValidString(title) || utf8.RuneCountInString(title) > 240) {
+				return systemUsage(cli, fmt.Errorf("title must have 1 to 240 characters"))
+			}
+			if cmd.Flags().Changed("out") && out == "" {
+				return systemUsage(cli, fmt.Errorf("output folder must not be empty"))
+			}
+			if out != "" {
+				if info, err := os.Lstat(out); err == nil && !info.IsDir() {
+					return systemConflict(cli, fmt.Sprintf("design folder %q is not a directory or is a symlink", out))
+				} else if err != nil && !os.IsNotExist(err) {
+					return designError(cli, err)
+				}
+				if entries, err := os.ReadDir(out); err == nil && len(entries) != 0 {
+					return systemConflict(cli, fmt.Sprintf("design folder %q is not empty", out))
+				} else if err != nil && !os.IsNotExist(err) {
+					return designError(cli, err)
+				}
 			}
 			client, _, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
-			result, err := client.ArtifactFork(cmd.Context(), id, rand.Text(), designTool())
+			ctx := cmd.Context()
+			if plain {
+				if _, err := client.ArtifactDesignSystemDefaults(ctx); err != nil {
+					return systemAPIError(cli, err)
+				}
+			}
+			input := api.ArtifactForkInput{Plain: plain, VersionID: version, Title: title, Tool: designTool()}
+			input.IdempotencyKey, err = designPushKey(rand.Text()+id, input)
+			if err != nil {
+				return designError(cli, err)
+			}
+			result, err := client.ArtifactFork(ctx, id, input)
 			if err != nil {
 				return designError(cli, err)
 			}
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(result)
+				if err := cli.Printer.PrintJSON(result); err != nil {
+					return err
+				}
+			} else {
+				cli.Printer.PrintLine(fmt.Sprintf("Forked %s (%s)", result.Title, result.ID))
 			}
-			cli.Printer.PrintLine(fmt.Sprintf("Forked %s (%s)", result.Title, result.ID))
-			return nil
+			if out == "" {
+				return nil
+			}
+			conflicts, err := pullDesignVersion(ctx, client, out, result.ID, &result.CurrentVersion, result.HeadRevision, "")
+			if err != nil {
+				return designError(cli, fmt.Errorf("Design %s was forked, but it could not be pulled: %w", result.ID, err))
+			}
+			return printDesignPullConflicts(cli, conflicts)
 		},
 	}
+	cmd.Flags().BoolVar(&plain, "plain", false, "Keep source files but remove shadcn ownership")
+	cmd.Flags().StringVar(&version, "version", "", "Version ID to copy")
+	cmd.Flags().StringVar(&title, "title", "", "Title for the fork")
+	cmd.Flags().StringVar(&out, "out", "", "Pull the fork into a local folder")
+	cmd.SetFlagErrorFunc(systemFlags(cli))
+	return cmd
 }
 
 func readDesignUpload(filename string, maxBytes int64) ([]byte, error) {

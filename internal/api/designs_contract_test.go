@@ -90,6 +90,8 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		versionID = "bbbbbbbbbbbbbbbbbbbbbbbb"
 		artifact  = "/artifacts/{artifactId}"
 		version   = artifact + "/versions/{versionId}"
+		systems   = "/artifacts/design-systems"
+		system    = systems + "/{systemId}"
 	)
 	type multipartAsset struct {
 		File     string                `json:"file"`
@@ -102,10 +104,6 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 	type startersResult struct {
 		Starters []ArtifactStarter `json:"starters"`
 	}
-	type systemsResult struct {
-		DesignSystems []ArtifactDesignSystem `json:"designSystems"`
-	}
-
 	routes := []struct {
 		method, path, success string
 		input, output         any
@@ -118,7 +116,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			return designContractRequest(c.ArtifactCreate(ctx, ArtifactCreateInput{},
 				ArtifactCheckFile{Path: "assets/hero.png", MediaType: "image/png", Data: []byte("image bytes")}))
 		}},
-		{"get", artifact, "200", nil, Artifact{}, func(c *Client) error {
+		{"get", artifact, "200", nil, ArtifactGetResult{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactGet(ctx, id))
 		}},
 		{"patch", artifact, "200", artifactRenameInput{}, ArtifactRenameResult{}, func(c *Client) error {
@@ -154,8 +152,41 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		{"get", "/artifacts/guide", "200", nil, ArtifactGuide{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactGuide(ctx, "landing_page", "react"))
 		}},
-		{"get", "/artifacts/design-systems", "200", nil, systemsResult{}, func(c *Client) error {
+		{"get", "/artifacts/guide", "200", nil, ArtifactGuide{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactGuideTopic(ctx, "design-system-from-codebase"))
+		}},
+		{"get", systems, "200", nil, ArtifactDesignSystemList{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactDesignSystems(ctx))
+		}},
+		{"get", system, "200", nil, ArtifactDesignSystem{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystem(ctx, id))
+		}},
+		{"get", system + "/package", "200", nil, ArtifactSystemTransfer{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystemPackage(ctx, id, "package", 5))
+		}},
+		{"get", system + "/installation", "200", nil, ArtifactSystemProjection{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystemInstallation(ctx, id, "vite_react", "shadcn", 5))
+		}},
+		{"post", systems, "201", ArtifactSystemCreate{}, ArtifactDesignSystem{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystemCreate(ctx, ArtifactSystemCreate{}))
+		}},
+		{"patch", system, "200", ArtifactSystemReplace{}, ArtifactDesignSystem{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystemReplace(ctx, id, ArtifactSystemReplace{}))
+		}},
+		{"post", systems + "/save-from", "201", ArtifactSystemSave{}, ArtifactDesignSystem{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystemSave(ctx, ArtifactSystemSave{}))
+		}},
+		{"get", systems + "/defaults", "200", nil, ArtifactSystemDefaults{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystemDefaults(ctx))
+		}},
+		{"patch", systems + "/defaults", "200", ArtifactSystemDefaultInput{}, ArtifactSystemDefaults{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystemSetDefault(ctx, ArtifactSystemDefaultInput{}))
+		}},
+		{"post", artifact + "/design-system-refresh", "201", ArtifactSystemRefresh{}, ArtifactDesignChange{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDesignSystemRefresh(ctx, id, ArtifactSystemRefresh{}))
+		}},
+		{"post", artifact + "/shadcn/setup", "201", ArtifactShadcnSetup{}, ArtifactShadcnSetupResult{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactShadcnSetup(ctx, id, ArtifactShadcnSetup{}))
 		}},
 		{"post", "/artifacts/check", "200", ArtifactCheckInput{}, ArtifactCheckResult{}, func(c *Client) error {
 			if _, err := c.ArtifactCheck(ctx, ArtifactCheckInput{}); err != nil {
@@ -179,8 +210,8 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		{"post", version + "/restore", "201", ArtifactRestoreInput{}, ArtifactPushResult{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactRestore(ctx, id, versionID, ArtifactRestoreInput{}))
 		}},
-		{"post", artifact + "/fork", "200", artifactForkInput{}, Artifact{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactFork(ctx, id, "key", "codex"))
+		{"post", artifact + "/fork", "200", ArtifactForkInput{}, ArtifactForkResult{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactFork(ctx, id, ArtifactForkInput{VersionID: versionID, Title: "Copy", Plain: true, IdempotencyKey: "key", Tool: "codex"}))
 		}},
 	}
 	for _, route := range routes {
@@ -235,7 +266,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			client.httpClient.Transport = designContractTransport(func(r *http.Request) (*http.Response, error) {
 				called = true
 				assert.Equal(t, strings.ToUpper(route.method), r.Method)
-				assert.Equal(t, strings.NewReplacer("{artifactId}", id, "{versionId}", versionID).Replace(route.path), r.URL.Path)
+				assert.Equal(t, strings.NewReplacer("{artifactId}", id, "{versionId}", versionID, "{systemId}", id).Replace(route.path), r.URL.Path)
 				if route.method == "post" && (route.path == "/artifacts/" || route.path == "/artifacts/check") {
 					mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 					require.NoError(t, err)
@@ -272,6 +303,9 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 	t.Run("design authoring additions", func(t *testing.T) {
 		create := snapshot.Paths["/artifacts/"]["post"].RequestBody.Content["application/json"].Schema
 		assert.NotNil(t, create.field("changeSummary"))
+		for _, field := range []string{"designSystemRevision", "designSystemKit", "noDesignSystem"} {
+			assert.NotNil(t, create.field(field))
+		}
 
 		asset := snapshot.Paths[artifact+"/assets"]["post"]
 		metadata := asset.RequestBody.Content["multipart/form-data"].Schema.field("metadata")

@@ -65,7 +65,10 @@ type ArtifactRestoreInput struct {
 	Tool                 string `json:"tool"`
 }
 
-type artifactForkInput struct {
+type ArtifactForkInput struct {
+	VersionID      string `json:"versionId,omitempty"`
+	Title          string `json:"title,omitempty"`
+	Plain          bool   `json:"plain,omitempty"`
 	IdempotencyKey string `json:"idempotencyKey"`
 	Tool           string `json:"tool"`
 }
@@ -158,12 +161,14 @@ func (c *Client) ArtifactRestore(ctx context.Context, artifactID, versionID stri
 	return &result, nil
 }
 
-// ArtifactFork makes a new private Design from another Design's head.
-func (c *Client) ArtifactFork(ctx context.Context, artifactID, key, tool string) (*Artifact, error) {
-	var result Artifact
-	input := artifactForkInput{IdempotencyKey: key, Tool: tool}
-	if err := c.do(ctx, http.MethodPost, artifactPath(artifactID)+"/fork", input, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+type ArtifactForkResult struct {
+	Artifact
+	Warnings []ArtifactWarning `json:"warnings"`
+}
+
+// ArtifactFork optionally selects a version and removes the kit's ownership.
+func (c *Client) ArtifactFork(ctx context.Context, artifactID string, input ArtifactForkInput) (*ArtifactForkResult, error) {
+	var result ArtifactForkResult
+	err := c.doDesignMutation(ctx, artifactPath(artifactID)+"/fork", input, &result)
+	return &result, err
 }

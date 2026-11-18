@@ -112,6 +112,12 @@ type Artifact struct {
 	Preview               ArtifactPreview `json:"preview"`
 }
 
+// ArtifactGetResult carries the optional installation on the current draft.
+type ArtifactGetResult struct {
+	Artifact
+	DesignSystemInstallation *ArtifactSystemInstall `json:"designSystemInstallation,omitempty"`
+}
+
 // ArtifactEdge is one item of the artifact list connection.
 type ArtifactEdge struct {
 	Cursor string   `json:"cursor"`
@@ -359,8 +365,8 @@ func (c *Client) ArtifactsList(ctx context.Context, opts ArtifactListOpts) (*Art
 }
 
 // ArtifactGet fetches an artifact's metadata and current version inventory.
-func (c *Client) ArtifactGet(ctx context.Context, artifactID string) (*Artifact, error) {
-	var resp Artifact
+func (c *Client) ArtifactGet(ctx context.Context, artifactID string) (*ArtifactGetResult, error) {
+	var resp ArtifactGetResult
 	if err := c.do(ctx, http.MethodGet, artifactPath(artifactID), nil, &resp); err != nil {
 		return nil, err
 	}

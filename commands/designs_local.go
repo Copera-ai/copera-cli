@@ -20,21 +20,24 @@ import (
 )
 
 func newDesignInitCmd(cli *CLI) *cobra.Command {
-	var kind, runtime, system string
+	var kind, runtime, system, kit string
+	var decline bool
 	cmd := &cobra.Command{
 		Use:   "init <dir>",
 		Short: "Set up a local Design project",
-		Args:  cobra.ExactArgs(1),
+		Args:  systemArgs(cli, cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(kind) == "" {
-				err := fmt.Errorf("kind must not be empty")
-				cli.Printer.PrintError("invalid_flag", err.Error(), "", false)
-				return exitcodes.New(exitcodes.Usage, err)
+				return systemUsage(cli, fmt.Errorf("kind must not be empty"))
 			}
 			if runtime != "static" && runtime != "react" {
-				err := fmt.Errorf("runtime must be static or react")
-				cli.Printer.PrintError("invalid_flag", err.Error(), "", false)
-				return exitcodes.New(exitcodes.Usage, err)
+				return systemUsage(cli, fmt.Errorf("runtime must be static or react"))
+			}
+			if cmd.Flags().Changed("system") && (decline || strings.TrimSpace(system) == "") {
+				return systemUsage(cli, fmt.Errorf("choose a system or decline it"))
+			}
+			if kit != "none" && (kit != "shadcn" || runtime != "react" || decline) {
+				return systemUsage(cli, fmt.Errorf("kit must be none or shadcn; shadcn requires React and a Design system"))
 			}
 			dir := filepath.Clean(args[0])
 			if entries, err := os.ReadDir(dir); err == nil {
@@ -56,19 +59,24 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: "index.html"}
+			state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: "index.html", NoDesignSystem: decline}
+			paths := make(designPaths)
+			templateFiles := make(map[string]api.ArtifactContentFile)
 			if template := guide.Template; template != nil {
 				project := template.Project
 				state.Kind, state.Runtime, state.Entrypoint = project.Kind, project.Runtime, project.Entrypoint
 				state.Presentation, state.Capabilities = project.Presentation, project.Capabilities
-				paths := make(designPaths)
 				for _, file := range template.Files {
 					if err := validateDesignContentPath(file.Path); err != nil {
 						return designError(cli, err)
 					}
+					if _, exists := templateFiles[file.Path]; exists {
+						return designError(cli, fmt.Errorf("repeated template file %q", file.Path))
+					}
 					if err := paths.add(file.Path, false); err != nil {
 						return designError(cli, err)
 					}
+					templateFiles[file.Path] = file
 				}
 			}
 			if state.Runtime == "vite_react" {
@@ -76,10 +84,32 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 					return designError(cli, err)
 				}
 			}
-			var snapshot []byte
-			if system != "" {
-				state.DesignSystemID, snapshot, err = readDesignSystem(ctx, client, system)
+			selected, err := resolveInitialDesignSystem(ctx, client, system, decline, cmd.Flags().Changed("kit"))
+			if err != nil {
+				var exitErr *exitcodes.ExitError
+				if errors.As(err, &exitErr) && exitErr.Code == exitcodes.Usage {
+					return systemUsage(cli, err)
+				}
+				return systemAPIError(cli, err)
+			}
+			var installed map[string]designFile
+			if selected == nil && kit == "shadcn" {
+				return systemUsage(cli, fmt.Errorf("shadcn needs a saved Design system"))
+			}
+			if selected != nil {
+				installed, err = materializeInitialSystem(ctx, client, state, selected, kit)
 				if err != nil {
+					return systemAPIError(cli, err)
+				}
+				for name, file := range installed {
+					if existing, found := templateFiles[name]; found && (existing.MediaType != file.MediaType || !bytes.Equal([]byte(existing.Content), file.Data)) {
+						return systemConflict(cli, fmt.Sprintf("template collides with installed path %q", name))
+					}
+					if err := paths.add(name, false); err != nil {
+						return systemConflict(cli, err.Error())
+					}
+				}
+				if err := linkInitialBrand(state, templateFiles, guide); err != nil {
 					return designError(cli, err)
 				}
 			}
@@ -88,20 +118,25 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			defer func() { _ = root.Close() }()
-			if guide.Template != nil {
-				for _, file := range guide.Template.Files {
-					if err := writeDesignFile(root, file.Path, []byte(file.Content)); err != nil {
-						return designError(cli, err)
-					}
+			entries, err := fs.ReadDir(root.FS(), ".")
+			if err != nil {
+				return designError(cli, err)
+			}
+			if len(entries) != 0 {
+				return systemConflict(cli, fmt.Sprintf("design folder %q is not empty", dir))
+			}
+			for _, file := range templateFiles {
+				if err := writeDesignFile(root, file.Path, []byte(file.Content)); err != nil {
+					return designError(cli, err)
+				}
+			}
+			for name, file := range installed {
+				if err := writeDesignFile(root, name, file.Data); err != nil {
+					return designError(cli, err)
 				}
 			}
 			if err := writeDesignGuide(root, guide); err != nil {
 				return designError(cli, err)
-			}
-			if snapshot != nil {
-				if err := writeDesignFile(root, ".copera/design-system.json", snapshot); err != nil {
-					return designError(cli, err)
-				}
 			}
 			if err := saveDesignState(root, state, nil); err != nil {
 				return designError(cli, err)
@@ -110,13 +145,24 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 				return cli.Printer.PrintJSON(state)
 			}
 			cli.Printer.PrintLine(fmt.Sprintf("Design initialized in %s", dir))
+			if state.DesignSystemRevision > 0 {
+				cli.Printer.PrintLine(fmt.Sprintf("Design system %s revision %d (%s)", state.DesignSystemID, state.DesignSystemRevision, state.DesignSystemKit))
+				if state.Runtime == "vite_react" {
+					cli.Printer.PrintLine(brandImportGuidance(state.DesignSystemKit))
+				}
+				if state.BrandWarning != "" {
+					cli.Printer.PrintLine(state.BrandWarning)
+				}
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "Design kind")
 	cmd.Flags().StringVar(&runtime, "runtime", "static", "Design runtime (static or react)")
 	cmd.Flags().StringVar(&system, "system", "", "Saved design system name or ID")
-	_ = cmd.MarkFlagRequired("kind")
+	cmd.Flags().BoolVar(&decline, "no-system", false, "Start without a saved Design system")
+	cmd.Flags().StringVar(&kit, "kit", "none", "Optional kit (none or shadcn)")
+	cmd.SetFlagErrorFunc(systemFlags(cli))
 	return cmd
 }
 
@@ -140,44 +186,6 @@ func designRequiredPackages(data json.RawMessage) ([]api.ArtifactDependency, err
 		}
 	}
 	return required, nil
-}
-
-func readDesignSystem(ctx context.Context, client *api.Client, name string) (string, []byte, error) {
-	systems, err := client.ArtifactDesignSystems(ctx)
-	if err != nil {
-		return "", nil, err
-	}
-	var selected *api.ArtifactDesignSystem
-	for _, system := range systems {
-		if system.ID == name {
-			selected = &system
-			break
-		}
-	}
-	if selected == nil {
-		for _, system := range systems {
-			if !strings.EqualFold(system.Name, name) {
-				continue
-			}
-			if selected != nil {
-				return "", nil, fmt.Errorf("multiple design systems are named %q; use an ID", name)
-			}
-			selected = &system
-		}
-	}
-	if selected == nil || !selected.Available {
-		return "", nil, fmt.Errorf("design system %q is unavailable", name)
-	}
-	if selected.Kind == "design" {
-		snapshot, err := client.ArtifactDesign(ctx, selected.SourceArtifactID, selected.SourceVersionID)
-		if err != nil {
-			return "", nil, err
-		}
-		data, err := json.MarshalIndent(snapshot, "", "  ")
-		return selected.ID, append(data, '\n'), err
-	}
-	data, err := json.MarshalIndent(selected, "", "  ")
-	return selected.ID, append(data, '\n'), err
 }
 
 func checkDesignPullTargets(root *os.Root, remote map[string]designFile) error {
@@ -370,11 +378,7 @@ func newDesignPullCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			version, err := designVersion(ctx, client, artifact, number)
-			if err != nil {
-				return designError(cli, err)
-			}
-			remote, err := readRemoteDesignFiles(ctx, client, id, version)
+			version, err := designVersion(ctx, client, &artifact.Artifact, number)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -382,29 +386,7 @@ func newDesignPullCmd(cli *CLI) *cobra.Command {
 			if len(args) == 2 {
 				dir = filepath.Clean(args[1])
 			}
-			workspace, err := client.WorkspaceInfo(ctx)
-			if err != nil {
-				return designError(cli, err)
-			}
-			kind := defaultDesignKind(version.AuthoringManifest)
-			guide, err := client.ArtifactGuide(ctx, kind, version.Runtime)
-			if err != nil {
-				return designError(cli, err)
-			}
-			root, err := openDesignDir(dir, true)
-			if err != nil {
-				return designError(cli, err)
-			}
-			defer func() { _ = root.Close() }()
-			state := &designState{
-				ID: id, Workspace: workspace.ID, BaseVersionID: version.ID, HeadRevision: artifact.HeadRevision,
-				Kind: kind, Runtime: version.Runtime, Entrypoint: version.Entrypoint,
-				Manifest: version.AuthoringManifest,
-			}
-			if state.Kind == "" {
-				state.Kind = guide.Kind
-			}
-			conflicts, err := applyDesignPull(root, state, remote, guide)
+			conflicts, err := pullDesignVersion(ctx, client, dir, id, version, artifact.HeadRevision, "")
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -421,16 +403,52 @@ func newDesignPullCmd(cli *CLI) *cobra.Command {
 			} else {
 				cli.Printer.PrintLine(fmt.Sprintf("Pulled Design %s version %d into %s", id, version.Version, dir))
 			}
-			if len(conflicts) > 0 {
-				err := fmt.Errorf("pull conflicts: %s", strings.Join(conflicts, ", "))
-				cli.Printer.PrintError("pull_conflict", err.Error(), "Resolve the files left in the folder", false)
-				return exitcodes.New(exitcodes.Conflict, err)
-			}
-			return nil
+			return printDesignPullConflicts(cli, conflicts)
 		},
 	}
 	cmd.Flags().IntVar(&number, "version", 0, "Version number (default: current)")
 	return cmd
+}
+
+func pullDesignVersion(ctx context.Context, client *api.Client, dir, id string, version *api.ArtifactVersion, headRevision int, workspaceID string) ([]string, error) {
+	remote, err := readRemoteDesignFiles(ctx, client, id, version)
+	if err != nil {
+		return nil, err
+	}
+	if workspaceID == "" {
+		workspace, err := client.WorkspaceInfo(ctx)
+		if err != nil {
+			return nil, err
+		}
+		workspaceID = workspace.ID
+	}
+	kind := defaultDesignKind(version.AuthoringManifest)
+	guide, err := client.ArtifactGuide(ctx, kind, version.Runtime)
+	if err != nil {
+		return nil, err
+	}
+	if kind == "" {
+		kind = guide.Kind
+	}
+	state := &designState{
+		ID: id, Workspace: workspaceID, BaseVersionID: version.ID, HeadRevision: headRevision,
+		Kind: kind, Runtime: version.Runtime, Entrypoint: version.Entrypoint, Manifest: version.AuthoringManifest,
+	}
+	root, err := openDesignDir(dir, true)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return applyDesignPull(root, state, remote, guide)
+}
+
+func printDesignPullConflicts(cli *CLI, conflicts []string) error {
+	if len(conflicts) == 0 {
+		return nil
+	}
+	err := fmt.Errorf("pull conflicts: %s", strings.Join(conflicts, ", "))
+	cli.Printer.PrintError("pull_conflict", err.Error(), "Resolve the files left in the folder", false)
+	return exitcodes.New(exitcodes.Conflict, err)
 }
 
 func applyDesignPull(root *os.Root, state *designState, remote map[string]designFile, guide *api.ArtifactGuide) ([]string, error) {
