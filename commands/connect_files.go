@@ -230,10 +230,7 @@ func applyConnectPlan(home string, files []connectFilePlan) error {
 		return err
 	}
 	lock := filepath.Join(".copera", ".connect-lock")
-	if err := root.Mkdir(lock, 0o755); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("%w: connection changes are already in progress", errConnectUnsafePath)
-		}
+	if err := lockConnectRecord(root, lock); err != nil {
 		return err
 	}
 	defer root.Remove(lock)
@@ -274,6 +271,25 @@ func applyConnectPlan(home string, files []connectFilePlan) error {
 		}
 	}
 	return nil
+}
+
+// A connect run holds the lock for well under a second. A lock this old was
+// left by a run that was killed, so it must not block every later run.
+const connectLockStaleAfter = 2 * time.Minute
+
+func lockConnectRecord(root *os.Root, lock string) error {
+	err := root.Mkdir(lock, 0o755)
+	if !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	info, statErr := root.Lstat(lock)
+	if statErr != nil || !info.IsDir() || time.Since(info.ModTime()) < connectLockStaleAfter {
+		return fmt.Errorf("%w: connection changes are already in progress", errConnectUnsafePath)
+	}
+	if err := root.Remove(lock); err != nil {
+		return err
+	}
+	return root.Mkdir(lock, 0o755)
 }
 
 func connectFileChanges(file connectFilePlan) bool {

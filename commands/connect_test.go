@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/copera/copera-cli/commands"
 	"github.com/copera/copera-cli/internal/exitcodes"
@@ -306,4 +307,24 @@ func TestConnectPlansUpgradeAndListsSkillStatus(t *testing.T) {
 	res = runConnectTest(t, home, exitcodes.OK, "connect", "cursor", "--dry-run")
 	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &plan))
 	assert.Contains(t, plan.Files, connectTestFile{Path: skill, Action: "unchanged"})
+}
+
+func TestConnectLockLeftByAKilledRun(t *testing.T) {
+	home := setupConnectTest(t)
+	lock := filepath.Join(home, ".copera", ".connect-lock")
+	require.NoError(t, os.MkdirAll(lock, 0o755))
+
+	// A fresh lock is another run at work: nothing is written.
+	runConnectTest(t, home, exitcodes.Conflict, "connect", "claude-code", "--yes")
+	_, err := os.Stat(userSkillPath(home, ".claude"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	// A lock older than any real run was left behind and must not block for ever.
+	old := time.Now().Add(-10 * time.Minute)
+	require.NoError(t, os.Chtimes(lock, old, old))
+	runConnectTest(t, home, exitcodes.OK, "connect", "claude-code", "--yes")
+	_, err = os.Stat(userSkillPath(home, ".claude"))
+	require.NoError(t, err)
+	_, err = os.Stat(lock)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
