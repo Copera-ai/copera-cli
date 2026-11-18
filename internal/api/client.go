@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,9 +52,12 @@ func New(baseURL, token string, timeout time.Duration) *Client {
 
 // APIError is returned when the server responds with a non-2xx status.
 type APIError struct {
-	StatusCode int
-	Code       string `json:"code"`
-	Message    string `json:"error"`
+	StatusCode        int
+	Code              string `json:"code"`
+	Message           string `json:"error"`
+	Reason            string
+	ChangedPaths      []string
+	RetryAfterSeconds int
 }
 
 func (e *APIError) Error() string {
@@ -105,22 +109,50 @@ func (c *Client) UploadFile(ctx context.Context, path, filePath string, out any)
 	}
 	defer file.Close()
 
+	body, err := c.uploadMultipart(ctx, path, filepath.Base(filePath), "application/octet-stream", file, nil)
+	if err != nil {
+		return err
+	}
+	if out != nil && len(body) > 0 {
+		if err := json.Unmarshal(body, out); err != nil {
+			return fmt.Errorf("api: decode response: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) uploadMultipart(ctx context.Context, path, filename, mediaType string, file io.Reader, metadata []byte) ([]byte, error) {
 	var payload bytes.Buffer
 	writer := multipart.NewWriter(&payload)
-	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if metadata != nil {
+		part, err := writer.CreatePart(textproto.MIMEHeader{
+			"Content-Disposition": {`form-data; name="metadata"`},
+			"Content-Type":        {"application/json"},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("api: create multipart metadata: %w", err)
+		}
+		if _, err := part.Write(metadata); err != nil {
+			return nil, fmt.Errorf("api: write multipart metadata: %w", err)
+		}
+	}
+	part, err := writer.CreatePart(textproto.MIMEHeader{
+		"Content-Disposition": {multipart.FileContentDisposition("file", filename)},
+		"Content-Type":        {mediaType},
+	})
 	if err != nil {
-		return fmt.Errorf("api: create multipart field: %w", err)
+		return nil, fmt.Errorf("api: create multipart field: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("api: read upload: %w", err)
+		return nil, fmt.Errorf("api: read upload: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return fmt.Errorf("api: close multipart body: %w", err)
+		return nil, fmt.Errorf("api: close multipart body: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, &payload)
 	if err != nil {
-		return fmt.Errorf("api: build request: %w", err)
+		return nil, fmt.Errorf("api: build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
@@ -128,12 +160,12 @@ func (c *Client) UploadFile(ctx context.Context, path, filePath string, out any)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("api: %w", err)
+		return nil, fmt.Errorf("api: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("api: read response: %w", err)
+		return nil, fmt.Errorf("api: read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := &APIError{StatusCode: resp.StatusCode}
@@ -152,14 +184,9 @@ func (c *Client) UploadFile(ctx context.Context, path, filePath string, out any)
 		if apiErr.Message == "" {
 			apiErr.Message = http.StatusText(resp.StatusCode)
 		}
-		return apiErr
+		return nil, apiErr
 	}
-	if out != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, out); err != nil {
-			return fmt.Errorf("api: decode response: %w", err)
-		}
-	}
-	return nil
+	return respBody, nil
 }
 
 // Download executes an authenticated GET request for a binary response.
@@ -293,12 +320,18 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := &APIError{StatusCode: resp.StatusCode}
 		var errBody struct {
-			Code    string `json:"code"`
-			Error   string `json:"error"`
-			Message string `json:"message"`
+			Code              string   `json:"code"`
+			Error             string   `json:"error"`
+			Message           string   `json:"message"`
+			Reason            string   `json:"reason"`
+			ChangedPaths      []string `json:"changedPaths"`
+			RetryAfterSeconds int      `json:"retryAfterSeconds"`
 		}
 		if json.Unmarshal(respBody, &errBody) == nil {
 			apiErr.Code = errBody.Code
+			apiErr.Reason = errBody.Reason
+			apiErr.ChangedPaths = errBody.ChangedPaths
+			apiErr.RetryAfterSeconds = errBody.RetryAfterSeconds
 			apiErr.Message = errBody.Error
 			if apiErr.Message == "" {
 				apiErr.Message = errBody.Message

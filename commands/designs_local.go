@@ -1,0 +1,641 @@
+package commands
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/copera/copera-cli/internal/api"
+	"github.com/copera/copera-cli/internal/exitcodes"
+	"github.com/spf13/cobra"
+)
+
+func newDesignInitCmd(cli *CLI) *cobra.Command {
+	var kind, runtime, system string
+	cmd := &cobra.Command{
+		Use:   "init <dir>",
+		Short: "Set up a local Design project",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(kind) == "" {
+				err := fmt.Errorf("kind must not be empty")
+				cli.Printer.PrintError("invalid_flag", err.Error(), "", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+			if runtime != "static" && runtime != "react" {
+				err := fmt.Errorf("runtime must be static or react")
+				cli.Printer.PrintError("invalid_flag", err.Error(), "", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+			dir := filepath.Clean(args[0])
+			if entries, err := os.ReadDir(dir); err == nil {
+				if len(entries) != 0 {
+					err := fmt.Errorf("design folder %q is not empty", dir)
+					cli.Printer.PrintError("out_dir_not_empty", err.Error(), "", false)
+					return exitcodes.New(exitcodes.Conflict, err)
+				}
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return designError(cli, err)
+			}
+
+			client, _, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			guide, err := client.ArtifactGuide(ctx, kind, runtime)
+			if err != nil {
+				return designError(cli, err)
+			}
+			state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: "index.html"}
+			if guide.Runtime == "vite_react" {
+				if state.Dependencies, err = designRequiredPackages(guide.Facts); err != nil {
+					return designError(cli, err)
+				}
+			}
+			var snapshot []byte
+			if system != "" {
+				state.DesignSystemID, snapshot, err = readDesignSystem(ctx, client, system)
+				if err != nil {
+					return designError(cli, err)
+				}
+			}
+			root, err := openDesignDir(dir, true)
+			if err != nil {
+				return designError(cli, err)
+			}
+			defer func() { _ = root.Close() }()
+			if err := writeDesignGuide(root, guide); err != nil {
+				return designError(cli, err)
+			}
+			if snapshot != nil {
+				if err := writeDesignFile(root, ".copera/design-system.json", snapshot); err != nil {
+					return designError(cli, err)
+				}
+			}
+			if err := saveDesignState(root, state, nil); err != nil {
+				return designError(cli, err)
+			}
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(state)
+			}
+			cli.Printer.PrintLine(fmt.Sprintf("Design initialized in %s", dir))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&kind, "kind", "", "Design kind")
+	cmd.Flags().StringVar(&runtime, "runtime", "static", "Design runtime (static or react)")
+	cmd.Flags().StringVar(&system, "system", "", "Saved design system name or ID")
+	_ = cmd.MarkFlagRequired("kind")
+	return cmd
+}
+
+func designRequiredPackages(data json.RawMessage) ([]api.ArtifactDependency, error) {
+	var facts struct {
+		Toolchain struct {
+			RequiredPackages []string `json:"requiredPackages"`
+		} `json:"toolchain"`
+		Packages []api.ArtifactDependency `json:"packages"`
+	}
+	if err := json.Unmarshal(data, &facts); err != nil {
+		return nil, fmt.Errorf("read guide package facts: %w", err)
+	}
+	var required []api.ArtifactDependency
+	for _, name := range facts.Toolchain.RequiredPackages {
+		for _, dep := range facts.Packages {
+			if dep.Name == name {
+				required = append(required, dep)
+				break
+			}
+		}
+	}
+	return required, nil
+}
+
+func readDesignSystem(ctx context.Context, client *api.Client, name string) (string, []byte, error) {
+	systems, err := client.ArtifactDesignSystems(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	var selected *api.ArtifactDesignSystem
+	for _, system := range systems {
+		if system.ID == name {
+			selected = &system
+			break
+		}
+	}
+	if selected == nil {
+		for _, system := range systems {
+			if !strings.EqualFold(system.Name, name) {
+				continue
+			}
+			if selected != nil {
+				return "", nil, fmt.Errorf("multiple design systems are named %q; use an ID", name)
+			}
+			selected = &system
+		}
+	}
+	if selected == nil || !selected.Available {
+		return "", nil, fmt.Errorf("design system %q is unavailable", name)
+	}
+	if selected.Kind == "design" {
+		snapshot, err := client.ArtifactDesign(ctx, selected.SourceArtifactID, selected.SourceVersionID)
+		if err != nil {
+			return "", nil, err
+		}
+		data, err := json.MarshalIndent(snapshot, "", "  ")
+		return selected.ID, append(data, '\n'), err
+	}
+	data, err := json.MarshalIndent(selected, "", "  ")
+	return selected.ID, append(data, '\n'), err
+}
+
+func checkDesignPullTargets(root *os.Root, remote map[string]designFile, managed bool) error {
+	check := func(name string) error {
+		local := filepath.FromSlash(name)
+		if err := checkDesignSymlinks(root, local); err != nil {
+			return err
+		}
+		info, err := root.Lstat(local)
+		if err == nil && !info.Mode().IsRegular() {
+			return fmt.Errorf("design path %q is not a regular file", name)
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", ".copera/guide/README.md", ".copera/guide/facts.json"} {
+		if err := check(name); err != nil {
+			return err
+		}
+	}
+	if !managed {
+		for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+			content, err := readDesignFile(root, name)
+			switch {
+			case err == nil && string(content) != designRules:
+				return fmt.Errorf("design pull would overwrite existing %q; choose a different folder", name)
+			case err != nil && !errors.Is(err, fs.ErrNotExist):
+				return err
+			}
+		}
+	}
+	for _, file := range remote {
+		if err := check(path.Join(designBaseDir, sha256Hex(file.Data))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeDesignGuide(root *os.Root, guide *api.ArtifactGuide) error {
+	if err := writeDesignFile(root, ".copera/guide/README.md", []byte(guide.Markdown)); err != nil {
+		return err
+	}
+	if len(guide.Facts) != 0 {
+		if err := writeDesignFile(root, ".copera/guide/facts.json", append(guide.Facts, '\n')); err != nil {
+			return err
+		}
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		if err := writeDesignFile(root, name, []byte(designRules)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRemoteDesignVersion(version *api.ArtifactVersion) error {
+	paths := make(designPaths)
+	files := make(map[string]bool)
+	add := func(name string, file bool) error {
+		if name == "" && !file {
+			return nil
+		}
+		if err := validateDesignContentPath(name); err != nil {
+			return err
+		}
+		if file {
+			if files[name] {
+				return fmt.Errorf("duplicate design path %q", name)
+			}
+			files[name] = true
+		}
+		return paths.add(name, false)
+	}
+	for _, file := range version.Files {
+		if err := add(file.Path, true); err != nil {
+			return err
+		}
+	}
+	for _, asset := range version.AuthoringManifest.Assets {
+		if err := add(asset.Path, true); err != nil {
+			return err
+		}
+	}
+	shared := version.AuthoringManifest.SharedDesign
+	for _, name := range []string{version.Entrypoint, shared.GuidancePath, shared.TokensPath, shared.ComponentsPath, shared.AssetsPath} {
+		if err := add(name, false); err != nil {
+			return err
+		}
+	}
+	for _, page := range version.AuthoringManifest.Pages {
+		if err := add(page.Entrypoint, false); err != nil {
+			return err
+		}
+	}
+	for _, doc := range version.AuthoringManifest.Documents {
+		if err := add(doc.Path, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readRemoteDesignFiles(ctx context.Context, client *api.Client, id string, version *api.ArtifactVersion) (map[string]designFile, error) {
+	if err := validateRemoteDesignVersion(version); err != nil {
+		return nil, err
+	}
+	pack, err := client.ArtifactHandoff(ctx, id, api.ArtifactHandoffOpts{VersionID: version.ID, MaxInlineBytes: handoffMaxInlineBytes})
+	if err != nil {
+		return nil, err
+	}
+	inline := make(map[string]api.ArtifactHandoffFile, len(pack.Files))
+	for _, file := range pack.Files {
+		if err := validateDesignContentPath(file.Path); err != nil {
+			return nil, err
+		}
+		inline[file.Path] = file
+	}
+	if pack.Spec != nil {
+		if err := validateDesignContentPath(pack.Spec.Path); err != nil {
+			return nil, err
+		}
+		inline[pack.Spec.Path] = api.ArtifactHandoffFile{Content: pack.Spec.Markdown, Omitted: pack.Spec.Omitted}
+	}
+	assets := make(map[string]api.ArtifactHandoffAsset, len(pack.Design.Assets))
+	for _, asset := range pack.Design.Assets {
+		if err := validateDesignContentPath(asset.Path); err != nil {
+			return nil, err
+		}
+		assets[asset.Path] = asset
+	}
+	files := make(map[string]designFile, len(version.Files)+len(version.AuthoringManifest.Assets))
+	for _, file := range version.Files {
+		entry := inline[file.Path]
+		if entry.Omitted == api.ArtifactOmittedSensitive {
+			return nil, fmt.Errorf("the API refused the credential-shaped source file %q", file.Path)
+		}
+		var text string
+		if entry.Content != nil {
+			text = *entry.Content
+		} else {
+			_, text, err = client.ArtifactSourceFile(ctx, id, version.ID, file.Path)
+			if err != nil {
+				return nil, fmt.Errorf("read %q: %w", file.Path, err)
+			}
+		}
+		data := []byte(text)
+		if file.ContentDigest != "" && sha256Hex(data) != file.ContentDigest {
+			return nil, fmt.Errorf("source %q does not match its checksum", file.Path)
+		}
+		files[file.Path] = designFile{Data: data, MediaType: file.MediaType}
+	}
+	for _, asset := range version.AuthoringManifest.Assets {
+		signed := assets[asset.Path]
+		if signed.URL == nil || *signed.URL == "" {
+			return nil, fmt.Errorf("design asset %q has no download link", asset.Path)
+		}
+		data, err := downloadHandoffAsset(ctx, client, *signed.URL)
+		if err != nil {
+			return nil, fmt.Errorf("download design asset %q: %w", asset.Path, err)
+		}
+		if asset.ContentDigest != "" && sha256Hex(data) != asset.ContentDigest {
+			return nil, fmt.Errorf("design asset %q does not match its checksum", asset.Path)
+		}
+		files[asset.Path] = designFile{Data: data, MediaType: asset.MediaType, Binary: true}
+	}
+	return files, nil
+}
+
+func defaultDesignKind(manifest api.ArtifactManifest) string {
+	for _, page := range manifest.Pages {
+		if page.ID == manifest.DefaultPageID {
+			return page.Kind
+		}
+	}
+	return ""
+}
+
+func newDesignPullCmd(cli *CLI) *cobra.Command {
+	var number int
+	cmd := &cobra.Command{
+		Use:   "pull <id|url> [dir]",
+		Short: "Pull a Design into a local folder and merge local edits",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := designID(args[0])
+			if err != nil {
+				return designError(cli, err)
+			}
+			if number < 0 || (number == 0 && cmd.Flags().Changed("version")) {
+				return designError(cli, fmt.Errorf("version must be a positive number"))
+			}
+			client, _, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			artifact, err := client.ArtifactGet(ctx, id)
+			if err != nil {
+				return designError(cli, err)
+			}
+			version, err := designVersion(ctx, client, artifact, number)
+			if err != nil {
+				return designError(cli, err)
+			}
+			remote, err := readRemoteDesignFiles(ctx, client, id, version)
+			if err != nil {
+				return designError(cli, err)
+			}
+			dir := slugify(artifact.Title, "design-"+id)
+			if len(args) == 2 {
+				dir = filepath.Clean(args[1])
+			}
+			workspace, err := client.WorkspaceInfo(ctx)
+			if err != nil {
+				return designError(cli, err)
+			}
+			kind := defaultDesignKind(version.AuthoringManifest)
+			guide, err := client.ArtifactGuide(ctx, kind, version.Runtime)
+			if err != nil {
+				return designError(cli, err)
+			}
+			root, err := openDesignDir(dir, true)
+			if err != nil {
+				return designError(cli, err)
+			}
+			defer func() { _ = root.Close() }()
+			state := &designState{
+				ID: id, Workspace: workspace.ID, BaseVersionID: version.ID, HeadRevision: artifact.HeadRevision,
+				Kind: kind, Runtime: version.Runtime, Entrypoint: version.Entrypoint,
+				Manifest: version.AuthoringManifest,
+			}
+			if state.Kind == "" {
+				state.Kind = guide.Kind
+			}
+			conflicts, err := applyDesignPull(root, state, remote, guide)
+			if err != nil {
+				return designError(cli, err)
+			}
+			if cli.Printer.IsJSON() {
+				result := struct {
+					ID        string   `json:"id"`
+					VersionID string   `json:"versionId"`
+					Dir       string   `json:"dir"`
+					Conflicts []string `json:"conflicts"`
+				}{id, version.ID, dir, conflicts}
+				if err := cli.Printer.PrintJSON(result); err != nil {
+					return err
+				}
+			} else {
+				cli.Printer.PrintLine(fmt.Sprintf("Pulled Design %s version %d into %s", id, version.Version, dir))
+			}
+			if len(conflicts) > 0 {
+				err := fmt.Errorf("pull conflicts: %s", strings.Join(conflicts, ", "))
+				cli.Printer.PrintError("pull_conflict", err.Error(), "Resolve the files left in the folder", false)
+				return exitcodes.New(exitcodes.Conflict, err)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&number, "version", 0, "Version number (default: current)")
+	return cmd
+}
+
+func applyDesignPull(root *os.Root, state *designState, remote map[string]designFile, guide *api.ArtifactGuide) ([]string, error) {
+	previous, err := loadDesignState(root)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	base := map[string]designFile{}
+	if previous != nil {
+		if previous.ID != "" && previous.ID != state.ID {
+			return nil, fmt.Errorf("the folder belongs to Design %s", previous.ID)
+		}
+		base, err = loadDesignBase(root, previous)
+		if err != nil {
+			return nil, err
+		}
+		if previous.BaseVersionID == state.BaseVersionID {
+			state.BuildState = previous.BuildState
+			state.Dependencies = previous.Dependencies
+		}
+		state.AssetPaths = make(map[string]string)
+		for name, canonical := range previous.AssetPaths {
+			if name == canonical {
+				continue
+			}
+			if err := validateDesignContentPath(name); err != nil {
+				return nil, err
+			}
+			if asset, ok := remote[canonical]; ok && asset.Binary {
+				if _, exists := remote[name]; exists {
+					return nil, fmt.Errorf("asset path %q collides with remote source", name)
+				}
+				delete(remote, canonical)
+				remote[name] = asset
+				state.AssetPaths[name] = canonical
+			}
+		}
+	}
+	local, localPaths, err := scanDesignTree(root)
+	if err != nil {
+		return nil, err
+	}
+	if previous != nil {
+		markDesignAssets(previous, local)
+	}
+	remotePaths := make(designPaths)
+	for name := range remote {
+		if err := remotePaths.add(name, false); err != nil {
+			return nil, err
+		}
+	}
+	for key, entry := range remotePaths {
+		if local, exists := localPaths[key]; exists && local.name != entry.name {
+			return nil, fmt.Errorf("design paths %q and %q collide", local.name, entry.name)
+		}
+	}
+	merged, conflicts := mergeDesignFiles(base, local, remote)
+	mergedPaths := make(designPaths)
+	for name := range merged {
+		if err := mergedPaths.add(name, false); err != nil {
+			return nil, err
+		}
+	}
+	if err := checkDesignPullTargets(root, remote, previous != nil); err != nil {
+		return nil, err
+	}
+	var replacedDirs []string
+	for _, entry := range localPaths {
+		if !entry.dir {
+			continue
+		}
+		for name := entry.name; name != "."; name = path.Dir(name) {
+			if _, replacement := merged[name]; replacement {
+				replacedDirs = append(replacedDirs, entry.name)
+				break
+			}
+		}
+	}
+	names := designFileNames(local, merged)
+	for _, name := range names {
+		if _, exists := merged[name]; !exists {
+			if err := root.Remove(filepath.FromSlash(name)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Remove old directories only where a merged file takes their place.
+	slices.Sort(replacedDirs)
+	slices.Reverse(replacedDirs)
+	for _, dir := range replacedDirs {
+		if err := root.Remove(filepath.FromSlash(dir)); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range names {
+		next, exists := merged[name]
+		before, existed := local[name]
+		if !exists || (existed && bytes.Equal(before.Data, next.Data)) {
+			continue
+		}
+		if err := writeDesignFile(root, name, next.Data); err != nil {
+			return nil, err
+		}
+	}
+	if err := writeDesignGuide(root, guide); err != nil {
+		return nil, err
+	}
+	return conflicts, saveDesignState(root, state, remote)
+}
+
+func designWorkDir(args []string) string {
+	if len(args) == 0 {
+		return "."
+	}
+	return filepath.Clean(args[0])
+}
+
+func newDesignStatusCmd(cli *CLI) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status [dir]",
+		Short: "Show local changes and the remote Design build state",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := openDesignDir(designWorkDir(args), false)
+			if err != nil {
+				return designError(cli, err)
+			}
+			defer func() { _ = root.Close() }()
+			state, err := loadDesignState(root)
+			if err != nil {
+				return designError(cli, err)
+			}
+			local, err := scanDesignFiles(root)
+			if err != nil {
+				return designError(cli, err)
+			}
+			markDesignAssets(state, local)
+			status := struct {
+				ID            string         `json:"id"`
+				BaseVersionID string         `json:"baseVersionId"`
+				RemoteAhead   bool           `json:"remoteAhead"`
+				BuildState    string         `json:"buildState"`
+				Changes       []designChange `json:"changes"`
+			}{ID: state.ID, BaseVersionID: state.BaseVersionID, BuildState: state.BuildState, Changes: designChanges(state, local)}
+			if state.ID != "" {
+				client, _, err := requireAPIClient(cli)
+				if err != nil {
+					return err
+				}
+				ctx := cmd.Context()
+				head, err := client.ArtifactGet(ctx, state.ID)
+				if err != nil {
+					return designError(cli, err)
+				}
+				status.RemoteAhead = head.HeadRevision > state.HeadRevision || head.CurrentDraftVersionID != state.BaseVersionID
+				build, err := client.ArtifactBuild(ctx, state.ID, head.CurrentDraftVersionID, 0)
+				if err != nil {
+					return designError(cli, err)
+				}
+				status.BuildState = build.State
+			}
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(status)
+			}
+			cli.Printer.PrintLine(fmt.Sprintf("Remote head ahead: %t", status.RemoteAhead))
+			if status.BuildState != "" {
+				cli.Printer.PrintLine(fmt.Sprintf("Build: %s", status.BuildState))
+			}
+			for _, change := range status.Changes {
+				cli.Printer.PrintLine(fmt.Sprintf("%s  %s", change.Kind, change.Path))
+			}
+			return nil
+		},
+	}
+}
+
+func newDesignDiffCmd(cli *CLI) *cobra.Command {
+	return &cobra.Command{
+		Use:   "diff [dir]",
+		Short: "Show local changes against the pulled version",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := openDesignDir(designWorkDir(args), false)
+			if err != nil {
+				return designError(cli, err)
+			}
+			defer func() { _ = root.Close() }()
+			state, err := loadDesignState(root)
+			if err != nil {
+				return designError(cli, err)
+			}
+			base, err := loadDesignBase(root, state)
+			if err != nil {
+				return designError(cli, err)
+			}
+			local, err := scanDesignFiles(root)
+			if err != nil {
+				return designError(cli, err)
+			}
+			markDesignAssets(state, local)
+			changes := designChanges(state, local)
+			for index := range changes {
+				if err := designDiff(&changes[index], base, local); err != nil {
+					return designError(cli, err)
+				}
+			}
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(changes)
+			}
+			for _, change := range changes {
+				if _, err := io.WriteString(cli.Printer.Out, change.Patch); err != nil {
+					return designError(cli, err)
+				}
+			}
+			return nil
+		},
+	}
+}

@@ -282,23 +282,44 @@ Uploads support multipart transfer, configurable chunk size, concurrent part
 uploads, progress output in interactive terminals, and recursive directory
 upload.
 
-### Artifacts
+### Designs
 
-Artifact commands require a Personal Access Token with drive access, and
-Artifacts enabled in the workspace (a 403 means one of the two is missing).
+`artifacts` is an alias for `designs`. The original read commands require a
+Personal Access Token with Drive access. The authoring commands require a
+token with Designs permission.
 
 ```bash
-copera artifacts list
-copera artifacts list --scope shared --search "launch"
-copera artifacts get <artifact-id>
-copera artifacts versions <artifact-id>
-copera artifacts source <artifact-id> --path src/App.tsx --output plain > App.tsx
-copera artifacts design <artifact-id> --version <version-id> --json
-copera artifacts starters
-copera artifacts handoff <artifact-id> --out ./my-app
+copera designs list --scope shared --search "launch"
+copera designs get <id>
+copera designs open <id|url>
+copera designs versions <id>
+copera designs log <id|url>
+copera designs guide [--kind K]
+copera designs init <dir> --kind K [--runtime static|react] [--system NAME_OR_ID]
+copera designs pull <id|url> [dir] [--version N]
+copera designs status [dir]
+copera designs diff [dir]
+copera designs check [dir]
+copera designs push [dir] -m SUMMARY [--wait] [--no-check] [--force]
+copera designs screenshot [dir|id] [--page P] [--viewport W] -o FILE
+copera designs assets add <file>
+copera designs export <id> -o FILE.zip
+copera designs import FILE.zip [--workspace W]
+copera designs rename <id> <title>
+copera designs trash <id>
+copera designs restore <id> --version N
+copera designs fork <id>
+copera designs source <id> --path src/App.tsx --output plain > App.tsx
+copera designs design <id> --version <version-id> --json
+copera designs starters
+copera designs handoff <id> --out ./my-app
 ```
 
-`copera artifacts handoff` pulls everything a coding agent (or you) needs to
+With `import --workspace`, the CLI verifies that the active token belongs to
+the named workspace. Select a workspace's token with `--profile`.
+`screenshot --viewport` selects a width already rendered by the build.
+
+`copera designs handoff` pulls everything a coding agent (or you) needs to
 build the artifact as a real app into one folder:
 
 ```
