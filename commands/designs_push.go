@@ -355,6 +355,9 @@ func rememberDesignAsset(root *os.Root, state *designState, name string, asset a
 	if err != nil {
 		return err
 	}
+	if saved.ID != state.ID {
+		return fmt.Errorf("the linked Design changed while saving asset %q", name)
+	}
 	if saved.PendingAssets == nil {
 		saved.PendingAssets = state.PendingAssets
 	} else {

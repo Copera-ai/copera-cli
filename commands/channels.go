@@ -22,7 +22,7 @@ func newChannelsCmd(cli *CLI) *cobra.Command {
 		Use:   "message",
 		Short: "Channel message operations",
 	}
-	messageCmd.AddCommand(newChannelMessageSendCmd(cli))
+	messageCmd.AddCommand(newChannelMessageSendCmd(cli), newChannelMessageListCmd(cli))
 
 	participantsCmd := &cobra.Command{
 		Use:   "participants",
@@ -591,5 +591,55 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&flagUser, "user", "", "Workspace user ID (required)")
+	return cmd
+}
+
+func newChannelMessageListCmd(cli *CLI) *cobra.Command {
+	var limit int
+	var before, after string
+	cmd := &cobra.Command{
+		Use:   "list <channel-id>",
+		Short: "Read a page of visible channel messages",
+		Args:  publicCommandArgs(1, 1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if limit < 1 || limit > 50 {
+				return publicInputError(cli, "--limit must be 1–50")
+			}
+			id, err := parsePublicObjectID(args[0], "channel")
+			if err != nil {
+				return publicInputError(cli, err.Error())
+			}
+			if cmd.Flags().Changed("before") && cmd.Flags().Changed("after") {
+				return publicInputError(cli, "--before and --after cannot be used together")
+			}
+			if cmd.Flags().Changed("before") {
+				before, err = parsePublicObjectID(before, "message")
+			}
+			if cmd.Flags().Changed("after") {
+				after, err = parsePublicObjectID(after, "message")
+			}
+			if err != nil {
+				return publicInputError(cli, err.Error())
+			}
+			client, _, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+			page, err := client.ChannelMessages(cmd.Context(), id, limit, before, after)
+			if err != nil {
+				return printPublicAPIError(cli, err)
+			}
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(page)
+			}
+			for _, message := range page.Messages {
+				cli.Printer.PrintLine(fmt.Sprintf("%s %s %s", message.ID, message.CreatedAt, message.Content))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum messages to return (1–50)")
+	cmd.Flags().StringVar(&before, "before", "", "Read older than this message ID")
+	cmd.Flags().StringVar(&after, "after", "", "Read newer than this message ID")
 	return cmd
 }

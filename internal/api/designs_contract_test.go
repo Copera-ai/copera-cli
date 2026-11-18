@@ -31,12 +31,20 @@ func (s *designContractSchema) field(name string) *designContractSchema {
 	if field := s.Properties[name]; field != nil {
 		return field
 	}
+	var fields []*designContractSchema
 	for _, choice := range s.AnyOf {
 		if field := choice.field(name); field != nil {
-			return field
+			fields = append(fields, field)
 		}
 	}
-	return nil
+	switch len(fields) {
+	case 0:
+		return nil
+	case 1:
+		return fields[0]
+	default:
+		return &designContractSchema{AnyOf: fields}
+	}
 }
 
 func (s *designContractSchema) allows(value string) bool {
@@ -404,4 +412,78 @@ func TestDesignsUploadRefusesChangedFile(t *testing.T) {
 		Path: "vendor/example.js", MediaType: "application/javascript", ArtifactUpload: file,
 	})
 	require.ErrorContains(t, err, "file differs from its scanned size or SHA-256")
+}
+
+func TestDesignsMediaAndContextOpenAPIContract(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/artifacts.openapi.json")
+	require.NoError(t, err)
+	var snapshot struct {
+		Paths map[string]map[string]designContractOperation
+	}
+	require.NoError(t, json.Unmarshal(data, &snapshot))
+	const (
+		image      = "/media/images"
+		speech     = "/media/speech"
+		transcript = "/media/transcriptions"
+		operation  = "/media/operations/{operationId}"
+		sources    = "/artifacts/{artifactId}/sources"
+		channel    = "/chat/channel/{channelId}/messages"
+	)
+	receipt := reflect.TypeFor[MediaReceipt]()
+	routes := []struct {
+		method, path, success string
+		input, output         reflect.Type
+	}{
+		{"post", image, "202", reflect.TypeFor[MediaImageInput](), receipt},
+		{"post", speech, "202", reflect.TypeFor[MediaSpeechInput](), receipt},
+		{"post", transcript, "202", reflect.TypeFor[MediaTranscriptionInput](), receipt},
+		{"get", operation, "202", nil, receipt},
+		{"get", "/media/voices", "200", nil, reflect.TypeFor[MediaVoices]()},
+		{"get", "/media/usage", "200", nil, reflect.TypeFor[MediaSpendMeter]()},
+		{"post", sources, "200", reflect.TypeFor[ArtifactSourceInput](), reflect.TypeFor[ArtifactSourceResult]()},
+		{"get", sources, "200", nil, reflect.TypeFor[ArtifactSourcesResult]()},
+		{"delete", sources + "/{sourceLinkId}", "204", nil, nil},
+		{"get", channel, "200", nil, reflect.TypeFor[ChannelMessagePage]()},
+	}
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			op, ok := snapshot.Paths[route.path][route.method]
+			require.True(t, ok, "operation is missing from the snapshot")
+			response, ok := op.Responses[route.success]
+			require.True(t, ok, "success status is missing from the snapshot")
+			if route.output != nil {
+				assertDesignContractFields(t, response.Content["application/json"].Schema, route.output, "response")
+			}
+			if route.input != nil {
+				assertDesignContractFields(t, op.RequestBody.Content["application/json"].Schema, route.input, "request")
+			}
+			if route.success == "202" {
+				assertDesignContractFields(t, op.Responses["200"].Content["application/json"].Schema, receipt, "terminal response")
+				if route.method == "post" {
+					assert.Contains(t, designContractParameters(op, "header"), "idempotency-key")
+				}
+			}
+			if route.path == transcript {
+				form := op.RequestBody.Content["multipart/form-data"].Schema
+				require.NotNil(t, form)
+				assert.NotNil(t, form.field("design"))
+				assert.NotNil(t, form.field("file"))
+				assert.Nil(t, form.field("source"))
+			}
+			if route.path == channel {
+				assert.ElementsMatch(t, []string{"limit", "before", "after"}, designContractParameters(op, "query"))
+			}
+		})
+	}
+	assert.NotContains(t, snapshot.Paths, "/media/videos")
+}
+
+func designContractParameters(op designContractOperation, location string) []string {
+	var names []string
+	for _, parameter := range op.Parameters {
+		if parameter.In == location {
+			names = append(names, strings.ToLower(parameter.Name))
+		}
+	}
+	return names
 }
