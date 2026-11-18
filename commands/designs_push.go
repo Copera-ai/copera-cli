@@ -21,7 +21,7 @@ import (
 
 func newDesignPushCmd(cli *CLI) *cobra.Command {
 	var summary string
-	var wait, noCheck, force bool
+	var wait, waitForPreview, noCheck, force bool
 	cmd := &cobra.Command{
 		Use:   "push [dir] -m SUMMARY",
 		Short: "Save local edits as one new Design version",
@@ -37,7 +37,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			defer root.Close()
-			client, _, err := requireAPIClient(cli)
+			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
@@ -51,7 +51,15 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				base = designHeadFiles(&head.CurrentVersion, state.AssetPaths)
 				state.BaseVersionID, state.HeadRevision = head.CurrentVersion.ID, head.HeadRevision
 			}
-			if !noCheck {
+			checked := false
+			if !noCheck && (!force || state.ID == "") && (state.ID == "" || state.BaseVersionID != "") && state.LastCheck.recent() {
+				digest, err := designCheckDigest(cfg, state, files)
+				if err != nil {
+					return designPushError(cli, err, designPushProgress(state))
+				}
+				checked = digest == state.LastCheck.Digest
+			}
+			if !noCheck && !checked {
 				report, err := checkDesign(ctx, cli, client, root, state, files, force)
 				if err != nil {
 					return designPushError(cli, err, designPushProgress(state))
@@ -61,13 +69,33 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				}
 			}
 			var pushed *api.ArtifactPushResult
+			var refreshManifest bool
 			if state.ID == "" {
 				pushed, err = createLocalDesign(ctx, client, root, state, files, summary)
 			} else {
-				pushed, err = pushDesignFiles(ctx, cli, client, root, state, base, files, summary, force, wait)
+				pushed, refreshManifest, err = pushDesignFiles(ctx, cli, client, root, state, base, files, summary, force, wait || waitForPreview)
 			}
 			if err != nil {
 				return designPushError(cli, err, designPushProgress(state))
+			}
+			committedCtx := ctx
+			if waitForPreview {
+				var cancel context.CancelFunc
+				committedCtx, cancel = context.WithTimeout(ctx, 120*time.Second)
+				defer cancel()
+			}
+			defaultPageID := pushed.Version.AuthoringManifest.DefaultPageID
+			if refreshManifest {
+				version, err := client.ArtifactVersionGet(committedCtx, pushed.ArtifactID, pushed.Version.ID)
+				if err != nil {
+					cli.Printer.Info("Version %s was saved. Run designs pull to refresh the local manifest: %s", pushed.Version.ID, err)
+				} else {
+					state.Manifest = version.AuthoringManifest
+					defaultPageID = version.AuthoringManifest.DefaultPageID
+				}
+			}
+			if state.BaseVersionID != pushed.Version.ID {
+				state.LastCheck = nil
 			}
 			state.ID, state.BaseVersionID, state.HeadRevision = pushed.ArtifactID, pushed.Version.ID, pushed.HeadRevision
 			state.BuildState = pushed.BuildState
@@ -79,6 +107,9 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 					err = fmt.Errorf("%s %w", progress, err)
 				}
 				return designError(cli, err)
+			}
+			if waitForPreview {
+				return waitForDesignPreview(committedCtx, cli, client, pushed, defaultPageID, progress)
 			}
 			if wait {
 				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, progress)
@@ -93,6 +124,8 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&summary, "message", "m", "", "Summary of the changes (up to 160 characters)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the writer and the resulting build")
+	cmd.Flags().BoolVar(&waitForPreview, "wait-for-preview", false, "Wait for the writer and a usable preview")
+	cmd.MarkFlagsMutuallyExclusive("wait", "wait-for-preview")
 	cmd.Flags().BoolVar(&noCheck, "no-check", false, "Skip the dry-run build")
 	cmd.Flags().BoolVar(&force, "force", false, "Push this folder over the current remote head")
 	_ = cmd.MarkFlagRequired("message")
@@ -190,7 +223,7 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 	}, nil
 }
 
-func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, base map[string]string, files map[string]designFile, summary string, force, wait bool) (*api.ArtifactPushResult, error) {
+func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, base map[string]string, files map[string]designFile, summary string, force, wait bool) (*api.ArtifactPushResult, bool, error) {
 	textBase := base
 	if state.FirstPushPending {
 		textBase = nil
@@ -205,13 +238,13 @@ func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os
 		}
 		canonical := designCanonicalAssetPath(name, state.AssetPaths)
 		if err := validateDesignContentPath(canonical); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		input.RemovedPaths = append(input.RemovedPaths, canonical)
 	}
 	manifest, aliases, err := pushDesignAssets(ctx, client, root, state, files)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if force || !slices.Equal(state.Manifest.Assets, manifest.Assets) || !slices.Equal(state.Manifest.Documents, manifest.Documents) {
 		input.AuthoringManifest = &manifest
@@ -222,23 +255,15 @@ func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os
 	}
 	input.IdempotencyKey, err = designPushKey("", input)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	result, err := sendDesignPush(ctx, cli, client, state.ID, input, wait)
 	if err != nil {
-		return nil, err
-	}
-	if input.AuthoringManifest == nil && result.Outcome != "unchanged" {
-		version, err := client.ArtifactVersionGet(ctx, state.ID, result.Version.ID)
-		if err != nil {
-			cli.Printer.Info("Version %s was saved. Run designs pull to refresh the local manifest: %s", result.Version.ID, err)
-		} else {
-			manifest = version.AuthoringManifest
-		}
+		return nil, false, err
 	}
 	state.AssetPaths = aliases
 	state.Manifest = manifest
-	return result, nil
+	return result, input.AuthoringManifest == nil && result.Outcome != "unchanged", nil
 }
 
 func pushDesignAssets(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile) (api.ArtifactManifest, map[string]string, error) {
@@ -313,6 +338,11 @@ func rememberDesignAsset(root *os.Root, state *designState, name string, asset a
 	}
 	state.PendingAssets[name] = record
 	// Keep the saved base intact if --force read a newer head for this push.
+	release, err := lockDesignState(root, true)
+	if err != nil {
+		return err
+	}
+	defer release()
 	saved, err := loadDesignState(root)
 	if err != nil {
 		return err
@@ -323,7 +353,7 @@ func rememberDesignAsset(root *os.Root, state *designState, name string, asset a
 		saved.PendingAssets[name] = record
 		state.PendingAssets = saved.PendingAssets
 	}
-	return writeDesignState(root, saved)
+	return writeDesignStateLocked(root, saved)
 }
 
 func designPushKey(prefix string, input interface{}) (string, error) {
@@ -376,6 +406,74 @@ func sendDesignPush(ctx context.Context, cli *CLI, client *api.Client, id string
 			}
 			return nil, ctx.Err()
 		case <-time.After(delay):
+		}
+	}
+}
+
+func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pushed *api.ArtifactPushResult, page, progress string) error {
+	id, version := pushed.ArtifactID, pushed.Version.ID
+	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
+	unsupported := errors.New("the API does not support waiting for a Design preview. Use --wait to wait for build evidence")
+	for {
+		build, err := client.ArtifactBuildForPreview(ctx, id, version, wait)
+		if err != nil {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) {
+				if wait > 0 && apiErr.StatusCode == http.StatusTooManyRequests {
+					wait = 0
+					continue
+				}
+				if apiErr.StatusCode == http.StatusBadRequest && apiErr.Code != "NOT_FOUND" {
+					return designPushError(cli, unsupported, progress)
+				}
+			}
+			return designPushError(cli, err, progress)
+		}
+		if build.EvidenceStatus == "" {
+			return designPushError(cli, unsupported, progress)
+		}
+		if build.PreviewReadyAt != nil || build.State == "ready" {
+			if page == "" {
+				exact, err := client.ArtifactVersionGet(ctx, id, version)
+				if err != nil {
+					return designPushError(cli, err, progress)
+				}
+				page = exact.AuthoringManifest.DefaultPageID
+				if page == "" {
+					return designPushError(cli, errors.New("the saved Design version has no default page"), progress)
+				}
+			}
+			preview, err := client.ArtifactPagePreview(ctx, id, version, page)
+			if err != nil {
+				return designPushError(cli, err, progress)
+			}
+			if preview.Status == "ready" && preview.URL != "" {
+				if cli.Printer.IsJSON() {
+					return cli.Printer.PrintJSON(struct {
+						ArtifactID     string     `json:"artifactId"`
+						VersionID      string     `json:"versionId"`
+						State          string     `json:"state"`
+						PreviewReadyAt *time.Time `json:"previewReadyAt"`
+						EvidenceStatus string     `json:"evidenceStatus"`
+						URL            string     `json:"url"`
+					}{id, version, build.State, build.PreviewReadyAt, build.EvidenceStatus, preview.URL})
+				}
+				cli.Printer.PrintLine(preview.URL)
+				return nil
+			}
+		} else if build.Done {
+			message := "Design build " + build.State
+			if build.FailureCode != "" {
+				message += " (" + build.FailureCode + ")"
+			}
+			return designPushError(cli, errors.New(message), progress)
+		} else if wait > 0 {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return designPushError(cli, ctx.Err(), progress)
+		case <-time.After(time.Second):
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"time"
 )
@@ -109,9 +110,11 @@ type ArtifactCheckResult struct {
 }
 
 type ArtifactBuildResult struct {
-	State       string `json:"state"`
-	Done        bool   `json:"done"`
-	FailureCode string `json:"failureCode"`
+	State          string     `json:"state"`
+	Done           bool       `json:"done"`
+	FailureCode    string     `json:"failureCode"`
+	PreviewReadyAt *time.Time `json:"previewReadyAt"`
+	EvidenceStatus string     `json:"evidenceStatus"`
 	ArtifactBuildFindings
 	Screenshots []struct {
 		PageID string `json:"pageId"`
@@ -215,11 +218,30 @@ func artifactProjectForm(project []byte, files []ArtifactCheckFile) (multipartRe
 }
 
 func (c *Client) ArtifactBuild(ctx context.Context, artifactID, versionID string, wait int) (*ArtifactBuildResult, error) {
-	path := artifactVersionPath(artifactID, versionID) + "/build"
+	return c.artifactBuild(ctx, artifactID, versionID, wait, "")
+}
+
+func (c *Client) ArtifactBuildForPreview(ctx context.Context, artifactID, versionID string, wait int) (*ArtifactBuildResult, error) {
+	return c.artifactBuild(ctx, artifactID, versionID, wait, "preview")
+}
+
+func (c *Client) artifactBuild(ctx context.Context, artifactID, versionID string, wait int, waitFor string) (*ArtifactBuildResult, error) {
+	params := url.Values{}
 	if wait > 0 {
-		path += "?wait=" + strconv.Itoa(wait)
+		params.Set("wait", strconv.Itoa(wait))
 	}
+	if waitFor != "" {
+		params.Set("waitFor", waitFor)
+	}
+	path := withQuery(artifactVersionPath(artifactID, versionID)+"/build", params)
 	var result ArtifactBuildResult
+	err := c.do(ctx, http.MethodGet, path, nil, &result)
+	return &result, err
+}
+
+func (c *Client) ArtifactPagePreview(ctx context.Context, artifactID, versionID, pageID string) (*ArtifactPreview, error) {
+	path := artifactVersionPath(artifactID, versionID) + "/pages/" + url.PathEscape(pageID) + "/preview"
+	var result ArtifactPreview
 	err := c.do(ctx, http.MethodGet, path, nil, &result)
 	return &result, err
 }

@@ -50,6 +50,7 @@ type designState struct {
 	FirstPushPending bool                            `json:"firstPushPending,omitempty"`
 	BuildState       string                          `json:"buildState,omitempty"`
 	DesignSystemID   string                          `json:"designSystemId,omitempty"`
+	LastCheck        *designCheckReceipt             `json:"lastCheck,omitempty"`
 }
 
 type pendingDesignAsset struct {
@@ -269,7 +270,45 @@ func saveDesignState(root *os.Root, state *designState, base map[string]designFi
 	return writeDesignState(root, state)
 }
 
+var errDesignStateBusy = errors.New("another command is updating .copera/design.json")
+
+func lockDesignState(root *os.Root, wait bool) (func(), error) {
+	const lockPath = ".copera/.design-state.lock"
+	if err := checkDesignSymlinks(root, lockPath); err != nil {
+		return nil, err
+	}
+	if err := root.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return nil, err
+	}
+	info, err := root.Lstat(lockPath)
+	if err == nil && !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("design state lock is not a regular file")
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	file, err := root.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockDesignStateFile(file, wait); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	// Keep the lock file in place so every command locks the same file.
+	return func() { _ = file.Close() }, nil
+}
+
 func writeDesignState(root *os.Root, state *designState) error {
+	release, err := lockDesignState(root, true)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return writeDesignStateLocked(root, state)
+}
+
+func writeDesignStateLocked(root *os.Root, state *designState) error {
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err

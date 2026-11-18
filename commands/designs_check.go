@@ -10,8 +10,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/copera/copera-cli/internal/api"
+	"github.com/copera/copera-cli/internal/config"
 	"github.com/copera/copera-cli/internal/exitcodes"
 	"github.com/spf13/cobra"
 )
@@ -27,17 +29,98 @@ func newDesignCheckCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			defer root.Close()
-			client, _, err := requireAPIClient(cli)
+			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
 				return err
+			}
+			digest, err := designCheckDigest(cfg, state, files)
+			if err != nil {
+				return designError(cli, err)
 			}
 			report, err := checkDesign(cmd.Context(), cli, client, root, state, files, false)
 			if err != nil {
 				return designError(cli, err)
 			}
+			if err := recordDesignCheck(root, cfg, files, digest, report.State == "ready"); err != nil {
+				cli.Printer.Info("Warning: save Design check result: %s", err)
+			}
 			return printDesignBuild(cli, report, "")
 		},
 	}
+}
+
+type designCheckReceipt struct {
+	Digest    string `json:"digest"`
+	CheckedAt string `json:"checkedAt"`
+}
+
+func (receipt *designCheckReceipt) recent() bool {
+	if receipt == nil {
+		return false
+	}
+	checkedAt, err := time.Parse(time.RFC3339Nano, receipt.CheckedAt)
+	age := time.Since(checkedAt)
+	return err == nil && age >= 0 && age < 30*time.Minute
+}
+
+func designCheckDigest(cfg *config.Config, state *designState, files map[string]designFile) (string, error) {
+	type fileFingerprint struct {
+		Checksum  string
+		MediaType string
+		Binary    bool
+	}
+	fingerprints := make(map[string]fileFingerprint, len(files))
+	snapshot := *state
+	snapshot.LastCheck = nil
+	snapshot.BuildState = ""
+	snapshot.PendingAssets = nil
+	for name, file := range files {
+		checksum := sha256Hex(file.Data)
+		fingerprints[name] = fileFingerprint{checksum, file.MediaType, file.Binary}
+		if file.Binary {
+			canonical := designCanonicalAssetPath(name, state.AssetPaths)
+			if pending := state.PendingAssets[canonical]; pending.matches(checksum) {
+				if snapshot.PendingAssets == nil {
+					snapshot.PendingAssets = make(map[string]pendingDesignAsset)
+				}
+				snapshot.PendingAssets[canonical] = pending
+			}
+		}
+	}
+	// Scope the cache to the checked project settings, pins, base and API
+	// credentials. Only the resulting digest is persisted.
+	return designPushKey("design-check-v1", struct {
+		Server string
+		Token  string
+		Design designState
+		Files  map[string]fileFingerprint
+	}{strings.TrimRight(cfg.API.BaseURL, "/"), cfg.Token, snapshot, fingerprints})
+}
+
+func recordDesignCheck(root *os.Root, cfg *config.Config, files map[string]designFile, digest string, passed bool) error {
+	release, err := lockDesignState(root, false)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	current, err := loadDesignState(root)
+	if err != nil {
+		return err
+	}
+	currentDigest, err := designCheckDigest(cfg, current, files)
+	if err != nil || currentDigest != digest {
+		return err
+	}
+	switch {
+	case passed:
+		current.LastCheck = &designCheckReceipt{Digest: digest, CheckedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	case current.LastCheck != nil && current.LastCheck.Digest == digest:
+		current.LastCheck = nil
+	default:
+		return nil
+	}
+	return writeDesignStateLocked(root, current)
 }
 
 func openDesignForBuild(cli *CLI, args []string) (*os.Root, *designState, map[string]designFile, error) {

@@ -165,7 +165,13 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 				ArtifactCheckFile{Path: "assets/hero.png", MediaType: "image/png", Data: []byte("image bytes")}))
 		}},
 		{"get", version + "/build", "200", nil, ArtifactBuildResult{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactBuild(ctx, id, versionID, 10))
+			if _, err := c.ArtifactBuild(ctx, id, versionID, 10); err != nil {
+				return err
+			}
+			return designContractRequest(c.ArtifactBuildForPreview(ctx, id, versionID, 10))
+		}},
+		{"get", version + "/pages/{pageId}/preview", "200", nil, ArtifactPreview{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactPagePreview(ctx, id, versionID, "home"))
 		}},
 		{"post", artifact + "/assets", "200", multipartAsset{}, ArtifactUploadedAsset{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactAssetUpload(ctx, id, "assets/logo.png", []byte("image bytes"), "image", "Logo"))
@@ -235,7 +241,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			client.httpClient.Transport = designContractTransport(func(r *http.Request) (*http.Response, error) {
 				called = true
 				assert.Equal(t, strings.ToUpper(route.method), r.Method)
-				assert.Equal(t, strings.NewReplacer("{artifactId}", id, "{versionId}", versionID).Replace(route.path), r.URL.Path)
+				assert.Equal(t, strings.NewReplacer("{artifactId}", id, "{versionId}", versionID, "{pageId}", "home").Replace(route.path), r.URL.Path)
 				if route.method == "post" && (route.path == "/artifacts/" || route.path == "/artifacts/check") {
 					mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 					require.NoError(t, err)
@@ -262,6 +268,26 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			assert.True(t, called)
 		})
 	}
+
+	build := snapshot.Paths[version+"/build"]["get"]
+	t.Run("preview versus evidence wait", func(t *testing.T) {
+		var waitFor *designContractSchema
+		for _, param := range build.Parameters {
+			if param.In == "query" && param.Name == "waitFor" {
+				waitFor = param.Schema
+			}
+		}
+		require.NotNil(t, waitFor)
+		assert.True(t, waitFor.allows("preview"))
+		assert.True(t, waitFor.allows("evidence"))
+
+		response := build.Responses["200"].Content["application/json"].Schema
+		evidence := response.field("evidenceStatus")
+		require.NotNil(t, evidence)
+		for _, status := range []string{"pending", "ready", "failed"} {
+			assert.True(t, evidence.allows(status), "evidence status %q is missing", status)
+		}
+	})
 
 	conflict := snapshot.Paths[artifact+"/versions"]["post"].Responses["409"].Content["application/json"].Schema
 	require.NotNil(t, conflict)

@@ -18846,7 +18846,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Reads the build of one version without starting or changing anything: its state, the compiler findings with file, line and column, the failed files and resources, accessibility findings and a short-lived link to every screenshot per page and width. With wait (seconds, up to 60) it holds the request until the build has an answer (done is true) or the time is up, then returns the state it has. Links are made only for a ready build, once per answer, and work for ten minutes without the Authorization header. A request that waits counts against a small number of waits per caller: over it the answer is 429 with Retry-After, and a call without wait always works. Needs a token with the Designs permission.",
+        "description": "Reads the build of one version without starting or changing anything: its state, the compiler findings with file, line and column, the failed files and resources, accessibility findings and a short-lived link to every screenshot per page and width. With wait (seconds, up to 60) and waitFor=preview, it can return as soon as that version's private preview is available, while evidence is still pending. The default waitFor=evidence waits for a terminal build (done is true). Either wait returns on terminal failure or timeout. Screenshot links are made only for a ready build, once per answer, and work for ten minutes without the Authorization header. A request that waits counts against a small number of waits per caller: over it the answer is 429 with Retry-After, and a call without wait always works. Needs a token with the Designs permission.",
         "parameters": [
           {
             "schema": {
@@ -18858,7 +18858,21 @@
             "in": "query",
             "name": "wait",
             "required": false,
-            "description": "Seconds to wait for the build to have an answer. 0 answers at once"
+            "description": "Seconds to wait for the selected milestone. 0 answers at once"
+          },
+          {
+            "schema": {
+              "enum": [
+                "preview",
+                "evidence"
+              ],
+              "default": "evidence",
+              "type": "string"
+            },
+            "in": "query",
+            "name": "waitFor",
+            "required": false,
+            "description": "Wait for a private preview or terminal build evidence"
           },
           {
             "schema": {
@@ -18940,6 +18954,26 @@
                     "done": {
                       "description": "The build has an answer. Trust this over state: a failure Copera retries on its own is failed with done false",
                       "type": "boolean"
+                    },
+                    "previewReadyAt": {
+                      "description": "When this version first became available as a private preview",
+                      "anyOf": [
+                        {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "evidenceStatus": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "ready",
+                        "failed"
+                      ]
                     },
                     "buildServiceIssue": {
                       "description": "Set when the failure is Copera's build service, not the Design's files: retrying while it is retried, stopped once it gave up",
@@ -19273,6 +19307,8 @@
                     "buildId",
                     "state",
                     "done",
+                    "previewReadyAt",
+                    "evidenceStatus",
                     "buildServiceIssue",
                     "retryScheduledAt",
                     "failureCode",
