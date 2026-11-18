@@ -16,6 +16,7 @@ import (
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/auth"
 	"github.com/copera/copera-cli/internal/exitcodes"
+	"github.com/copera/copera-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -134,6 +135,7 @@ type designLogEntry struct {
 	Version       int       `json:"version"`
 	Date          time.Time `json:"date"`
 	Origin        *string   `json:"origin"`
+	AuthorKind    *string   `json:"authorKind"`
 	Tool          *string   `json:"tool"`
 	ChangeSummary *string   `json:"changeSummary"`
 }
@@ -161,8 +163,10 @@ func newDesignLogCmd(cli *CLI) *cobra.Command {
 				}
 				for _, edge := range result.Edges {
 					v := edge.Node
-					// The version list does not currently expose origin or change summary.
-					entries = append(entries, designLogEntry{Version: v.Version, Date: v.CreatedAt, Tool: v.Tool})
+					entries = append(entries, designLogEntry{
+						Version: v.Version, Date: v.CreatedAt, Origin: v.Origin,
+						AuthorKind: v.AuthorKind, Tool: v.Tool, ChangeSummary: v.ChangeSummary,
+					})
 				}
 				if !result.HasNextPage {
 					break
@@ -175,19 +179,37 @@ func newDesignLogCmd(cli *CLI) *cobra.Command {
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(entries)
 			}
+			var table *output.Table
+			if cli.Printer.IsTable() {
+				table = output.NewTable(cli.Printer)
+				table.Header("Version", "Date", "Origin", "Author", "Tool", "Change summary")
+			}
+			display := func(value *string) string {
+				if value == nil {
+					return "unavailable"
+				}
+				return *value
+			}
 			for i, entry := range entries {
+				date := entry.Date.Format(time.RFC3339)
+				origin, author := display(entry.Origin), display(entry.AuthorKind)
+				tool, summary := display(entry.Tool), display(entry.ChangeSummary)
+				if table != nil {
+					table.Row(entry.Version, date, origin, author, tool, summary)
+					continue
+				}
 				if i > 0 {
 					cli.Printer.PrintLine("")
 				}
-				tool := "unavailable"
-				if entry.Tool != nil {
-					tool = *entry.Tool
-				}
 				cli.Printer.PrintLine(fmt.Sprintf("Version: %d", entry.Version))
-				cli.Printer.PrintLine(fmt.Sprintf("Date: %s", entry.Date.Format(time.RFC3339)))
-				cli.Printer.PrintLine("Origin: unavailable")
-				cli.Printer.PrintLine(fmt.Sprintf("Tool: %s", tool))
-				cli.Printer.PrintLine("Change summary: unavailable")
+				cli.Printer.PrintLine("Date: " + date)
+				cli.Printer.PrintLine("Origin: " + origin)
+				cli.Printer.PrintLine("Author: " + author)
+				cli.Printer.PrintLine("Tool: " + tool)
+				cli.Printer.PrintLine("Change summary: " + summary)
+			}
+			if table != nil {
+				table.Render()
 			}
 			return nil
 		},

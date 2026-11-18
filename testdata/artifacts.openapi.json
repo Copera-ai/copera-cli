@@ -134,6 +134,30 @@
                                     "readOnly": true,
                                     "type": "string"
                                   },
+                                  "origin": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai_chat",
+                                      "manual_edit",
+                                      "restore",
+                                      "upload",
+                                      "public_api",
+                                      "template",
+                                      "fork"
+                                    ]
+                                  },
+                                  "authorKind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "user",
+                                      "system"
+                                    ]
+                                  },
+                                  "changeSummary": {
+                                    "maxLength": 160,
+                                    "type": "string"
+                                  },
                                   "tool": {
                                     "type": "string",
                                     "enum": [
@@ -562,6 +586,10 @@
                                         },
                                         "utf8Bytes": {
                                           "type": "integer"
+                                        },
+                                        "agentConfig": {
+                                          "description": "true for a file named like an AI tool or editor setting (a version stored before such names were refused may hold one): a pull must skip it",
+                                          "type": "boolean"
                                         }
                                       },
                                       "required": [
@@ -590,6 +618,11 @@
                                         "type": "string"
                                       },
                                       "screenshotUrl": {
+                                        "type": "string"
+                                      },
+                                      "visualReviewStatus": {
+                                        "deprecated": true,
+                                        "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                                         "type": "string"
                                       }
                                     },
@@ -624,6 +657,11 @@
                                     "type": "string"
                                   },
                                   "screenshotUrl": {
+                                    "type": "string"
+                                  },
+                                  "visualReviewStatus": {
+                                    "deprecated": true,
+                                    "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                                     "type": "string"
                                   }
                                 },
@@ -871,6 +909,11 @@
                   },
                   "description": {
                     "maxLength": 4096,
+                    "type": "string"
+                  },
+                  "changeSummary": {
+                    "maxLength": 500,
+                    "description": "A short summary saved on the first version, as on a push",
                     "type": "string"
                   },
                   "request": {
@@ -2007,6 +2050,30 @@
                           "readOnly": true,
                           "type": "string"
                         },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "ai_chat",
+                            "manual_edit",
+                            "restore",
+                            "upload",
+                            "public_api",
+                            "template",
+                            "fork"
+                          ]
+                        },
+                        "authorKind": {
+                          "type": "string",
+                          "enum": [
+                            "ai",
+                            "user",
+                            "system"
+                          ]
+                        },
+                        "changeSummary": {
+                          "maxLength": 160,
+                          "type": "string"
+                        },
                         "tool": {
                           "type": "string",
                           "enum": [
@@ -2435,6 +2502,10 @@
                               },
                               "utf8Bytes": {
                                 "type": "integer"
+                              },
+                              "agentConfig": {
+                                "description": "true for a file named like an AI tool or editor setting (a version stored before such names were refused may hold one): a pull must skip it",
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -2463,6 +2534,11 @@
                               "type": "string"
                             },
                             "screenshotUrl": {
+                              "type": "string"
+                            },
+                            "visualReviewStatus": {
+                              "deprecated": true,
+                              "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                               "type": "string"
                             }
                           },
@@ -2497,6 +2573,11 @@
                           "type": "string"
                         },
                         "screenshotUrl": {
+                          "type": "string"
+                        },
+                        "visualReviewStatus": {
+                          "deprecated": true,
+                          "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                           "type": "string"
                         }
                       },
@@ -2723,40 +2804,52 @@
             }
           },
           "429": {
-            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
-                  "description": "Too Many Requests - The operation's rate limit was exceeded",
                   "type": "object",
                   "properties": {
-                    "statusCode": {
-                      "type": "number",
-                      "enum": [
-                        429
-                      ]
-                    },
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "Too Many Requests"
-                      ]
-                    },
                     "message": {
                       "type": "string"
                     },
-                    "retryAfter": {
-                      "minimum": 0,
-                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                    "code": {
+                      "description": "ARTIFACT_LIMIT_EXCEEDED for a budget answer",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "push_budget"
+                      ],
+                      "description": "push_budget: a push found the budget of Design pushes and checks used up"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "token",
+                        "workspace"
+                      ],
+                      "description": "token: this token used up its own window; workspace: all the tokens of the workspace used up theirs"
+                    },
+                    "retryAfterSeconds": {
+                      "minimum": 1,
+                      "description": "Try again after this many seconds",
                       "type": "integer"
+                    },
+                    "retryAfter": {
+                      "description": "The route's own per-minute limit: seconds until the request may be retried",
+                      "type": "integer"
+                    },
+                    "statusCode": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "statusCode",
-                    "error",
-                    "message",
-                    "retryAfter"
+                    "message"
                   ]
                 }
               }
@@ -2785,6 +2878,40 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "description": "ARTIFACT_LIMIT_EXCEEDED for a budget answer",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "budget_unavailable"
+                      ],
+                      "description": "budget_unavailable: the budget of Design pushes and checks could not be read: try again"
+                    },
+                    "retryAfterSeconds": {
+                      "minimum": 1,
+                      "description": "Try again after this many seconds",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -2797,7 +2924,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Creates a Design from a zip that GET /artifacts/{artifactId}/versions/{versionId}/archive (or the app's source download) produced: send it as multipart/form-data with the zip in the field file (up to 26 MiB) and a JSON field metadata with the idempotencyKey. The zip's images and fonts are re-admitted as new assets of the new Design, so a Design can move to another workspace or account. The Design is stored as written by the tool in metadata.tool (default other), its build is queued, and source-quality findings come back as warnings. A zip with credential-shaped text, files named like AI tool or editor settings, unsupported or unsafe entries (path tricks, links, encrypted entries) or contents that do not match the archive's own inventory is refused with 400. A busy server answers 503 with Retry-After. Needs a token with the Designs permission.",
+        "description": "Creates a Design from a zip that GET /artifacts/{artifactId}/versions/{versionId}/archive (or the app's source download) produced: send it as multipart/form-data with the zip in the field file (up to 26 MiB) and a JSON field metadata with the idempotencyKey. The zip's images and fonts are re-admitted as new assets of the new Design, so a Design can move to another workspace or account. The Design is stored as written by the tool in metadata.tool (default other), its build is queued, and source-quality findings come back as warnings. A zip with credential-shaped text, files named like AI tool or editor settings, unsupported or unsafe entries (path tricks, links, encrypted entries) or contents that do not match the archive's own inventory is refused with 400, as is a title or description with credential-shaped text. Refused source paths report agent_config_name, invalid_path or reserved_build_file. The whole body must arrive within 120 seconds (later: 408, reason upload_timeout, and the connection is closed). A person has one archive upload at a time and the server a few: another answers 503, reason upload_busy, with Retry-After. A move from an archive queues a build, so it spends a unit of the budget of Design pushes and checks per token and per workspace: when it is used up the answer is 429 with Retry-After, reason push_budget, before the body is read; when the budget cannot be read, 503 with reason budget_unavailable. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -2958,6 +3085,30 @@
                         },
                         "viaAgentName": {
                           "readOnly": true,
+                          "type": "string"
+                        },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "ai_chat",
+                            "manual_edit",
+                            "restore",
+                            "upload",
+                            "public_api",
+                            "template",
+                            "fork"
+                          ]
+                        },
+                        "authorKind": {
+                          "type": "string",
+                          "enum": [
+                            "ai",
+                            "user",
+                            "system"
+                          ]
+                        },
+                        "changeSummary": {
+                          "maxLength": 160,
                           "type": "string"
                         },
                         "tool": {
@@ -3388,6 +3539,10 @@
                               },
                               "utf8Bytes": {
                                 "type": "integer"
+                              },
+                              "agentConfig": {
+                                "description": "true for a file named like an AI tool or editor setting (a version stored before such names were refused may hold one): a pull must skip it",
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -3416,6 +3571,11 @@
                               "type": "string"
                             },
                             "screenshotUrl": {
+                              "type": "string"
+                            },
+                            "visualReviewStatus": {
+                              "deprecated": true,
+                              "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                               "type": "string"
                             }
                           },
@@ -3450,6 +3610,11 @@
                           "type": "string"
                         },
                         "screenshotUrl": {
+                          "type": "string"
+                        },
+                        "visualReviewStatus": {
+                          "deprecated": true,
+                          "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                           "type": "string"
                         }
                       },
@@ -3629,6 +3794,59 @@
               }
             }
           },
+          "408": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
+                    },
+                    "maxBytes": {
+                      "description": "upload_too_large: the file limit in bytes",
+                      "type": "integer"
+                    },
+                    "retryAfterSeconds": {
+                      "description": "upload_busy: try again after this many seconds",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
           "409": {
             "description": "Default Response",
             "content": {
@@ -3736,40 +3954,52 @@
             }
           },
           "429": {
-            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
-                  "description": "Too Many Requests - The operation's rate limit was exceeded",
                   "type": "object",
                   "properties": {
-                    "statusCode": {
-                      "type": "number",
-                      "enum": [
-                        429
-                      ]
-                    },
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "Too Many Requests"
-                      ]
-                    },
                     "message": {
                       "type": "string"
                     },
-                    "retryAfter": {
-                      "minimum": 0,
-                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                    "code": {
+                      "description": "ARTIFACT_LIMIT_EXCEEDED for a budget answer",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "push_budget"
+                      ],
+                      "description": "push_budget: a push found the budget of Design pushes and checks used up"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "token",
+                        "workspace"
+                      ],
+                      "description": "token: this token used up its own window; workspace: all the tokens of the workspace used up theirs"
+                    },
+                    "retryAfterSeconds": {
+                      "minimum": 1,
+                      "description": "Try again after this many seconds",
                       "type": "integer"
+                    },
+                    "retryAfter": {
+                      "description": "The route's own per-minute limit: seconds until the request may be retried",
+                      "type": "integer"
+                    },
+                    "statusCode": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "statusCode",
-                    "error",
-                    "message",
-                    "retryAfter"
+                    "message"
                   ]
                 }
               }
@@ -3863,7 +4093,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "A dry run of what a push or a create would store: the folder goes through the same rules as a push (paths, sizes, credential-shaped text, agent and editor setting names, packages) and then through a full build and render. Answers whether it builds, the findings with file, line and column, source-quality advice and the four screenshots of the default page. Nothing is saved: no Design, no version, no build, no stored image. The request body may weigh up to 10.5 MiB, like a push: a larger body answers 413. A check takes the build service's one slot, so it counts like a push against the same budget: when the budget is used up the answer is 429 with Retry-After and reason check_budget; when the build service is busy, being updated or too slow, or the budget cannot be read, the answer is 503 with its reason and retryAfterSeconds. Needs a token with the Designs permission.",
+        "description": "A dry run of what a push or a create would store: the folder goes through the same rules as a push (paths, sizes, credential-shaped text, agent and editor setting names, packages) and then through a full build and render. Answers whether it builds, the findings with file, line and column, source-quality advice and the four screenshots of the default page. Nothing is saved: no Design, no version, no build, no stored image. Send JSON for text and already pinned assets, or multipart/form-data with the same JSON in a project field and repeated file parts for new images and fonts. Set each file part filename to its project-relative path. New files follow the direct upload path, type and size rules and must fit the asset budget with the pinned files. Multipart must arrive within 30 seconds or it answers 408. The JSON may weigh up to 10.5 MiB, like a push. Requests that exceed the transport size limits answer 413. A check takes the build service's one slot, so it counts like a push against the same budget before the body is parsed. When the budget is used up the answer is 429 with Retry-After and reason check_budget; when the build service is busy, being updated or too slow, or the budget cannot be read, the answer is 503 with its reason and retryAfterSeconds. A builder refusal of the source answers 400 with reason builder_rejected_source and a bounded message. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -4572,6 +4802,29 @@
                   "files"
                 ]
               }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "project": {
+                    "description": "The same JSON object as the application/json request, sent as a text or application/json part",
+                    "type": "string"
+                  },
+                  "file": {
+                    "maxItems": 128,
+                    "type": "array",
+                    "items": {
+                      "format": "binary",
+                      "description": "One PNG, JPEG, WebP or WOFF2 per file part. Set its filename to the relative asset path, for example assets/hero.png. Paths follow the direct asset upload rules. The files are only used for this build",
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "project"
+                ]
+              }
             }
           },
           "required": true
@@ -5029,6 +5282,59 @@
               }
             }
           },
+          "408": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
+                    },
+                    "maxBytes": {
+                      "description": "upload_too_large: the file limit in bytes",
+                      "type": "integer"
+                    },
+                    "retryAfterSeconds": {
+                      "description": "upload_busy: try again after this many seconds",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
           "409": {
             "description": "Default Response",
             "content": {
@@ -5193,7 +5499,7 @@
                       "type": "string"
                     },
                     "code": {
-                      "description": "ARTIFACT_BUILD_IN_PROGRESS when the build service cannot take the check, ARTIFACT_LIMIT_EXCEEDED when the budget could not be read",
+                      "description": "ARTIFACT_BUILD_IN_PROGRESS when the build service cannot take the check, ARTIFACT_LIMIT_EXCEEDED when multipart checks are busy or the budget could not be read",
                       "type": "string"
                     },
                     "reason": {
@@ -5202,9 +5508,10 @@
                         "builder_busy",
                         "builder_unavailable",
                         "check_too_slow",
-                        "budget_unavailable"
+                        "budget_unavailable",
+                        "upload_busy"
                       ],
-                      "description": "builder_busy: Copera's build service is busy with another build; builder_unavailable: Copera's build service is being updated; check_too_slow: the check took longer than a request may: push the files and read the build instead; budget_unavailable: the budget of Design pushes and checks could not be read: try again"
+                      "description": "builder_busy: Copera's build service is busy with another build; builder_unavailable: Copera's build service is being updated; check_too_slow: the check took longer than a request may: push the files and read the build instead; budget_unavailable: the budget of Design pushes and checks could not be read: try again; upload_busy: too many multipart checks are in progress"
                     },
                     "retryAfterSeconds": {
                       "minimum": 1,
@@ -8308,7 +8615,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Changes the title and/or the description of a Design, and renames its Drive item with the title. An empty description clears it. Versions and headRevision are untouched, so a rename never conflicts with a push. Needs edit rights on the Design and a token with the Designs permission. It does not change who can see the Design.",
+        "description": "Changes the title and/or the description of a Design, and renames its Drive item with the title. An empty description clears it. Versions and headRevision are untouched, so a rename never conflicts with a push. Text that looks like a credential (a key or a token) is refused with 400 and the field named in issues; invisible characters are removed. Needs edit rights on the Design and a token with the Designs permission. It does not change who can see the Design.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -8898,6 +9205,30 @@
                           "readOnly": true,
                           "type": "string"
                         },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "ai_chat",
+                            "manual_edit",
+                            "restore",
+                            "upload",
+                            "public_api",
+                            "template",
+                            "fork"
+                          ]
+                        },
+                        "authorKind": {
+                          "type": "string",
+                          "enum": [
+                            "ai",
+                            "user",
+                            "system"
+                          ]
+                        },
+                        "changeSummary": {
+                          "maxLength": 160,
+                          "type": "string"
+                        },
                         "tool": {
                           "type": "string",
                           "enum": [
@@ -9326,6 +9657,10 @@
                               },
                               "utf8Bytes": {
                                 "type": "integer"
+                              },
+                              "agentConfig": {
+                                "description": "true for a file named like an AI tool or editor setting (a version stored before such names were refused may hold one): a pull must skip it",
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -9354,6 +9689,11 @@
                               "type": "string"
                             },
                             "screenshotUrl": {
+                              "type": "string"
+                            },
+                            "visualReviewStatus": {
+                              "deprecated": true,
+                              "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                               "type": "string"
                             }
                           },
@@ -9388,6 +9728,11 @@
                           "type": "string"
                         },
                         "screenshotUrl": {
+                          "type": "string"
+                        },
+                        "visualReviewStatus": {
+                          "deprecated": true,
+                          "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                           "type": "string"
                         }
                       },
@@ -9604,7 +9949,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Uploads one PNG, JPEG, WebP or WOFF2 file straight to a Design, so a push can name it in authoringManifest.assets. Send multipart/form-data with the file in the field file (up to 5 MiB; a Design holds 20 MiB of assets) and optional JSON in the field metadata. The type is read from the bytes: a file that is not what its type or name says is refused, and a too-large file answers 413. Sending the same bytes again with the same usage and altText answers with the asset already stored. A busy server answers 503 with Retry-After. Needs a token with the Designs permission.",
+        "description": "Uploads one PNG, JPEG, WebP or WOFF2 file straight to a Design, so a push can name it in authoringManifest.assets. Send multipart/form-data with the file in the field file (up to 5 MiB; a Design holds 20 MiB of assets) and optional JSON in the field metadata. The type is read from the bytes: a file that is not what its type or name says is refused, and a too-large file answers 413. Set metadata.path to keep the original relative asset path, or omit it for a generated path. Sending the same bytes again with the same path choice, usage and altText answers with the asset already stored, even when the Design holds as many assets as it may. An upload that no version places counts toward the Design's assets for 24 hours, then stops counting and is removed. The whole body must arrive within 30 seconds (later: 408, reason upload_timeout, and the connection is closed). A person has one asset upload at a time and the server a few: another answers 503, reason upload_busy, with Retry-After. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -9621,6 +9966,12 @@
                     "description": "A JSON object of at most 16 KiB, sent as one form part named metadata (not as separate form fields). With curl: -F 'metadata={...};type=application/json'",
                     "type": "object",
                     "properties": {
+                      "path": {
+                        "minLength": 1,
+                        "maxLength": 240,
+                        "description": "Relative source path for the asset, such as assets/hero.png. The extension must match the file bytes, the path must be unused, and design/assets/ is reserved for generated path names. Defaults to a generated path.",
+                        "type": "string"
+                      },
                       "usage": {
                         "description": "What the asset is for. Left out, WOFF2 bytes are a font and anything else an image",
                         "anyOf": [
@@ -9688,7 +10039,7 @@
           {
             "lang": "bash",
             "label": "cURL",
-            "source": "curl -X POST \"https://api.copera.app/public/v1/artifacts/64f7f77bcf86cd7994390113/assets\" \\\n  -H \"Authorization: Bearer YOUR_TOKEN\" \\\n  -F 'metadata={\"usage\":\"image\",\"altText\":\"Hero photo\"};type=application/json' \\\n  -F \"file=@hero.png;type=image/png\""
+            "source": "curl -X POST \"https://api.copera.app/public/v1/artifacts/64f7f77bcf86cd7994390113/assets\" \\\n  -H \"Authorization: Bearer YOUR_TOKEN\" \\\n  -F 'metadata={\"path\":\"assets/hero.png\",\"usage\":\"image\",\"altText\":\"Hero photo\"};type=application/json' \\\n  -F \"file=@hero.png;type=image/png\""
           }
         ],
         "responses": {
@@ -9887,6 +10238,59 @@
                     },
                     "ref": {
                       "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ]
+                      }
+                    },
+                    "maxBytes": {
+                      "description": "upload_too_large: the file limit in bytes",
+                      "type": "integer"
+                    },
+                    "retryAfterSeconds": {
+                      "description": "upload_busy: try again after this many seconds",
+                      "type": "integer"
                     }
                   },
                   "required": [
@@ -10738,7 +11142,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Copies one version of a Design (the head unless versionId names another) into a new Design that you own, private to you. The original is untouched. Answers 201 with the new Design, like the create route; a retry with the same idempotencyKey answers with the same Design, and the same key for a different fork is refused with 409 and reason idempotency_key_reused (a fork never meets a stale head or a busy writer: it makes a new Design). Anyone who can read the Design can fork it. Needs a token with the Designs permission.",
+        "description": "Copies one version of a Design (the head unless versionId names another) into a new Design that you own, private to you. The original is untouched. Answers 200 with the new Design, like the create route (201 is only for a new version: push and restore); a retry with the same idempotencyKey answers with the same Design, and the same key for a different fork is refused with 409 and reason idempotency_key_reused (a fork never meets a stale head or a busy writer: it makes a new Design). Anyone who can read the Design can fork it. A title that looks like a credential is refused with 400 and the field named in issues; invisible characters are removed. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -10810,7 +11214,7 @@
           }
         ],
         "responses": {
-          "201": {
+          "200": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -10862,6 +11266,30 @@
                         },
                         "viaAgentName": {
                           "readOnly": true,
+                          "type": "string"
+                        },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "ai_chat",
+                            "manual_edit",
+                            "restore",
+                            "upload",
+                            "public_api",
+                            "template",
+                            "fork"
+                          ]
+                        },
+                        "authorKind": {
+                          "type": "string",
+                          "enum": [
+                            "ai",
+                            "user",
+                            "system"
+                          ]
+                        },
+                        "changeSummary": {
+                          "maxLength": 160,
                           "type": "string"
                         },
                         "tool": {
@@ -11292,6 +11720,10 @@
                               },
                               "utf8Bytes": {
                                 "type": "integer"
+                              },
+                              "agentConfig": {
+                                "description": "true for a file named like an AI tool or editor setting (a version stored before such names were refused may hold one): a pull must skip it",
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -11320,6 +11752,11 @@
                               "type": "string"
                             },
                             "screenshotUrl": {
+                              "type": "string"
+                            },
+                            "visualReviewStatus": {
+                              "deprecated": true,
+                              "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                               "type": "string"
                             }
                           },
@@ -11354,6 +11791,11 @@
                           "type": "string"
                         },
                         "screenshotUrl": {
+                          "type": "string"
+                        },
+                        "visualReviewStatus": {
+                          "deprecated": true,
+                          "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                           "type": "string"
                         }
                       },
@@ -11554,40 +11996,52 @@
             }
           },
           "429": {
-            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
-                  "description": "Too Many Requests - The operation's rate limit was exceeded",
                   "type": "object",
                   "properties": {
-                    "statusCode": {
-                      "type": "number",
-                      "enum": [
-                        429
-                      ]
-                    },
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "Too Many Requests"
-                      ]
-                    },
                     "message": {
                       "type": "string"
                     },
-                    "retryAfter": {
-                      "minimum": 0,
-                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                    "code": {
+                      "description": "ARTIFACT_LIMIT_EXCEEDED for a budget answer",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "push_budget"
+                      ],
+                      "description": "push_budget: a push found the budget of Design pushes and checks used up"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "token",
+                        "workspace"
+                      ],
+                      "description": "token: this token used up its own window; workspace: all the tokens of the workspace used up theirs"
+                    },
+                    "retryAfterSeconds": {
+                      "minimum": 1,
+                      "description": "Try again after this many seconds",
                       "type": "integer"
+                    },
+                    "retryAfter": {
+                      "description": "The route's own per-minute limit: seconds until the request may be retried",
+                      "type": "integer"
+                    },
+                    "statusCode": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "statusCode",
-                    "error",
-                    "message",
-                    "retryAfter"
+                    "message"
                   ]
                 }
               }
@@ -11608,6 +12062,40 @@
                     },
                     "ref": {
                       "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "description": "ARTIFACT_LIMIT_EXCEEDED for a budget answer",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "budget_unavailable"
+                      ],
+                      "description": "budget_unavailable: the budget of Design pushes and checks could not be read: try again"
+                    },
+                    "retryAfterSeconds": {
+                      "minimum": 1,
+                      "description": "Try again after this many seconds",
+                      "type": "integer"
                     }
                   },
                   "required": [
@@ -14407,7 +14895,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Stores the files as one new version of the Design, on top of the version the tool pulled from, without spending Copera AI credits. Answers 201 with the new version and its build state; 200 when the push changes nothing or repeats a stored push; 409 with reason stale_head (and the changed paths) when the Design moved on, writer_busy (and retryAfterSeconds) while Copera AI is editing it, or idempotency_key_reused. The request body may weigh up to 10.5 MiB (a version holds at most 5 MiB of text, and JSON escapes can double it): a larger body answers 413 before anything is read. Pushes and checks share a budget per token and per workspace over a sliding window: when it is used up the answer is 429 with Retry-After, reason push_budget and scope token or workspace, before anything is stored; when the budget cannot be read the answer is 503 with reason budget_unavailable and Retry-After; a push that fails validation costs nothing. Needs a token with the Designs permission.",
+        "description": "Stores the files as one new version of the Design, on top of the version the tool pulled from, without spending Copera AI credits. Answers 201 with the new version and its build state; 200 when the push changes nothing or repeats a stored push; 409 with reason stale_head (and the changed paths) when the Design moved on, writer_busy (and retryAfterSeconds) while Copera AI is editing it, or idempotency_key_reused. When authoringManifest is omitted, new root HTML files and new nested index.html files become pages. The request body may weigh up to 10.5 MiB (a version holds at most 5 MiB of text, and JSON escapes can double it): an admitted request with a larger body answers 413. Pushes and checks share a budget per token and per workspace over a sliding window: when it is used up the answer is 429 with Retry-After, reason push_budget and scope token or workspace, before anything is stored; when the budget cannot be read the answer is 503 with reason budget_unavailable and Retry-After. The budget is charged before parsing the body, including on a push that later fails validation. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -15209,6 +15697,30 @@
                           "readOnly": true,
                           "type": "string"
                         },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "ai_chat",
+                            "manual_edit",
+                            "restore",
+                            "upload",
+                            "public_api",
+                            "template",
+                            "fork"
+                          ]
+                        },
+                        "authorKind": {
+                          "type": "string",
+                          "enum": [
+                            "ai",
+                            "user",
+                            "system"
+                          ]
+                        },
+                        "changeSummary": {
+                          "maxLength": 160,
+                          "type": "string"
+                        },
                         "tool": {
                           "type": "string",
                           "enum": [
@@ -15291,6 +15803,11 @@
                               "type": "string"
                             },
                             "screenshotUrl": {
+                              "type": "string"
+                            },
+                            "visualReviewStatus": {
+                              "deprecated": true,
+                              "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                               "type": "string"
                             }
                           },
@@ -15403,6 +15920,30 @@
                           "readOnly": true,
                           "type": "string"
                         },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "ai_chat",
+                            "manual_edit",
+                            "restore",
+                            "upload",
+                            "public_api",
+                            "template",
+                            "fork"
+                          ]
+                        },
+                        "authorKind": {
+                          "type": "string",
+                          "enum": [
+                            "ai",
+                            "user",
+                            "system"
+                          ]
+                        },
+                        "changeSummary": {
+                          "maxLength": 160,
+                          "type": "string"
+                        },
                         "tool": {
                           "type": "string",
                           "enum": [
@@ -15485,6 +16026,11 @@
                               "type": "string"
                             },
                             "screenshotUrl": {
+                              "type": "string"
+                            },
+                            "visualReviewStatus": {
+                              "deprecated": true,
+                              "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                               "type": "string"
                             }
                           },
@@ -15737,6 +16283,20 @@
                       "type": "boolean"
                     },
                     "changedProjectFields": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "changedPages": {
+                      "description": "Ids of the pages added, changed or removed between the version pushed from and the current head (a Design has at most 32)",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "changedAssets": {
+                      "description": "Paths of the pinned images and fonts added, changed or removed between the two (at most 128)",
                       "type": "array",
                       "items": {
                         "type": "string"
@@ -15995,6 +16555,30 @@
                                 "readOnly": true,
                                 "type": "string"
                               },
+                              "origin": {
+                                "type": "string",
+                                "enum": [
+                                  "ai_chat",
+                                  "manual_edit",
+                                  "restore",
+                                  "upload",
+                                  "public_api",
+                                  "template",
+                                  "fork"
+                                ]
+                              },
+                              "authorKind": {
+                                "type": "string",
+                                "enum": [
+                                  "ai",
+                                  "user",
+                                  "system"
+                                ]
+                              },
+                              "changeSummary": {
+                                "maxLength": 160,
+                                "type": "string"
+                              },
                               "tool": {
                                 "type": "string",
                                 "enum": [
@@ -16077,6 +16661,11 @@
                                     "type": "string"
                                   },
                                   "screenshotUrl": {
+                                    "type": "string"
+                                  },
+                                  "visualReviewStatus": {
+                                    "deprecated": true,
+                                    "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                                     "type": "string"
                                   }
                                 },
@@ -16360,6 +16949,30 @@
                     },
                     "viaAgentName": {
                       "readOnly": true,
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "ai_chat",
+                        "manual_edit",
+                        "restore",
+                        "upload",
+                        "public_api",
+                        "template",
+                        "fork"
+                      ]
+                    },
+                    "authorKind": {
+                      "type": "string",
+                      "enum": [
+                        "ai",
+                        "user",
+                        "system"
+                      ]
+                    },
+                    "changeSummary": {
+                      "maxLength": 160,
                       "type": "string"
                     },
                     "tool": {
@@ -16790,6 +17403,10 @@
                           },
                           "utf8Bytes": {
                             "type": "integer"
+                          },
+                          "agentConfig": {
+                            "description": "true for a file named like an AI tool or editor setting (a version stored before such names were refused may hold one): a pull must skip it",
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -16818,6 +17435,11 @@
                           "type": "string"
                         },
                         "screenshotUrl": {
+                          "type": "string"
+                        },
+                        "visualReviewStatus": {
+                          "deprecated": true,
+                          "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                           "type": "string"
                         }
                       },
@@ -17036,7 +17658,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Answers with a link, valid for 60 seconds, to the Design's portable zip: its source files, its pages and shared design, and its images and fonts. Issuing the link is logged. Send the zip to POST /artifacts/archives (here or in another workspace or account) to make a Design from it. A version that holds credential-shaped text is refused, as its source is, and files named like AI tool or editor settings are left out and listed in omittedPaths. Needs a token with the Designs permission.",
+        "description": "Answers with a link, valid for 60 seconds, to the Design's portable zip: its source files, its pages and shared design, and its images and fonts. Issuing the link is logged and its stored zip is scheduled for deletion when the link expires. Send the zip to POST /artifacts/archives (here or in another workspace or account) to make a Design from it. A version that holds credential-shaped text is refused, as its source is, and files named like AI tool or editor settings are left out and listed in omittedPaths. Needs a token with the Designs permission.",
         "parameters": [
           {
             "schema": {
@@ -18593,6 +19215,11 @@
                     },
                     "screenshotUrl": {
                       "type": "string"
+                    },
+                    "visualReviewStatus": {
+                      "deprecated": true,
+                      "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -18797,7 +19424,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Stores the source of an earlier version as a NEW version on top of the head: no version is removed. It answers like a push, so a tool handles both alike: 201 with the new version and its build state; 200 when the version asked for is already the head or the restore was already stored; 409 with reason stale_head (and what changed) when the Design moved on since baseVersionId, writer_busy (and retryAfterSeconds) while Copera AI is editing it, or idempotency_key_reused. Needs edit rights on the Design and a token with the Designs permission.",
+        "description": "Stores the source of an earlier version as a NEW version on top of the head: no version is removed. It answers like a push, so a tool handles both alike: 201 with the new version and its build state; 200 when the version asked for is already the head or the restore was already stored; 409 with reason stale_head (and what changed) when the Design moved on since baseVersionId, writer_busy (and retryAfterSeconds) while Copera AI is editing it, or idempotency_key_reused. A changeSummary that looks like a credential is refused with 400 and the field named in issues; invisible characters are removed. Needs edit rights on the Design and a token with the Designs permission.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -18924,6 +19551,30 @@
                           "readOnly": true,
                           "type": "string"
                         },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "ai_chat",
+                            "manual_edit",
+                            "restore",
+                            "upload",
+                            "public_api",
+                            "template",
+                            "fork"
+                          ]
+                        },
+                        "authorKind": {
+                          "type": "string",
+                          "enum": [
+                            "ai",
+                            "user",
+                            "system"
+                          ]
+                        },
+                        "changeSummary": {
+                          "maxLength": 160,
+                          "type": "string"
+                        },
                         "tool": {
                           "type": "string",
                           "enum": [
@@ -19006,6 +19657,11 @@
                               "type": "string"
                             },
                             "screenshotUrl": {
+                              "type": "string"
+                            },
+                            "visualReviewStatus": {
+                              "deprecated": true,
+                              "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                               "type": "string"
                             }
                           },
@@ -19118,6 +19774,30 @@
                           "readOnly": true,
                           "type": "string"
                         },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "ai_chat",
+                            "manual_edit",
+                            "restore",
+                            "upload",
+                            "public_api",
+                            "template",
+                            "fork"
+                          ]
+                        },
+                        "authorKind": {
+                          "type": "string",
+                          "enum": [
+                            "ai",
+                            "user",
+                            "system"
+                          ]
+                        },
+                        "changeSummary": {
+                          "maxLength": 160,
+                          "type": "string"
+                        },
                         "tool": {
                           "type": "string",
                           "enum": [
@@ -19200,6 +19880,11 @@
                               "type": "string"
                             },
                             "screenshotUrl": {
+                              "type": "string"
+                            },
+                            "visualReviewStatus": {
+                              "deprecated": true,
+                              "description": "Deprecated: the automatic design review was removed, so this is never set. Removed in a later release.",
                               "type": "string"
                             }
                           },
@@ -19457,6 +20142,20 @@
                         "type": "string"
                       }
                     },
+                    "changedPages": {
+                      "description": "Ids of the pages added, changed or removed between the version pushed from and the current head (a Design has at most 32)",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "changedAssets": {
+                      "description": "Paths of the pinned images and fonts added, changed or removed between the two (at most 128)",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "retryAfterSeconds": {
                       "description": "writer_busy: Copera AI holds the Design; try again after this many seconds",
                       "type": "integer"
@@ -19470,40 +20169,52 @@
             }
           },
           "429": {
-            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": false,
-                  "description": "Too Many Requests - The operation's rate limit was exceeded",
                   "type": "object",
                   "properties": {
-                    "statusCode": {
-                      "type": "number",
-                      "enum": [
-                        429
-                      ]
-                    },
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "Too Many Requests"
-                      ]
-                    },
                     "message": {
                       "type": "string"
                     },
-                    "retryAfter": {
-                      "minimum": 0,
-                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                    "code": {
+                      "description": "ARTIFACT_LIMIT_EXCEEDED for a budget answer",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "push_budget"
+                      ],
+                      "description": "push_budget: a push found the budget of Design pushes and checks used up"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "token",
+                        "workspace"
+                      ],
+                      "description": "token: this token used up its own window; workspace: all the tokens of the workspace used up theirs"
+                    },
+                    "retryAfterSeconds": {
+                      "minimum": 1,
+                      "description": "Try again after this many seconds",
                       "type": "integer"
+                    },
+                    "retryAfter": {
+                      "description": "The route's own per-minute limit: seconds until the request may be retried",
+                      "type": "integer"
+                    },
+                    "statusCode": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "statusCode",
-                    "error",
-                    "message",
-                    "retryAfter"
+                    "message"
                   ]
                 }
               }
@@ -19524,6 +20235,40 @@
                     },
                     "ref": {
                       "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "description": "ARTIFACT_LIMIT_EXCEEDED for a budget answer",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "budget_unavailable"
+                      ],
+                      "description": "budget_unavailable: the budget of Design pushes and checks could not be read: try again"
+                    },
+                    "retryAfterSeconds": {
+                      "minimum": 1,
+                      "description": "Try again after this many seconds",
+                      "type": "integer"
                     }
                   },
                   "required": [

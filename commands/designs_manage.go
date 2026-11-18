@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/exitcodes"
@@ -18,9 +19,10 @@ const (
 )
 
 func newDesignAssetsCmd(cli *CLI) *cobra.Command {
+	var pathFlag string
 	cmd := &cobra.Command{Use: "assets", Short: "Manage a Design's assets"}
-	cmd.AddCommand(&cobra.Command{
-		Use:   "add <file>",
+	add := &cobra.Command{
+		Use:   "add <file> [--path P]",
 		Short: "Admit a binary asset to the Design in the current folder",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -40,6 +42,25 @@ func newDesignAssetsCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
+			assetPath := pathFlag
+			if !cmd.Flags().Changed("path") {
+				dir, err := os.Getwd()
+				if err != nil {
+					return designError(cli, err)
+				}
+				filename, err := filepath.Abs(args[0])
+				if err != nil {
+					return designError(cli, err)
+				}
+				relative, err := filepath.Rel(dir, filename)
+				if err != nil || !filepath.IsLocal(relative) {
+					relative = filepath.Base(filename)
+				}
+				assetPath = filepath.ToSlash(relative)
+			}
+			if err := validateDesignContentPath(assetPath); err != nil {
+				return designError(cli, err)
+			}
 
 			client, _, err := requireAPIClient(cli)
 			if err != nil {
@@ -49,9 +70,12 @@ func newDesignAssetsCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			asset, err := client.ArtifactAssetUpload(cmd.Context(), id, args[0], data, "", "")
+			asset, err := client.ArtifactAssetUpload(cmd.Context(), id, assetPath, data, "", "")
 			if err != nil {
 				return designError(cli, err)
+			}
+			if err := rememberDesignAsset(root, state, assetPath, asset.ArtifactAsset); err != nil {
+				return designError(cli, fmt.Errorf("asset %s was uploaded to Design %s, but local state could not be saved: %w", asset.Path, id, err))
 			}
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(asset)
@@ -59,7 +83,9 @@ func newDesignAssetsCmd(cli *CLI) *cobra.Command {
 			cli.Printer.PrintLine(fmt.Sprintf("Admitted asset %s (%s)", asset.Path, asset.ID))
 			return nil
 		},
-	})
+	}
+	add.Flags().StringVar(&pathFlag, "path", "", "Project-relative asset path")
+	cmd.AddCommand(add)
 	return cmd
 }
 

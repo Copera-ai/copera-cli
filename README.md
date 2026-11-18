@@ -309,7 +309,7 @@ copera designs list --scope shared --search "launch"
 copera designs get <id>
 copera designs open <id|url>
 copera designs versions <id>
-copera designs log <id|url>
+copera designs log <id|url> [--json]
 copera designs guide [--kind K]
 copera designs init <dir> --kind K [--runtime static|react] [--system NAME_OR_ID]
 copera designs pull <id|url> [dir] [--version N]
@@ -318,7 +318,7 @@ copera designs diff [dir]
 copera designs check [dir]
 copera designs push [dir] -m SUMMARY [--wait] [--no-check] [--force]
 copera designs screenshot [dir|id] [--page P] [--viewport W] -o FILE
-copera designs assets add <file>
+copera designs assets add <file> [--path P]
 copera designs export <id> -o FILE.zip
 copera designs import FILE.zip [--workspace W]
 copera designs rename <id> <title>
@@ -334,6 +334,23 @@ copera designs handoff <id> --out ./my-app
 With `import --workspace`, the CLI verifies that the active token belongs to
 the named workspace. Select a workspace's token with `--profile`.
 `screenshot --viewport` selects a width already rendered by the build.
+
+`init --kind` accepts product kinds (`landing_page`, `web_app`, `deck`,
+`report`, `dashboard`) and API kinds such as `website` and `presentation`.
+When the guide offers a template for the selected kind and runtime, `init`
+writes the template files and uses its project settings.
+
+`check` uses multipart for local binaries that still need uploading and
+JSON otherwise. On the first `push`, the CLI creates the Design, uploads
+binaries in order, and saves the text and assets together as a version.
+Each upload honors `Retry-After` on HTTP 503, with up to five attempts.
+If the first push stops partway through, run it again to continue from the
+saved Design ID and uploads.
+Uploads keep their project-relative paths. Use `assets add --path` to choose
+the asset's path explicitly. Copera refuses path collisions.
+
+`log` shows the version number, date, origin, author kind, tool, and change
+summary in the table and in JSON.
 
 `copera designs handoff` pulls everything a coding agent (or you) needs to
 build the artifact as a real app into one folder:

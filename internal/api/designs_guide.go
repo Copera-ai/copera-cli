@@ -9,11 +9,20 @@ import (
 
 // ArtifactGuide is Copera's authoring guide and its machine-readable facts.
 type ArtifactGuide struct {
-	Version  int             `json:"version"`
-	Kind     string          `json:"kind"`
-	Runtime  string          `json:"runtime"`
-	Markdown string          `json:"markdown"`
-	Facts    json.RawMessage `json:"facts"`
+	Version  int                    `json:"version"`
+	Kind     string                 `json:"kind"`
+	Runtime  string                 `json:"runtime"`
+	Markdown string                 `json:"markdown"`
+	Facts    json.RawMessage        `json:"facts"`
+	Template *ArtifactGuideTemplate `json:"template,omitempty"`
+}
+
+// ArtifactGuideTemplate is the optional starting project for the resolved Design kind.
+type ArtifactGuideTemplate struct {
+	ID      string                  `json:"id"`
+	Subject string                  `json:"subject"`
+	Project ArtifactProjectSettings `json:"project"`
+	Files   []ArtifactContentFile   `json:"files"`
 }
 
 func (c *Client) ArtifactGuide(ctx context.Context, kind, runtime string) (*ArtifactGuide, error) {

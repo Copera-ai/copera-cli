@@ -51,6 +51,64 @@ func TestDesignInit(t *testing.T) {
 	assert.Equal(t, "# Authoring guide\n", readFile(t, filepath.Join(dir, ".copera", "guide", "README.md")))
 }
 
+func TestDesignInitWritesGuideTemplate(t *testing.T) {
+	const presentation = `{"aspectRatio":"16:9","slideCount":3}`
+	const capabilities = `[{"kind":"fullscreen"}]`
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "deck", r.URL.Query().Get("kind"))
+			assert.Equal(t, "static", r.URL.Query().Get("runtime"))
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(`{
+				"version":1,"kind":"presentation","runtime":"static_web","markdown":"# Guide\n","facts":{},
+				"template":{
+					"id":"deck-template","subject":"Sample deck",
+					"project":{"artifactKind":"presentation","runtime":"static_web","entrypoint":"slides/main.html",
+						"presentation":`+presentation+`,"capabilities":`+capabilities+`},
+					"files":[
+						{"path":"slides/main.html","mediaType":"text/html","content":"<h1>Sample deck</h1>\n"},
+						{"path":"shared/slides.css","mediaType":"text/css","content":"h1 { color: black; }\n"}
+					]
+				}
+			}`))
+		},
+		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+			var input struct {
+				Project json.RawMessage `json:"project"`
+			}
+			if assert.NoError(t, json.NewDecoder(r.Body).Decode(&input)) {
+				assert.JSONEq(t, `{"artifactKind":"presentation","runtime":"static_web","entrypoint":"slides/main.html",
+					"presentation":`+presentation+`,"capabilities":`+capabilities+`}`, string(input.Project))
+			}
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactCheckResult{OK: true})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	dir := filepath.Join(t.TempDir(), "deck")
+	res := testutil.RunCommand(t, []string{"designs", "init", dir, "--kind", "deck", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, res.Stderr)
+
+	var state struct {
+		ID           string          `json:"id"`
+		Kind         string          `json:"kind"`
+		Runtime      string          `json:"runtime"`
+		Entrypoint   string          `json:"entrypoint"`
+		Presentation json.RawMessage `json:"presentation"`
+		Capabilities json.RawMessage `json:"capabilities"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, filepath.Join(dir, ".copera", "design.json"))), &state))
+	assert.Empty(t, state.ID)
+	assert.Equal(t, "presentation", state.Kind)
+	assert.Equal(t, "static_web", state.Runtime)
+	assert.Equal(t, "slides/main.html", state.Entrypoint)
+	assert.JSONEq(t, presentation, string(state.Presentation))
+	assert.JSONEq(t, capabilities, string(state.Capabilities))
+	assert.Equal(t, "<h1>Sample deck</h1>\n", readFile(t, filepath.Join(dir, "slides", "main.html")))
+	assert.Equal(t, "h1 { color: black; }\n", readFile(t, filepath.Join(dir, "shared", "slides.css")))
+
+	res = testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, res.Stderr)
+}
+
 func designPullFixture(name, text string, revision int) api.Artifact {
 	vID := verID
 	if revision > 1 {

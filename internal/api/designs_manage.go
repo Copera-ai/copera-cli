@@ -6,9 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"path/filepath"
+	"time"
 )
 
 // ArtifactArchive is a signed link to a portable archive of a version.
@@ -26,6 +29,7 @@ type ArtifactUploadedAsset struct {
 }
 
 type artifactAssetMetadata struct {
+	Path                  string `json:"path"`
 	ExpectedContentDigest string `json:"expectedContentDigest"`
 	Usage                 string `json:"usage,omitempty"`
 	AltText               string `json:"altText,omitempty"`
@@ -93,9 +97,10 @@ func (c *Client) ArtifactImport(ctx context.Context, filename string, data []byt
 }
 
 // ArtifactAssetUpload admits a binary asset so a version can refer to it.
-func (c *Client) ArtifactAssetUpload(ctx context.Context, artifactID, filename string, data []byte, usage, altText string) (*ArtifactUploadedAsset, error) {
+func (c *Client) ArtifactAssetUpload(ctx context.Context, artifactID, assetPath string, data []byte, usage, altText string) (*ArtifactUploadedAsset, error) {
 	digest := sha256.Sum256(data)
 	metadata, err := json.Marshal(artifactAssetMetadata{
+		Path:                  assetPath,
 		ExpectedContentDigest: hex.EncodeToString(digest[:]),
 		Usage:                 usage,
 		AltText:               altText,
@@ -103,15 +108,27 @@ func (c *Client) ArtifactAssetUpload(ctx context.Context, artifactID, filename s
 	if err != nil {
 		return nil, err
 	}
-	body, err := c.uploadMultipart(ctx, artifactPath(artifactID)+"/assets", filepath.Base(filename), http.DetectContentType(data), bytes.NewReader(data), metadata)
-	if err != nil {
-		return nil, err
+	mediaType := http.DetectContentType(data)
+	for attempt := 1; ; attempt++ {
+		body, err := c.uploadMultipart(ctx, artifactPath(artifactID)+"/assets", path.Base(assetPath), mediaType, bytes.NewReader(data), metadata)
+		if err == nil {
+			var result ArtifactUploadedAsset
+			if err := json.Unmarshal(body, &result); err != nil {
+				return nil, fmt.Errorf("api: decode response: %w", err)
+			}
+			return &result, nil
+		}
+		var apiErr *APIError
+		if attempt == 5 || !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable {
+			return nil, err
+		}
+		delay := time.Duration(min(max(apiErr.RetryAfterSeconds, 0), 1<<31-1)) * time.Second
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
 	}
-	var result ArtifactUploadedAsset
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("api: decode response: %w", err)
-	}
-	return &result, nil
 }
 
 // ArtifactRename updates a Design's title.

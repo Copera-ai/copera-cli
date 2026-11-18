@@ -34,7 +34,7 @@ func newDesignCheckCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			return printDesignBuild(cli, report)
+			return printDesignBuild(cli, report, "")
 		},
 	}
 }
@@ -67,6 +67,8 @@ func designProject(state *designState) api.ArtifactProjectSettings {
 		Runtime:      state.Runtime,
 		Entrypoint:   state.Entrypoint,
 		Dependencies: state.Dependencies,
+		Presentation: state.Presentation,
+		Capabilities: state.Capabilities,
 	}
 }
 
@@ -126,11 +128,46 @@ func checkDesign(ctx context.Context, client *api.Client, root *os.Root, state *
 		input.Project = &settings
 	}
 	manifest := designManifestForFiles(state, files)
-	if state.ID != "" && (force || len(manifest.Assets) != len(state.Manifest.Assets) || len(manifest.Documents) != len(state.Manifest.Documents)) {
+	pinned := make(map[string]bool, len(manifest.Assets))
+	manifest.Assets = slices.DeleteFunc(manifest.Assets, func(asset api.ArtifactAsset) bool {
+		name := designLocalAssetPath(asset.Path, state.AssetPaths)
+		file := files[name]
+		if !file.Binary {
+			return false
+		}
+		// An updated file must replace the old pin in the dry run.
+		if asset.ContentDigest != sha256Hex(file.Data) {
+			return true
+		}
+		pinned[name] = true
+		return false
+	})
+	manifestChanged := force || len(manifest.Assets) != len(state.Manifest.Assets) || len(manifest.Documents) != len(state.Manifest.Documents)
+	var binaries []api.ArtifactCheckFile
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		file := files[name]
+		if !file.Binary || pinned[name] {
+			continue
+		}
+		if asset := state.PendingAssets[name]; state.ID != "" && asset.matches(sha256Hex(file.Data)) {
+			manifest.Assets = append(manifest.Assets, asset.ArtifactAsset)
+			manifestChanged = true
+			continue
+		}
+		binaries = append(binaries, api.ArtifactCheckFile{Path: name, MediaType: file.MediaType, Data: file.Data})
+	}
+	if state.ID != "" && manifestChanged {
+		// Unlike push, check treats source files outside the folder as removed.
+		shared := &manifest.SharedDesign
+		for _, name := range []*string{&shared.GuidancePath, &shared.TokensPath, &shared.ComponentsPath, &shared.AssetsPath} {
+			if _, exists := files[*name]; !exists {
+				*name = ""
+			}
+		}
 		input.AuthoringManifest = &manifest
 	}
 
-	result, err := client.ArtifactCheck(ctx, input)
+	result, err := client.ArtifactCheck(ctx, input, binaries...)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +206,7 @@ func saveDesignShot(root *os.Root, page string, width int, data []byte) (string,
 	return name, nil
 }
 
-func printDesignBuild(cli *CLI, report *designBuildReport) error {
+func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion string) error {
 	if cli.Printer.IsJSON() {
 		if err := cli.Printer.PrintJSON(report); err != nil {
 			return err
@@ -199,7 +236,7 @@ func printDesignBuild(cli *CLI, report *designBuildReport) error {
 		if report.FailureCode != "" {
 			message += " (" + report.FailureCode + ")"
 		}
-		cli.Printer.PrintError("build_failed", message, "", false)
+		cli.Printer.PrintError("build_failed", message, failureSuggestion, false)
 		return exitcodes.New(exitcodes.Error, errors.New(message))
 	}
 	return nil

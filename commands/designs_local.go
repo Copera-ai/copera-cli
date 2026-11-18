@@ -57,7 +57,21 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: "index.html"}
-			if guide.Runtime == "vite_react" {
+			if template := guide.Template; template != nil {
+				project := template.Project
+				state.Kind, state.Runtime, state.Entrypoint = project.Kind, project.Runtime, project.Entrypoint
+				state.Presentation, state.Capabilities = project.Presentation, project.Capabilities
+				paths := make(designPaths)
+				for _, file := range template.Files {
+					if err := validateDesignContentPath(file.Path); err != nil {
+						return designError(cli, err)
+					}
+					if err := paths.add(file.Path, false); err != nil {
+						return designError(cli, err)
+					}
+				}
+			}
+			if state.Runtime == "vite_react" {
 				if state.Dependencies, err = designRequiredPackages(guide.Facts); err != nil {
 					return designError(cli, err)
 				}
@@ -74,6 +88,13 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			defer func() { _ = root.Close() }()
+			if guide.Template != nil {
+				for _, file := range guide.Template.Files {
+					if err := writeDesignFile(root, file.Path, []byte(file.Content)); err != nil {
+						return designError(cli, err)
+					}
+				}
+			}
 			if err := writeDesignGuide(root, guide); err != nil {
 				return designError(cli, err)
 			}

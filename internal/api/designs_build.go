@@ -1,18 +1,41 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strconv"
 	"time"
 )
 
 // ArtifactProjectSettings describes the source configuration a check or push may set.
 type ArtifactProjectSettings struct {
-	Kind         string               `json:"artifactKind,omitempty"`
-	Runtime      string               `json:"runtime,omitempty"`
-	Entrypoint   string               `json:"entrypoint,omitempty"`
-	Dependencies []ArtifactDependency `json:"dependencies,omitempty"`
+	Kind         string                      `json:"artifactKind,omitempty"`
+	Runtime      string                      `json:"runtime,omitempty"`
+	Entrypoint   string                      `json:"entrypoint,omitempty"`
+	Dependencies []ArtifactDependency        `json:"dependencies,omitempty"`
+	Presentation *ArtifactPresentation       `json:"presentation,omitempty"`
+	Capabilities []ArtifactProjectCapability `json:"capabilities,omitempty"`
+}
+
+type ArtifactPresentation struct {
+	AspectRatio string `json:"aspectRatio"`
+	SlideCount  int    `json:"slideCount,omitempty"`
+}
+
+type ArtifactProjectCapability struct {
+	Kind          string    `json:"kind"`
+	Origins       *[]string `json:"origins,omitempty"`
+	Scopes        *[]string `json:"scopes,omitempty"`
+	Namespace     *string   `json:"namespace,omitempty"`
+	SchemaVersion int       `json:"schemaVersion,omitempty"`
+	Migration     *struct {
+		Strategy string `json:"strategy"`
+	} `json:"migration,omitempty"`
 }
 
 type ArtifactCheckInput struct {
@@ -22,6 +45,13 @@ type ArtifactCheckInput struct {
 	Files              []ArtifactContentFile    `json:"files"`
 	Project            *ArtifactProjectSettings `json:"project,omitempty"`
 	AuthoringManifest  *ArtifactManifest        `json:"authoringManifest,omitempty"`
+}
+
+// ArtifactCheckFile is a binary used only by the dry-run build.
+type ArtifactCheckFile struct {
+	Path      string
+	MediaType string
+	Data      []byte
 }
 
 type ArtifactWarning struct {
@@ -111,6 +141,7 @@ type ArtifactPushResult struct {
 
 type ArtifactCreateInput struct {
 	Title          string `json:"title"`
+	ChangeSummary  string `json:"changeSummary,omitempty"`
 	Tool           string `json:"tool"`
 	IdempotencyKey string `json:"idempotencyKey"`
 	DesignSystemID string `json:"designSystemId,omitempty"`
@@ -126,15 +157,55 @@ type ArtifactCreateResult struct {
 	Warnings []ArtifactWarning `json:"warnings"`
 }
 
-func (c *Client) ArtifactCheck(ctx context.Context, input ArtifactCheckInput) (*ArtifactCheckResult, error) {
+func (c *Client) ArtifactCheck(ctx context.Context, input ArtifactCheckInput, files ...ArtifactCheckFile) (*ArtifactCheckResult, error) {
 	// A dry run includes a render and can outlast the default HTTP timeout.
 	client := *c
 	httpClient := *c.httpClient
 	httpClient.Timeout = max(httpClient.Timeout, 100*time.Second)
 	client.httpClient = &httpClient
 	var result ArtifactCheckResult
-	err := client.do(ctx, http.MethodPost, "/artifacts/check", input, &result)
+	const path = "/artifacts/check"
+	if len(files) == 0 {
+		err := client.do(ctx, http.MethodPost, path, input, &result)
+		return &result, err
+	}
+	payload, err := artifactCheckForm(input, files)
+	if err != nil {
+		return nil, fmt.Errorf("api: build multipart Design check: %w", err)
+	}
+	err = client.do(ctx, http.MethodPost, path, payload, &result)
 	return &result, err
+}
+
+func artifactCheckForm(input ArtifactCheckInput, files []ArtifactCheckFile) (multipartRequest, error) {
+	var payload bytes.Buffer
+	writer := multipart.NewWriter(&payload)
+	part, err := writer.CreatePart(textproto.MIMEHeader{
+		"Content-Disposition": {`form-data; name="project"`},
+		"Content-Type":        {"application/json"},
+	})
+	if err != nil {
+		return multipartRequest{}, err
+	}
+	if err := json.NewEncoder(part).Encode(input); err != nil {
+		return multipartRequest{}, err
+	}
+	for _, file := range files {
+		part, err := writer.CreatePart(textproto.MIMEHeader{
+			"Content-Disposition": {multipart.FileContentDisposition("file", file.Path)},
+			"Content-Type":        {file.MediaType},
+		})
+		if err != nil {
+			return multipartRequest{}, err
+		}
+		if _, err := part.Write(file.Data); err != nil {
+			return multipartRequest{}, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return multipartRequest{}, err
+	}
+	return multipartRequest{data: payload.Bytes(), contentType: writer.FormDataContentType()}, nil
 }
 
 func (c *Client) ArtifactBuild(ctx context.Context, artifactID, versionID string, wait int) (*ArtifactBuildResult, error) {

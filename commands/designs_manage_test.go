@@ -39,6 +39,7 @@ func TestDesignsManage(t *testing.T) {
 		"POST " + designPath + "/assets": func(w http.ResponseWriter, r *http.Request) {
 			metadata := assertDesignUpload(t, r, "hero.png", assetBytes)
 			assert.Equal(t, digestOf(assetBytes), metadata["expectedContentDigest"])
+			assert.Equal(t, "assets/hero.png", metadata["path"])
 			testutil.RespondJSON(w, http.StatusOK, map[string]string{
 				"id": "dddddddddddddddddddddddd", "path": "assets/hero.png",
 				"mediaType": "image/png", "contentDigest": digestOf(assetBytes), "usage": "image",
@@ -110,7 +111,7 @@ func TestDesignsManage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"assets add", []string{"assets", "add", "hero.png"}, "assets/hero.png"},
+		{"assets add", []string{"assets", "add", "hero.png", "--path", "assets/hero.png"}, "assets/hero.png"},
 		{"export", []string{"export", artID, "-o", "exported.zip"}, "exported.zip"},
 		{"import", []string{"import", "launch.zip", "--workspace", "launch"}, artID},
 		{"rename", []string{"rename", artID, "New title"}, "New title"},

@@ -131,7 +131,36 @@ then call `update-column-content --column <column-id>`.
 
 ---
 
-## Building an Artifact as a Real App
+## Designs
+
+Use a token with Designs permission for authoring. `artifacts` remains an
+alias for `designs`.
+
+```bash
+copera designs init ./design --kind landing_page --runtime static
+copera designs check ./design --json
+copera designs push ./design -m "Add first screen" --json
+copera designs log <design-id> --json
+# From the Design folder after it has a remote Design:
+copera designs assets add <file> [--path P]
+```
+
+`init` accepts the product kinds `landing_page`, `web_app`, `deck`, `report`
+and `dashboard`, and the API's kind names. When the guide returns a template,
+`init` writes its files and applies its project settings. `check` sends new
+binaries with the text in a multipart dry run and uses JSON otherwise.
+
+The first `push` saves the Design ID as soon as it can, uploads local binaries
+sequentially, then pushes the text and assets as one version. Asset uploads
+honor `Retry-After` on HTTP 503, with up to five attempts. If a push fails
+after creation, its error reports the ID and uploaded paths. Run the same
+command again to continue. Uploads use project-relative paths. `--path`
+sets the asset path explicitly, and Copera refuses collisions.
+
+`log --json` returns the number, date, origin, author kind, tool, and change
+summary for each version.
+
+### Building an Artifact as a Real App
 
 To build a Copera artifact (a prototype made of pages) as a real app, pull its
 hand-off pack into an empty folder and follow `HANDOFF.md`:

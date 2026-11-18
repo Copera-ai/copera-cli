@@ -8,7 +8,6 @@ import (
 	"maps"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -47,7 +46,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 			if force && state.ID != "" {
 				head, err := client.ArtifactGet(ctx, state.ID)
 				if err != nil {
-					return designError(cli, err)
+					return designPushError(cli, err, designPushProgress(state))
 				}
 				base = designHeadFiles(&head.CurrentVersion, state.AssetPaths)
 				state.BaseVersionID, state.HeadRevision = head.CurrentVersion.ID, head.HeadRevision
@@ -55,33 +54,49 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 			if !noCheck {
 				report, err := checkDesign(ctx, client, root, state, files, force)
 				if err != nil {
-					return designError(cli, err)
+					return designPushError(cli, err, designPushProgress(state))
 				}
 				if report.State != "ready" {
-					return printDesignBuild(cli, report)
+					return printDesignBuild(cli, report, designPushProgress(state))
 				}
 			}
 			var pushed *api.ArtifactPushResult
-			if state.ID == "" {
+			needsPush := state.ID != ""
+			if !needsPush {
 				pushed, err = createLocalDesign(ctx, client, root, state, files, summary)
-			} else {
-				pushed, err = pushDesignFiles(ctx, cli, client, state, base, files, summary, force, wait)
+				if err == nil {
+					state.ID, state.BaseVersionID, state.HeadRevision = pushed.ArtifactID, pushed.Version.ID, pushed.HeadRevision
+					state.BuildState = pushed.BuildState
+					state.FirstPushPending = true
+					err = writeDesignState(root, state)
+					text := maps.Clone(files)
+					maps.DeleteFunc(text, func(_ string, file designFile) bool { return file.Binary })
+					needsPush = len(text) != len(files)
+					if err == nil && needsPush {
+						err = saveDesignState(root, state, text)
+						base = state.Files
+					}
+				}
+			}
+			if err == nil && needsPush {
+				pushed, err = pushDesignFiles(ctx, cli, client, root, state, base, files, summary, force, wait)
 			}
 			if err != nil {
-				var apiErr *api.APIError
-				if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict && len(apiErr.ChangedPaths) > 0 {
-					cli.Printer.PrintError("version_conflict", apiErr.Error(), "Changed paths: "+strings.Join(apiErr.ChangedPaths, ", "), false)
-					return exitcodes.New(exitcodes.Conflict, err)
-				}
-				return designError(cli, err)
+				return designPushError(cli, err, designPushProgress(state))
 			}
 			state.ID, state.BaseVersionID, state.HeadRevision = pushed.ArtifactID, pushed.Version.ID, pushed.HeadRevision
 			state.BuildState = pushed.BuildState
+			progress := designPushProgress(state)
+			state.FirstPushPending, state.PendingAssets = false, nil
 			if err := saveDesignState(root, state, files); err != nil {
-				return designError(cli, fmt.Errorf("version %s was saved in Copera, but local state could not be saved: %w", pushed.Version.ID, err))
+				err = fmt.Errorf("version %s was saved in Copera, but local state could not be saved: %w", pushed.Version.ID, err)
+				if progress != "" {
+					err = fmt.Errorf("%s %w", progress, err)
+				}
+				return designError(cli, err)
 			}
 			if wait {
-				return waitForDesignBuild(ctx, cli, client, root, state)
+				return waitForDesignBuild(ctx, cli, client, root, state, progress)
 			}
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(pushed)
@@ -97,6 +112,39 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Push this folder over the current remote head")
 	_ = cmd.MarkFlagRequired("message")
 	return cmd
+}
+
+func designPushProgress(state *designState) string {
+	if !state.FirstPushPending {
+		return ""
+	}
+	paths := strings.Join(slices.Sorted(maps.Keys(state.PendingAssets)), ", ")
+	if paths == "" {
+		paths = "none"
+	}
+	return fmt.Sprintf("Design %s exists. Uploaded files: %s.", state.ID, paths)
+}
+
+func designPushError(cli *CLI, err error, progress string) error {
+	var apiErr *api.APIError
+	hasAPIError := errors.As(err, &apiErr)
+	if hasAPIError && apiErr.StatusCode == http.StatusConflict && len(apiErr.ChangedPaths) > 0 {
+		suggestion := "Changed paths: " + strings.Join(apiErr.ChangedPaths, ", ")
+		if progress != "" {
+			suggestion += ". " + progress
+		}
+		cli.Printer.PrintError("version_conflict", apiErr.Error(), suggestion, false)
+		return exitcodes.New(exitcodes.Conflict, err)
+	}
+	if progress != "" {
+		code := exitcodes.Error
+		if hasAPIError {
+			code = apiErr.ExitCode()
+		}
+		cli.Printer.PrintError("push_incomplete", err.Error(), progress, false)
+		return exitcodes.New(code, err)
+	}
+	return designError(cli, err)
 }
 
 func designHeadFiles(version *api.ArtifactVersion, aliases map[string]string) map[string]string {
@@ -115,13 +163,10 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 	if err != nil {
 		return nil, err
 	}
-	input := api.ArtifactCreateInput{Title: filepath.Base(dir), Tool: designTool(), DesignSystemID: state.DesignSystemID}
+	input := api.ArtifactCreateInput{Title: filepath.Base(dir), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID}
 	input.Project.ArtifactProjectSettings = designProject(state)
 	input.Project.SchemaVersion = 1
 	input.Project.Files = designTextFiles(files, nil)
-	if len(input.Project.Files) != len(files) {
-		return nil, fmt.Errorf("a first push needs text files only because binary uploads require a Design ID")
-	}
 	if len(input.Project.Files) == 0 {
 		return nil, fmt.Errorf("add source files before pushing the Design")
 	}
@@ -145,10 +190,14 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 	}, nil
 }
 
-func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, state *designState, base map[string]string, files map[string]designFile, summary string, force, wait bool) (*api.ArtifactPushResult, error) {
+func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, base map[string]string, files map[string]designFile, summary string, force, wait bool) (*api.ArtifactPushResult, error) {
+	textBase := base
+	if state.FirstPushPending {
+		textBase = nil
+	}
 	input := api.ArtifactPushInput{
 		BaseVersionID: state.BaseVersionID, ExpectedHeadRevision: state.HeadRevision,
-		Tool: designTool(), ChangeSummary: summary, Files: designTextFiles(files, base),
+		Tool: designTool(), ChangeSummary: summary, Files: designTextFiles(files, textBase),
 	}
 	for _, name := range slices.Sorted(maps.Keys(base)) {
 		if _, found := files[name]; found {
@@ -160,7 +209,7 @@ func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, state *d
 		}
 		input.RemovedPaths = append(input.RemovedPaths, canonical)
 	}
-	manifest, aliases, err := pushDesignAssets(ctx, cli, client, state, files)
+	manifest, aliases, err := pushDesignAssets(ctx, client, root, state, files)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +241,7 @@ func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, state *d
 	return result, nil
 }
 
-func pushDesignAssets(ctx context.Context, cli *CLI, client *api.Client, state *designState, files map[string]designFile) (api.ArtifactManifest, map[string]string, error) {
+func pushDesignAssets(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile) (api.ArtifactManifest, map[string]string, error) {
 	manifest := designManifestForFiles(state, files)
 	assets := make(map[string]api.ArtifactAsset, len(manifest.Assets))
 	for _, asset := range manifest.Assets {
@@ -218,20 +267,22 @@ func pushDesignAssets(ctx context.Context, cli *CLI, client *api.Client, state *
 			return manifest, nil, err
 		}
 		asset := assets[canonical]
-		if asset.ID == "" || asset.ContentDigest != sha256Hex(file.Data) {
-			uploaded, err := client.ArtifactAssetUpload(ctx, state.ID, path.Base(name), file.Data, asset.Usage, asset.AltText)
-			if err != nil {
-				return manifest, nil, err
-			}
-			if err := validateDesignContentPath(uploaded.Path); err != nil {
-				return manifest, nil, err
+		digest := sha256Hex(file.Data)
+		if asset.ID == "" || asset.ContentDigest != digest {
+			pending := state.PendingAssets[name]
+			if !pending.matches(digest) {
+				uploaded, err := client.ArtifactAssetUpload(ctx, state.ID, name, file.Data, asset.Usage, asset.AltText)
+				if err != nil {
+					return manifest, nil, fmt.Errorf("upload %s: %w", name, err)
+				}
+				if err := rememberDesignAsset(root, state, name, uploaded.ArtifactAsset); err != nil {
+					return manifest, nil, err
+				}
+				pending = state.PendingAssets[name]
 			}
 			manifest.Assets = slices.DeleteFunc(manifest.Assets, func(a api.ArtifactAsset) bool { return a.Path == canonical })
-			manifest.Assets = append(manifest.Assets, uploaded.ArtifactAsset)
-			canonical = uploaded.Path
-			if canonical != name {
-				cli.Printer.Info("Asset %s is available in the Design at %s", name, canonical)
-			}
+			manifest.Assets = append(manifest.Assets, pending.ArtifactAsset)
+			canonical = name
 		}
 		if other, exists := seenAssets[canonical]; exists {
 			return manifest, nil, fmt.Errorf("assets %q and %q share the server path %q", other, name, canonical)
@@ -248,6 +299,32 @@ func pushDesignAssets(ctx context.Context, cli *CLI, client *api.Client, state *
 		}
 	}
 	return manifest, aliases, nil
+}
+
+func rememberDesignAsset(root *os.Root, state *designState, name string, asset api.ArtifactAsset) error {
+	if asset.Path != name {
+		return fmt.Errorf("asset upload returned path %q for %q", asset.Path, name)
+	}
+	record := pendingDesignAsset{ArtifactAsset: asset, UploadedAt: time.Now()}
+	if previous := state.PendingAssets[name]; previous.ID == asset.ID {
+		record.UploadedAt = previous.UploadedAt
+	}
+	if state.PendingAssets == nil {
+		state.PendingAssets = make(map[string]pendingDesignAsset)
+	}
+	state.PendingAssets[name] = record
+	// Keep the saved base intact if --force read a newer head for this push.
+	saved, err := loadDesignState(root)
+	if err != nil {
+		return err
+	}
+	if saved.PendingAssets == nil {
+		saved.PendingAssets = state.PendingAssets
+	} else {
+		saved.PendingAssets[name] = record
+		state.PendingAssets = saved.PendingAssets
+	}
+	return writeDesignState(root, saved)
 }
 
 func designPushKey(prefix string, input interface{}) (string, error) {
@@ -296,7 +373,7 @@ func sendDesignPush(ctx context.Context, cli *CLI, client *api.Client, id string
 	}
 }
 
-func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState) error {
+func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, progress string) error {
 	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
 	for {
 		build, err := client.ArtifactBuild(ctx, state.ID, state.BaseVersionID, wait)
@@ -306,13 +383,13 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 				wait = 0
 				continue
 			}
-			return designError(cli, err)
+			return designPushError(cli, err, progress)
 		}
 		if !build.Done {
 			if wait == 0 {
 				select {
 				case <-ctx.Done():
-					return designError(cli, ctx.Err())
+					return designPushError(cli, ctx.Err(), progress)
 				case <-time.After(time.Second):
 				}
 			}
@@ -325,14 +402,14 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 		for _, shot := range build.Screenshots {
 			data, err := downloadHandoffAsset(ctx, client, shot.URL)
 			if err != nil {
-				return designError(cli, fmt.Errorf("download Design screenshot: %w", err))
+				return designPushError(cli, fmt.Errorf("download Design screenshot: %w", err), progress)
 			}
 			name, err := saveDesignShot(root, shot.PageID, shot.Width, data)
 			if err != nil {
-				return designError(cli, err)
+				return designPushError(cli, err, progress)
 			}
 			report.Screenshots = append(report.Screenshots, name)
 		}
-		return printDesignBuild(cli, report)
+		return printDesignBuild(cli, report, progress)
 	}
 }

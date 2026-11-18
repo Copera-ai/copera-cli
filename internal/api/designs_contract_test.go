@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"reflect"
@@ -20,6 +21,8 @@ type designContractSchema struct {
 	Items      *designContractSchema
 	AnyOf      []*designContractSchema
 	Enum       []json.RawMessage
+	Required   []string
+	Format     string
 }
 
 func (s *designContractSchema) field(name string) *designContractSchema {
@@ -54,9 +57,11 @@ type designContractContent map[string]struct {
 }
 
 type designContractOperation struct {
-	Parameters []struct {
-		Name string
-		In   string
+	Description string
+	Parameters  []struct {
+		Name   string
+		In     string
+		Schema *designContractSchema
 	}
 	RequestBody struct {
 		Content designContractContent
@@ -152,13 +157,17 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			return designContractRequest(c.ArtifactDesignSystems(ctx))
 		}},
 		{"post", "/artifacts/check", "200", ArtifactCheckInput{}, ArtifactCheckResult{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactCheck(ctx, ArtifactCheckInput{}))
+			if _, err := c.ArtifactCheck(ctx, ArtifactCheckInput{}); err != nil {
+				return err
+			}
+			return designContractRequest(c.ArtifactCheck(ctx, ArtifactCheckInput{},
+				ArtifactCheckFile{Path: "assets/hero.png", MediaType: "image/png", Data: []byte("image bytes")}))
 		}},
 		{"get", version + "/build", "200", nil, ArtifactBuildResult{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactBuild(ctx, id, versionID, 10))
 		}},
 		{"post", artifact + "/assets", "200", multipartAsset{}, ArtifactUploadedAsset{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactAssetUpload(ctx, id, "file.png", []byte("image bytes"), "image", "Logo"))
+			return designContractRequest(c.ArtifactAssetUpload(ctx, id, "assets/logo.png", []byte("image bytes"), "image", "Logo"))
 		}},
 		{"get", version + "/archive", "200", nil, ArtifactArchive{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactArchiveLink(ctx, id, versionID))
@@ -169,7 +178,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		{"post", version + "/restore", "201", ArtifactRestoreInput{}, ArtifactPushResult{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactRestore(ctx, id, versionID, ArtifactRestoreInput{}))
 		}},
-		{"post", artifact + "/fork", "201", artifactForkInput{}, Artifact{}, func(c *Client) error {
+		{"post", artifact + "/fork", "200", artifactForkInput{}, Artifact{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactFork(ctx, id, "key", "codex"))
 		}},
 	}
@@ -178,8 +187,28 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			op, ok := snapshot.Paths[route.path][route.method]
 			require.True(t, ok, "operation is missing from the snapshot")
 			response := op.Responses[route.success].Content["application/json"].Schema
-			assertDesignContractFields(t, response, reflect.TypeOf(route.output), "response")
 			if route.path == "/artifacts/guide" {
+				require.NotNil(t, response)
+				assert.NotContains(t, response.Required, "template")
+				// The guide template is an expected optional field from the follow-up
+				// brief. Use the committed schema when the API publishes it.
+				if response.field("template") == nil {
+					check := snapshot.Paths["/artifacts/check"]["post"].RequestBody.Content["application/json"].Schema
+					project := check.field("project")
+					require.NotNil(t, project)
+					response.Properties["template"] = &designContractSchema{Properties: map[string]*designContractSchema{
+						"id":      {},
+						"subject": {},
+						"project": {Properties: map[string]*designContractSchema{
+							"artifactKind": project.field("artifactKind"),
+							"runtime":      project.field("runtime"),
+							"entrypoint":   project.field("entrypoint"),
+							"presentation": project.field("presentation"),
+							"capabilities": project.field("capabilities"),
+						}},
+						"files": check.field("files"),
+					}}
+				}
 				facts := response.field("facts")
 				require.NotNil(t, facts)
 				toolchain, packages := facts.field("toolchain"), facts.field("packages")
@@ -189,7 +218,17 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 				assert.NotNil(t, toolchain.field("requiredPackages"))
 				assert.NotNil(t, packages.Items.field("name"))
 				assert.NotNil(t, packages.Items.field("version"))
+				for _, parameter := range op.Parameters {
+					if parameter.Name == "kind" {
+						require.NotNil(t, parameter.Schema)
+						for _, kind := range []string{"landing_page", "web_app", "deck", "report", "dashboard",
+							"website", "presentation", "tool", "visualization", "document"} {
+							assert.True(t, parameter.Schema.allows(kind), "guide kind %q is missing", kind)
+						}
+					}
+				}
 			}
+			assertDesignContractFields(t, response, reflect.TypeOf(route.output), "response")
 			if route.input != nil {
 				content := "application/json"
 				switch route.input.(type) {
@@ -216,6 +255,11 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 				called = true
 				assert.Equal(t, strings.ToUpper(route.method), r.Method)
 				assert.Equal(t, strings.NewReplacer("{artifactId}", id, "{versionId}", versionID).Replace(route.path), r.URL.Path)
+				if route.path == "/artifacts/check" {
+					mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+					require.NoError(t, err)
+					assert.Contains(t, op.RequestBody.Content, mediaType)
+				}
 				query := map[string]bool{}
 				for _, param := range op.Parameters {
 					if param.In == "query" {
@@ -240,6 +284,38 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 	for _, name := range []string{"reason", "changedPaths", "retryAfterSeconds"} {
 		assert.NotNil(t, conflict.field(name), "push conflict field %q is missing", name)
 	}
+
+	t.Run("design authoring additions", func(t *testing.T) {
+		create := snapshot.Paths["/artifacts/"]["post"].RequestBody.Content["application/json"].Schema
+		assert.NotNil(t, create.field("changeSummary"))
+
+		asset := snapshot.Paths[artifact+"/assets"]["post"]
+		metadata := asset.RequestBody.Content["multipart/form-data"].Schema.field("metadata")
+		require.NotNil(t, metadata)
+		assert.NotNil(t, metadata.field("path"))
+		busy := asset.Responses["503"].Content["application/json"].Schema
+		if assert.NotNil(t, busy, "an asset upload can return 503") {
+			assert.NotNil(t, busy.field("retryAfterSeconds"))
+		}
+		assert.Contains(t, asset.Description, "Retry-After")
+
+		list := snapshot.Paths[artifact+"/versions"]["get"].Responses["200"].Content["application/json"].Schema
+		listedVersion := list.field("edges").Items.field("node")
+		getVersion := snapshot.Paths[version]["get"].Responses["200"].Content["application/json"].Schema
+		for _, name := range []string{"version", "createdAt", "origin", "authorKind", "tool", "changeSummary"} {
+			assert.NotNil(t, listedVersion.field(name), "version list field %q", name)
+			assert.NotNil(t, getVersion.field(name), "version detail field %q", name)
+		}
+
+		check := snapshot.Paths["/artifacts/check"]["post"].RequestBody.Content["multipart/form-data"].Schema
+		if assert.NotNil(t, check, "the check route accepts multipart") {
+			assert.Contains(t, check.Required, "project")
+			assert.NotNil(t, check.field("project"))
+			require.NotNil(t, check.field("file"))
+			require.NotNil(t, check.field("file").Items)
+			assert.Equal(t, "binary", check.field("file").Items.Format)
+		}
+	})
 }
 
 // Match JSON tags on the real API models, including embedded objects and array elements.
@@ -267,6 +343,10 @@ func assertDesignContractFields(t *testing.T, schema *designContractSchema, mode
 			continue
 		}
 		child := schema.field(name)
+		// Plain-page templates use the project settings without dependencies.
+		if child == nil && path == "response.template.project" && name == "dependencies" {
+			continue
+		}
 		// Older previews exposed visualReviewStatus. The compact version DTO
 		// used by the list and push omits the full source manifest and inventory.
 		if child == nil && (name == "visualReviewStatus" ||

@@ -93,7 +93,10 @@ type ArtifactVersion struct {
 	AuthoringManifest ArtifactManifest  `json:"authoringManifest"`
 	Files             []ArtifactFileRef `json:"files"`
 	CreatedAt         time.Time         `json:"createdAt"`
+	Origin            *string           `json:"origin,omitempty"`
+	AuthorKind        *string           `json:"authorKind,omitempty"`
 	Tool              *string           `json:"tool,omitempty"`
+	ChangeSummary     *string           `json:"changeSummary,omitempty"`
 	Preview           *ArtifactPreview  `json:"preview,omitempty"`
 }
 

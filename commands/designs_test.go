@@ -43,7 +43,8 @@ func TestDesignsOpenAndLog(t *testing.T) {
 			}
 			testutil.RespondJSON(w, http.StatusOK, map[string]any{
 				"edges": []map[string]any{{"node": map[string]any{
-					"version": 4, "createdAt": "2026-10-02T10:00:00Z", "tool": "claude_code",
+					"version": 4, "createdAt": "2026-10-02T10:00:00Z", "origin": "public_api",
+					"authorKind": "user", "tool": "claude_code", "changeSummary": "Add contact page",
 				}}},
 				"hasNextPage": true, "endCursor": "next",
 			})
@@ -57,9 +58,15 @@ func TestDesignsOpenAndLog(t *testing.T) {
 	log := testutil.RunCommand(t, []string{"designs", "log", artID, "--json"}, "")
 	require.Equal(t, 0, log.ExitCode, log.Stderr)
 	assert.JSONEq(t, `[
-		{"version":4,"date":"2026-10-02T10:00:00Z","origin":null,"tool":"claude_code","changeSummary":null},
-		{"version":3,"date":"2026-10-01T10:00:00Z","origin":null,"tool":null,"changeSummary":null}
+		{"version":4,"date":"2026-10-02T10:00:00Z","origin":"public_api","authorKind":"user","tool":"claude_code","changeSummary":"Add contact page"},
+		{"version":3,"date":"2026-10-01T10:00:00Z","origin":null,"authorKind":null,"tool":null,"changeSummary":null}
 	]`, log.Stdout)
+
+	table := testutil.RunCommand(t, []string{"designs", "log", artID, "--output", "table"}, "")
+	require.Equal(t, 0, table.ExitCode, table.Stderr)
+	for _, value := range []string{"VERSION", "DATE", "ORIGIN", "AUTHOR", "TOOL", "CHANGE SUMMARY", "4", "2026-10-02T10:00:00Z", "public_api", "user", "claude_code", "Add contact page"} {
+		assert.Contains(t, table.Stdout, value)
+	}
 }
 
 func TestDesignsGuide(t *testing.T) {
