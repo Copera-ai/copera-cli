@@ -91,6 +91,8 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		artifact  = "/artifacts/{artifactId}"
 		version   = artifact + "/versions/{versionId}"
 	)
+	const commentID = "cccccccccccccccccccccccc"
+	includeEarlier := false
 	type multipartAsset struct {
 		File     string                `json:"file"`
 		Metadata artifactAssetMetadata `json:"metadata"`
@@ -182,6 +184,25 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		{"post", artifact + "/fork", "200", artifactForkInput{}, Artifact{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactFork(ctx, id, "key", "codex"))
 		}},
+		{"get", artifact + "/comments", "200", nil, ArtifactCommentList{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactComments(ctx, id, ArtifactCommentListOpts{
+				VersionID: versionID, PageID: "cover", After: "cursor", Limit: 10, OpenFromEarlierVersions: &includeEarlier,
+			}))
+		}},
+		{"post", artifact + "/comments/{commentId}/replies", "201", ArtifactCommentReplyInput{}, ArtifactCommentReplyResult{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactCommentReply(ctx, id, commentID, ArtifactCommentReplyInput{Body: "Done", IdempotencyKey: "key"}))
+		}},
+		{"post", artifact + "/comments/{commentId}/resolve", "200", struct{}{}, ArtifactCommentResolveResult{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactCommentResolve(ctx, id, commentID))
+		}},
+		{"get", artifact + "/comments/watch", "200", nil, ArtifactCommentPoll{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactCommentWatch(ctx, id, "cursor"))
+		}},
+		{"post", artifact + "/authoring-requests", "202", ArtifactAskInput{}, ArtifactAskResult{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactAsk(ctx, id, ArtifactAskInput{
+				BaseVersionID: versionID, Intent: "Make the heading shorter", IdempotencyKey: "key", ConfirmAICredits: true, PageID: "cover",
+			}))
+		}},
 	}
 	for _, route := range routes {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
@@ -235,7 +256,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			client.httpClient.Transport = designContractTransport(func(r *http.Request) (*http.Response, error) {
 				called = true
 				assert.Equal(t, strings.ToUpper(route.method), r.Method)
-				assert.Equal(t, strings.NewReplacer("{artifactId}", id, "{versionId}", versionID).Replace(route.path), r.URL.Path)
+				assert.Equal(t, strings.NewReplacer("{artifactId}", id, "{versionId}", versionID, "{commentId}", commentID).Replace(route.path), r.URL.Path)
 				if route.method == "post" && (route.path == "/artifacts/" || route.path == "/artifacts/check") {
 					mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 					require.NoError(t, err)
