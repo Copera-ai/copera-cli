@@ -341,13 +341,13 @@ When the guide offers a template for the selected kind and runtime, `init`
 writes the template files and uses its project settings.
 
 `check` uses multipart for local binaries that still need uploading and
-JSON otherwise. On the first `push`, the CLI creates the Design, uploads
-binaries in order, and saves the text and assets together as a version.
-Each upload honors `Retry-After` on HTTP 503, with up to five attempts.
-If the first push stops partway through, run it again to continue from the
-saved Design ID and uploads.
-Uploads keep their project-relative paths. Use `assets add --path` to choose
-the asset's path explicitly. Copera refuses path collisions.
+JSON otherwise. The first `push` creates the Design and saves text and
+binaries together in version 1. If Copera rejects the create, the CLI
+reports that no Design was created.
+On later pushes, editing an image in place uploads the new bytes at the same
+project-relative path. Earlier versions keep the previous image. Separate
+asset uploads honor `Retry-After` on HTTP 503, with up to five attempts.
+Use `assets add --path` to choose the asset's path explicitly.
 
 `log` shows the version number, date, origin, author kind, tool, and change
 summary in the table and in JSON.

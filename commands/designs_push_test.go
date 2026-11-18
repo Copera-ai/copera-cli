@@ -6,12 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/testutil"
@@ -210,128 +211,78 @@ func TestDesignsPush(t *testing.T) {
 }
 
 func TestDesignsFirstPushWithImages(t *testing.T) {
-	testDesignsFirstPush(t, false)
-}
-
-func TestDesignsFirstPushRetriesSecondImage(t *testing.T) {
-	testDesignsFirstPush(t, true)
-}
-
-func testDesignsFirstPush(t *testing.T, busy bool) {
-	t.Helper()
 	const (
 		hero    = "assets/hero.png"
 		logo    = "assets/logo.png"
 		png     = "\x89PNG\r\n\x1a\n"
 		html    = `<img src="assets/hero.png"><img src="assets/logo.png">`
 		summary = "Add first screen"
-		seed    = "shared/DESIGN.md"
 	)
 	dir := filepath.Join(t.TempDir(), "draft")
-	stateFile := filepath.Join(dir, ".copera", "design.json")
-	var mu sync.Mutex
-	var steps []string
-	var logoBusyAt time.Time
-	pushes := 0
+	var creates, followups atomic.Int32
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{
 		"GET /artifacts/guide": designGuideResponse,
 		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
 			testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
 		},
 		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			defer mu.Unlock()
-			steps = append(steps, "check")
-			if pushes == 0 {
-				assert.Contains(t, r.Header.Get("Content-Type"), "multipart/form-data")
-			} else {
-				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
-				var req api.ArtifactCheckInput
-				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req)) ||
-					!assert.NotNil(t, req.AuthoringManifest) ||
-					!assert.Empty(t, req.AuthoringManifest.SharedDesign.GuidancePath) {
-					testutil.RespondJSON(w, http.StatusBadRequest, map[string]string{"message": "manifest shared design file is missing"})
-					return
-				}
-				assert.Len(t, req.AuthoringManifest.Assets, 2)
-			}
+			assert.Contains(t, r.Header.Get("Content-Type"), "multipart/form-data")
 			testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		},
 		"POST /artifacts/": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			defer mu.Unlock()
-			steps = append(steps, "create")
-			var req struct {
-				ChangeSummary string `json:"changeSummary"`
-				Project       struct {
-					Files []api.ArtifactContentFile `json:"files"`
-				} `json:"project"`
+			creates.Add(1)
+			reader, err := r.MultipartReader()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				return
 			}
-			assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
-			assert.Equal(t, summary, req.ChangeSummary)
-			assert.NotEmpty(t, req.Project.Files)
-			created := designPullFixture("index.html", html, 1)
-			created.CurrentVersion.AuthoringManifest.SharedDesign = api.ArtifactSharedDesign{Version: 1, GuidancePath: seed}
-			testutil.RespondJSON(w, http.StatusOK, created)
-		},
-		"POST /artifacts/" + artID + "/assets": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			defer mu.Unlock()
-			var metadata map[string]string
-			assert.NoError(t, json.Unmarshal([]byte(r.FormValue("metadata")), &metadata))
-			name := metadata["path"]
-			steps = append(steps, name)
-			assert.Contains(t, readFile(t, stateFile), artID)
-			switch name {
-			case hero:
-				assertDesignUpload(t, r, "hero.png", png+"hero")
-			case logo:
-				assertDesignUpload(t, r, "logo.png", png+"logo")
-				assert.Contains(t, readFile(t, stateFile), hero)
-				if busy && logoBusyAt.IsZero() {
-					logoBusyAt = time.Now()
-					w.Header().Set("Retry-After", "1")
-					testutil.RespondJSON(w, http.StatusServiceUnavailable, map[string]string{"reason": "upload_busy", "message": "upload busy"})
-					return
-				}
-				if busy {
-					assert.GreaterOrEqual(t, time.Since(logoBusyAt), time.Second)
-				}
-			default:
-				t.Errorf("unexpected upload path %q", name)
+			project, err := reader.NextPart()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
 			}
-			testutil.RespondJSON(w, http.StatusOK, api.ArtifactAsset{
-				ID: digestOf(name)[:24], Path: name, MediaType: "image/png",
-				ContentDigest: metadata["expectedContentDigest"], Usage: "image",
-			})
-		},
-		"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			defer mu.Unlock()
-			steps = append(steps, "push")
-			var req api.ArtifactPushInput
-			assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
-			assert.Equal(t, verID, req.BaseVersionID)
-			assert.Equal(t, 1, req.ExpectedHeadRevision)
-			assert.Equal(t, summary, req.ChangeSummary)
+			assert.Equal(t, "project", project.FormName())
+			assert.Equal(t, "application/json", project.Header.Get("Content-Type"))
+			var input api.ArtifactCreateInput
+			assert.NoError(t, json.NewDecoder(project).Decode(&input))
+			assert.Equal(t, summary, input.ChangeSummary)
+			assert.NotEmpty(t, input.IdempotencyKey)
 			assert.Equal(t, []api.ArtifactContentFile{
 				{Path: "index.html", MediaType: "text/html", Content: html},
 				{Path: "style.css", MediaType: "text/css", Content: "img { width: 100%; }"},
-			}, req.Files)
-			if assert.NotNil(t, req.AuthoringManifest) && assert.Len(t, req.AuthoringManifest.Assets, 2) {
-				assert.Equal(t, seed, req.AuthoringManifest.SharedDesign.GuidancePath)
-				assert.Equal(t, hero, req.AuthoringManifest.Assets[0].Path)
-				assert.Equal(t, logo, req.AuthoringManifest.Assets[1].Path)
+			}, input.Project.Files)
+			created := designPullFixture("index.html", html, 1)
+			for name, content := range map[string]string{hero: png + "hero", logo: png + "logo"} {
+				created.CurrentVersion.AuthoringManifest.Assets = append(created.CurrentVersion.AuthoringManifest.Assets,
+					api.ArtifactAsset{ID: digestOf(name)[:24], Path: name, MediaType: "image/png", ContentDigest: digestOf(content)})
 			}
-			pushes++
-			if busy && pushes == 1 {
-				testutil.RespondJSON(w, http.StatusBadRequest, map[string]string{"message": "version refused"})
-				return
+			received := make(map[string]string)
+			for range 2 {
+				file, err := reader.NextPart()
+				if !assert.NoError(t, err) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				_, params, err := mime.ParseMediaType(file.Header.Get("Content-Disposition"))
+				assert.NoError(t, err)
+				assert.Equal(t, "file", file.FormName())
+				assert.Equal(t, "image/png", file.Header.Get("Content-Type"))
+				data, err := io.ReadAll(file)
+				assert.NoError(t, err)
+				received[params["filename"]] = string(data)
 			}
-			testutil.RespondJSON(w, http.StatusCreated, api.ArtifactPushResult{
-				Outcome: "created", ArtifactID: artID, HeadRevision: 2, BuildState: "queued",
-				Version: designPullFixture("index.html", html, 2).CurrentVersion,
-			})
+			assert.Equal(t, map[string]string{hero: png + "hero", logo: png + "logo"}, received)
+			_, err = reader.NextPart()
+			assert.ErrorIs(t, err, io.EOF)
+			testutil.RespondJSON(w, http.StatusOK, created)
+		},
+		"POST /artifacts/" + artID + "/assets": func(w http.ResponseWriter, _ *http.Request) {
+			followups.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+		},
+		"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, _ *http.Request) {
+			followups.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
 		},
 	}.Handler())
 	setupHome(t, srv.URL)
@@ -342,31 +293,159 @@ func testDesignsFirstPush(t *testing.T, busy bool) {
 	writePublishFixture(t, filepath.Join(dir, hero), []byte(png+"hero"))
 	writePublishFixture(t, filepath.Join(dir, logo), []byte(png+"logo"))
 
-	args := []string{"designs", "push", dir, "-m", summary, "--json"}
-	res := testutil.RunCommand(t, args, "")
-	want := []string{"check", "create", hero, logo, "push"}
-	if busy && assert.Equal(t, 1, res.ExitCode, res.Stderr) {
-		assert.Contains(t, res.Stderr, artID)
-		assert.Contains(t, res.Stderr, hero)
-		assert.Contains(t, res.Stderr, logo)
-		assert.Contains(t, res.Stderr, "version refused")
-		res = testutil.RunCommand(t, args, "")
-		want = []string{"check", "create", hero, logo, logo, "push", "check", "push"}
-	}
+	res := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", summary, "--json"}, "")
 	require.Equal(t, 0, res.ExitCode, res.Stderr)
-	mu.Lock()
-	assert.Equal(t, want, steps)
-	mu.Unlock()
+	assert.EqualValues(t, 1, creates.Load())
+	assert.Zero(t, followups.Load())
+	var result api.ArtifactPushResult
+	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &result))
+	assert.Equal(t, 1, result.Version.Version)
+	assert.Len(t, result.Version.AuthoringManifest.Assets, 2)
 	var state struct {
 		ID    string            `json:"id"`
 		Base  string            `json:"baseVersionId"`
 		Files map[string]string `json:"files"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, stateFile)), &state))
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, filepath.Join(dir, ".copera", "design.json"))), &state))
 	assert.Equal(t, artID, state.ID)
-	assert.Equal(t, ver2ID, state.Base)
+	assert.Equal(t, verID, state.Base)
 	assert.Equal(t, digestOf(png+"hero"), state.Files[hero])
 	assert.Equal(t, digestOf(png+"logo"), state.Files[logo])
+}
+
+func TestDesignsFirstPushRejected(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "draft")
+	var creates atomic.Int32
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": designGuideResponse,
+		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
+		},
+		"POST /artifacts/": func(w http.ResponseWriter, r *http.Request) {
+			creates.Add(1)
+			assert.Contains(t, r.Header.Get("Content-Type"), "multipart/form-data")
+			testutil.RespondJSON(w, http.StatusBadRequest, map[string]string{"message": "invalid source"})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	init := testutil.RunCommand(t, []string{"designs", "init", dir, "--kind", "website"}, "")
+	require.Equal(t, 0, init.ExitCode, init.Stderr)
+	writePublishFixture(t, filepath.Join(dir, "index.html"), []byte("<p>draft</p>"))
+	stateFile := filepath.Join(dir, ".copera", "design.json")
+	before := readFile(t, stateFile)
+
+	res := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Add first screen", "--no-check", "--json"}, "")
+	require.Equal(t, 1, res.ExitCode, res.Stderr)
+	assert.EqualValues(t, 1, creates.Load())
+	assert.Contains(t, res.Stderr, "No Design was created")
+	assert.Contains(t, res.Stderr, "invalid source")
+	assert.Equal(t, before, readFile(t, stateFile))
+}
+
+func TestDesignsPushReplacesImageInPlace(t *testing.T) {
+	const (
+		localPath = "assets/logo.png"
+		assetPath = "assets/brand/logo.png"
+		png       = "\x89PNG\r\n\x1a\n"
+	)
+	dir := t.TempDir()
+	oldAsset := api.ArtifactAsset{
+		ID: "dddddddddddddddddddddddd", Path: assetPath, ContentDigest: digestOf(png + "old"),
+		MediaType: "image/png", Usage: "logo", AltText: "Company logo",
+	}
+	replacement := oldAsset
+	replacement.ID = "eeeeeeeeeeeeeeeeeeeeeeee"
+	replacement.ContentDigest = digestOf(png + "new")
+	stateFile := filepath.Join(dir, ".copera", "design.json")
+	state, err := json.Marshal(struct {
+		ID            string               `json:"id"`
+		BaseVersionID string               `json:"baseVersionId"`
+		HeadRevision  int                  `json:"headRevision"`
+		Files         map[string]string    `json:"files"`
+		AssetPaths    map[string]string    `json:"assetPaths"`
+		Manifest      api.ArtifactManifest `json:"manifest"`
+	}{
+		ID: artID, BaseVersionID: verID, HeadRevision: 1,
+		Files:      map[string]string{"index.html": digestOf("<p>Home</p>"), localPath: oldAsset.ContentDigest},
+		AssetPaths: map[string]string{localPath: assetPath},
+		Manifest:   api.ArtifactManifest{Assets: []api.ArtifactAsset{oldAsset}},
+	})
+	require.NoError(t, err)
+	writePublishFixture(t, stateFile, state)
+	writePublishFixture(t, filepath.Join(dir, "index.html"), []byte("<p>Home</p>"))
+	writePublishFixture(t, filepath.Join(dir, localPath), []byte(png+"new"))
+
+	var uploads, pushes atomic.Int32
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+			reader, err := r.MultipartReader()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			project, err := reader.NextPart()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			var input api.ArtifactCheckInput
+			assert.NoError(t, json.NewDecoder(project).Decode(&input))
+			if assert.NotNil(t, input.AuthoringManifest) {
+				assert.Empty(t, input.AuthoringManifest.Assets)
+			}
+			file, err := reader.NextPart()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_, params, err := mime.ParseMediaType(file.Header.Get("Content-Disposition"))
+			assert.NoError(t, err)
+			assert.Equal(t, assetPath, params["filename"])
+			testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		},
+		"POST /artifacts/" + artID + "/assets": func(w http.ResponseWriter, r *http.Request) {
+			uploads.Add(1)
+			metadata := assertDesignUpload(t, r, "logo.png", png+"new")
+			if !assert.Equal(t, assetPath, metadata["path"]) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assert.Equal(t, replacement.ContentDigest, metadata["expectedContentDigest"])
+			assert.Equal(t, oldAsset.Usage, metadata["usage"])
+			assert.Equal(t, oldAsset.AltText, metadata["altText"])
+			testutil.RespondJSON(w, http.StatusOK, replacement)
+		},
+		"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+			pushes.Add(1)
+			assert.EqualValues(t, 1, uploads.Load())
+			var input api.ArtifactPushInput
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&input))
+			assert.Equal(t, verID, input.BaseVersionID)
+			assert.Empty(t, input.RemovedPaths)
+			if assert.NotNil(t, input.AuthoringManifest) {
+				assert.Equal(t, []api.ArtifactAsset{replacement}, input.AuthoringManifest.Assets)
+			}
+			testutil.RespondJSON(w, http.StatusCreated, api.ArtifactPushResult{
+				Outcome: "created", ArtifactID: artID, HeadRevision: 2, BuildState: "queued",
+				Version: designPullFixture("index.html", "<p>Home</p>", 2).CurrentVersion,
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Refresh logo", "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, res.Stderr)
+	assert.EqualValues(t, 1, uploads.Load())
+	assert.EqualValues(t, 1, pushes.Load())
+	var saved struct {
+		Files      map[string]string    `json:"files"`
+		AssetPaths map[string]string    `json:"assetPaths"`
+		Manifest   api.ArtifactManifest `json:"manifest"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, stateFile)), &saved))
+	assert.Equal(t, replacement.ContentDigest, saved.Files[localPath])
+	assert.Equal(t, map[string]string{localPath: assetPath}, saved.AssetPaths)
+	assert.Equal(t, []api.ArtifactAsset{replacement}, saved.Manifest.Assets)
 }
 
 func TestDesignsPushConflict(t *testing.T) {

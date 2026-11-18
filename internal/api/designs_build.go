@@ -47,7 +47,7 @@ type ArtifactCheckInput struct {
 	AuthoringManifest  *ArtifactManifest        `json:"authoringManifest,omitempty"`
 }
 
-// ArtifactCheckFile is a binary used only by the dry-run build.
+// ArtifactCheckFile is a binary file sent alongside the project in a check or create request.
 type ArtifactCheckFile struct {
 	Path      string
 	MediaType string
@@ -169,7 +169,11 @@ func (c *Client) ArtifactCheck(ctx context.Context, input ArtifactCheckInput, fi
 		err := client.do(ctx, http.MethodPost, path, input, &result)
 		return &result, err
 	}
-	payload, err := artifactCheckForm(input, files)
+	project, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("api: marshal Design check: %w", err)
+	}
+	payload, err := artifactProjectForm(project, files)
 	if err != nil {
 		return nil, fmt.Errorf("api: build multipart Design check: %w", err)
 	}
@@ -177,7 +181,7 @@ func (c *Client) ArtifactCheck(ctx context.Context, input ArtifactCheckInput, fi
 	return &result, err
 }
 
-func artifactCheckForm(input ArtifactCheckInput, files []ArtifactCheckFile) (multipartRequest, error) {
+func artifactProjectForm(project []byte, files []ArtifactCheckFile) (multipartRequest, error) {
 	var payload bytes.Buffer
 	writer := multipart.NewWriter(&payload)
 	part, err := writer.CreatePart(textproto.MIMEHeader{
@@ -187,7 +191,7 @@ func artifactCheckForm(input ArtifactCheckInput, files []ArtifactCheckFile) (mul
 	if err != nil {
 		return multipartRequest{}, err
 	}
-	if err := json.NewEncoder(part).Encode(input); err != nil {
+	if _, err := part.Write(project); err != nil {
 		return multipartRequest{}, err
 	}
 	for _, file := range files {
@@ -224,8 +228,16 @@ func (c *Client) ArtifactPush(ctx context.Context, artifactID string, input Arti
 	return &result, err
 }
 
-func (c *Client) ArtifactCreate(ctx context.Context, input ArtifactCreateInput) (*ArtifactCreateResult, error) {
+func (c *Client) ArtifactCreate(ctx context.Context, input ArtifactCreateInput, files ...ArtifactCheckFile) (*ArtifactCreateResult, error) {
+	project, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("api: marshal Design create: %w", err)
+	}
+	payload, err := artifactProjectForm(project, files)
+	if err != nil {
+		return nil, fmt.Errorf("api: build multipart Design create: %w", err)
+	}
 	var result ArtifactCreateResult
-	err := c.do(ctx, http.MethodPost, "/artifacts/", input, &result)
+	err = c.do(ctx, http.MethodPost, "/artifacts/", payload, &result)
 	return &result, err
 }

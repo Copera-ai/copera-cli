@@ -149,12 +149,16 @@ func checkDesign(ctx context.Context, client *api.Client, root *os.Root, state *
 		if !file.Binary || pinned[name] {
 			continue
 		}
-		if asset := state.PendingAssets[name]; state.ID != "" && asset.matches(sha256Hex(file.Data)) {
+		canonical := designCanonicalAssetPath(name, state.AssetPaths)
+		if err := validateDesignContentPath(canonical); err != nil {
+			return nil, err
+		}
+		if asset := state.PendingAssets[canonical]; state.ID != "" && asset.matches(sha256Hex(file.Data)) {
 			manifest.Assets = append(manifest.Assets, asset.ArtifactAsset)
 			manifestChanged = true
 			continue
 		}
-		binaries = append(binaries, api.ArtifactCheckFile{Path: name, MediaType: file.MediaType, Data: file.Data})
+		binaries = append(binaries, api.ArtifactCheckFile{Path: canonical, MediaType: file.MediaType, Data: file.Data})
 	}
 	if state.ID != "" && manifestChanged {
 		// Unlike push, check treats source files outside the folder as removed.

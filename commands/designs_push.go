@@ -61,24 +61,9 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				}
 			}
 			var pushed *api.ArtifactPushResult
-			needsPush := state.ID != ""
-			if !needsPush {
+			if state.ID == "" {
 				pushed, err = createLocalDesign(ctx, client, root, state, files, summary)
-				if err == nil {
-					state.ID, state.BaseVersionID, state.HeadRevision = pushed.ArtifactID, pushed.Version.ID, pushed.HeadRevision
-					state.BuildState = pushed.BuildState
-					state.FirstPushPending = true
-					err = writeDesignState(root, state)
-					text := maps.Clone(files)
-					maps.DeleteFunc(text, func(_ string, file designFile) bool { return file.Binary })
-					needsPush = len(text) != len(files)
-					if err == nil && needsPush {
-						err = saveDesignState(root, state, text)
-						base = state.Files
-					}
-				}
-			}
-			if err == nil && needsPush {
+			} else {
 				pushed, err = pushDesignFiles(ctx, cli, client, root, state, base, files, summary, force, wait)
 			}
 			if err != nil {
@@ -170,7 +155,16 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 	if len(input.Project.Files) == 0 {
 		return nil, fmt.Errorf("add source files before pushing the Design")
 	}
-	input.IdempotencyKey, err = designPushKey(dir+"\x00"+summary, input)
+	var binaries []api.ArtifactCheckFile
+	keyParts := []string{dir, summary}
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		file := files[name]
+		if file.Binary {
+			binaries = append(binaries, api.ArtifactCheckFile{Path: name, MediaType: file.MediaType, Data: file.Data})
+			keyParts = append(keyParts, name, sha256Hex(file.Data))
+		}
+	}
+	input.IdempotencyKey, err = designPushKey(strings.Join(keyParts, "\x00"), input)
 	if err != nil {
 		return nil, err
 	}
@@ -178,9 +172,15 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 	if err != nil {
 		return nil, err
 	}
-	created, err := client.ArtifactCreate(ctx, input)
+	created, err := client.ArtifactCreate(ctx, input, binaries...)
 	if err != nil {
-		return nil, err
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) {
+			rejected := *apiErr
+			rejected.Message = "No Design was created. " + rejected.Message
+			return nil, &rejected
+		}
+		return nil, fmt.Errorf("could not confirm Design creation. Retry with the same files and message: %w", err)
 	}
 	state.Workspace = workspace.ID
 	state.Manifest = created.CurrentVersion.AuthoringManifest
@@ -269,20 +269,19 @@ func pushDesignAssets(ctx context.Context, client *api.Client, root *os.Root, st
 		asset := assets[canonical]
 		digest := sha256Hex(file.Data)
 		if asset.ID == "" || asset.ContentDigest != digest {
-			pending := state.PendingAssets[name]
+			pending := state.PendingAssets[canonical]
 			if !pending.matches(digest) {
-				uploaded, err := client.ArtifactAssetUpload(ctx, state.ID, name, file.Data, asset.Usage, asset.AltText)
+				uploaded, err := client.ArtifactAssetUpload(ctx, state.ID, canonical, file.Data, asset.Usage, asset.AltText)
 				if err != nil {
 					return manifest, nil, fmt.Errorf("upload %s: %w", name, err)
 				}
-				if err := rememberDesignAsset(root, state, name, uploaded.ArtifactAsset); err != nil {
+				if err := rememberDesignAsset(root, state, canonical, uploaded.ArtifactAsset); err != nil {
 					return manifest, nil, err
 				}
-				pending = state.PendingAssets[name]
+				pending = state.PendingAssets[canonical]
 			}
 			manifest.Assets = slices.DeleteFunc(manifest.Assets, func(a api.ArtifactAsset) bool { return a.Path == canonical })
 			manifest.Assets = append(manifest.Assets, pending.ArtifactAsset)
-			canonical = name
 		}
 		if other, exists := seenAssets[canonical]; exists {
 			return manifest, nil, fmt.Errorf("assets %q and %q share the server path %q", other, name, canonical)
