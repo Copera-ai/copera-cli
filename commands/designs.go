@@ -43,13 +43,25 @@ func designID(value string) (string, error) {
 }
 
 func designTool() string {
+	// Keep these values in sync with the tool enum in testdata/artifacts.openapi.json.
+	switch tool := os.Getenv("COPERA_DESIGN_TOOL"); tool {
+	case "claude_code", "codex", "cursor", "opencode", "gemini_cli", "windsurf", "copera_cli", "other":
+		return tool
+	}
 	if _, ok := os.LookupEnv("CLAUDECODE"); ok {
 		return "claude_code"
 	}
-	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "CODEX_") {
-			return "codex"
-		}
+	if _, ok := os.LookupEnv("CODEX_THREAD_ID"); ok {
+		return "codex"
+	}
+	if _, ok := os.LookupEnv("CODEX_SESSION_ID"); ok {
+		return "codex"
+	}
+	if os.Getenv("CURSOR_AGENT") != "" {
+		return "cursor"
+	}
+	if _, ok := os.LookupEnv("OPENCODE"); ok {
+		return "opencode"
 	}
 	return "copera_cli"
 }

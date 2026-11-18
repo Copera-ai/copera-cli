@@ -161,6 +161,22 @@ copera auth whoami
 copera auth logout
 ```
 
+### Connect a coding tool
+
+```bash
+copera connect [--list]
+copera connect <tool> [--yes] [--dry-run]
+copera disconnect <tool> [--yes]
+```
+
+Connect installs the user-level `copera-designs/SKILL.md` for `claude-code`
+(or `claude`), `codex`, `cursor`, or `opencode`. Codex, Cursor, and OpenCode
+share one skill file. Codex also gets a dedicated `rules/copera.rules` file.
+Writes are limited to those files and the ownership record at
+`~/.copera/connect.json`, all separate from the tools' settings files.
+Disconnect removes tracked files whose contents still match the record, keeping
+the shared skill until its last tool disconnects.
+
 ### Boards and Tables
 
 ```bash

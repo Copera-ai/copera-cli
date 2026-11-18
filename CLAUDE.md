@@ -62,6 +62,8 @@ Designed to be used by both **humans** (interactive, list/tree output) and **LLM
 ### Implemented Commands
 ```
 copera auth login|whoami|status|logout
+copera connect [<tool>|--list] [--yes] [--dry-run]
+copera disconnect <tool> [--yes]
 copera boards list|get|create|update|delete|participants add|remove   (alias: bases)
 copera tables list|get|export|create|update|delete|columns add|update
 copera rows list|get|create|update|delete|description|column-content|update-column-content|authenticate|comment|comments
