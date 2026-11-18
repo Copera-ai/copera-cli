@@ -13,19 +13,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newArtifactsCmd(cli *CLI) *cobra.Command {
+func newDesignsCmd(cli *CLI) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "artifacts",
-		Short: "Read artifacts and pull their hand-off pack",
-		Long: `Read Copera artifacts: their versions, source files, shared design and
-design starters — and pull an artifact's full hand-off pack into a folder so a
-coding agent (or you) can build the real app from it.
-
-  copera artifacts list
-  copera artifacts handoff <artifactId> --out ./my-app
-
-Artifacts need a personal access token with Drive access, and Artifacts enabled
-in the workspace.`,
+		Use:     "designs",
+		Aliases: []string{"artifacts"},
+		Short:   "Work with Copera Designs",
 	}
 	cmd.AddCommand(
 		newArtifactsListCmd(cli),
@@ -35,6 +27,9 @@ in the workspace.`,
 		newArtifactsDesignCmd(cli),
 		newArtifactsStartersCmd(cli),
 		newArtifactsHandoffCmd(cli),
+		newDesignOpenCmd(cli),
+		newDesignLogCmd(cli),
+		newDesignGuideCmd(cli),
 	)
 	return cmd
 }
