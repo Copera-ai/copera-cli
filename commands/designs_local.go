@@ -421,12 +421,7 @@ func newDesignPullCmd(cli *CLI) *cobra.Command {
 			state := &designState{
 				ID: id, Workspace: workspace.ID, BaseVersionID: version.ID, HeadRevision: artifact.HeadRevision,
 				Kind: kind, Runtime: version.Runtime, Entrypoint: version.Entrypoint,
-				Manifest: version.AuthoringManifest,
-			}
-			for _, declaration := range version.MemberRuntimeDeclarations {
-				state.Capabilities = append(state.Capabilities, api.ArtifactProjectCapability{
-					Kind: declaration.Kind, ContractVersion: declaration.ContractVersion, Collections: declaration.Collections,
-				})
+				Manifest: version.AuthoringManifest, Capabilities: version.ProjectCapabilities,
 			}
 			if state.Kind == "" {
 				state.Kind = guide.Kind
@@ -477,6 +472,9 @@ func applyDesignPull(root *os.Root, state *designState, remote map[string]design
 		if previous.BaseVersionID == state.BaseVersionID {
 			state.BuildState = previous.BuildState
 			state.Dependencies = previous.Dependencies
+			if state.Capabilities == nil {
+				state.Capabilities = previous.Capabilities
+			}
 		}
 		state.AssetPaths = make(map[string]string)
 		for name, canonical := range previous.AssetPaths {

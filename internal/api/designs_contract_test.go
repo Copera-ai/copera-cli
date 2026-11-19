@@ -27,6 +27,24 @@ type designContractSchema struct {
 	Format     string
 }
 
+func TestPhase6DesignCapabilitiesDecode(t *testing.T) {
+	for _, kind := range []string{"ai", "speech", "dictation", "images", "files", "copera", "room"} {
+		var capability ArtifactProjectCapability
+		require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"kind":%q,"contractVersion":1}`, kind)), &capability))
+		assert.Equal(t, kind, capability.Kind)
+		assert.Equal(t, 1, capability.ContractVersion)
+	}
+	for _, input := range []string{
+		`{"kind":"ai","contractVersion":2}`,
+		`{"kind":"speech","contractVersion":1,"origins":[]}`,
+		`{"kind":"copera","contractVersion":1,"grant":true}`,
+		`{"kind":"room"}`,
+	} {
+		var capability ArtifactProjectCapability
+		assert.Error(t, json.Unmarshal([]byte(input), &capability))
+	}
+}
+
 func (s *designContractSchema) field(name string) *designContractSchema {
 	if field := s.Properties[name]; field != nil {
 		return field
@@ -402,8 +420,11 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		listedVersion := list.field("edges").Items.field("node")
 		getVersion := snapshot.Paths[version]["get"].Responses["200"].Content["application/json"].Schema
 		assert.Nil(t, listedVersion.field("memberRuntimeDeclarations"))
+		assert.Nil(t, listedVersion.field("projectCapabilities"))
 		receipt := snapshot.Paths[artifact+"/versions"]["post"].Responses["201"].Content["application/json"].Schema
 		assert.Nil(t, receipt.field("version").field("memberRuntimeDeclarations"))
+		assert.Nil(t, receipt.field("version").field("projectCapabilities"))
+		require.NotNil(t, getVersion.field("projectCapabilities"))
 		for _, name := range []string{"version", "createdAt", "origin", "authorKind", "tool", "changeSummary"} {
 			assert.NotNil(t, listedVersion.field(name), "version list field %q", name)
 			assert.NotNil(t, getVersion.field(name), "version detail field %q", name)
@@ -454,7 +475,7 @@ func assertDesignContractFields(t *testing.T, schema *designContractSchema, mode
 		// Older previews exposed visualReviewStatus. The compact version DTO
 		// used by list and push omits expanded source and declarations.
 		if child == nil && (name == "visualReviewStatus" ||
-			(model == reflect.TypeFor[ArtifactVersion]() && (name == "authoringManifest" || name == "files" || name == "memberRuntimeDeclarations") &&
+			(model == reflect.TypeFor[ArtifactVersion]() && (name == "authoringManifest" || name == "files" || name == "memberRuntimeDeclarations" || name == "projectCapabilities") &&
 				(path == "response.edges[].node" || path == "response.version"))) {
 			continue
 		}

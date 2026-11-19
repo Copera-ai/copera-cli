@@ -237,6 +237,8 @@ func checkDesign(ctx context.Context, cli *CLI, client *api.Client, root *os.Roo
 	if state.ID == "" || force {
 		settings := designProject(state)
 		input.Project = &settings
+	} else if state.Capabilities != nil {
+		input.Project = &api.ArtifactProjectSettings{Capabilities: state.Capabilities}
 	}
 	manifest := designManifestForFiles(state, files)
 	pinned := make(map[string]bool, len(manifest.Assets))

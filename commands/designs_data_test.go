@@ -171,6 +171,46 @@ func TestDesignsDataDoesNotFollowRedirects(t *testing.T) {
 
 const reviewDeclarations = `[{"kind":"data","contractVersion":1,"collections":[{"name":"answers","scope":"shared","access":"member_submit"}]},{"kind":"viewer","contractVersion":1}]`
 
+func TestDesignsDataPublicSubject(t *testing.T) {
+	const path = "/artifacts/" + artID + "/data/answers/records/item-1"
+	const subject = "pv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	var requests atomic.Int32
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET " + path: func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			assert.Equal(t, subject, r.URL.Query().Get("subject"))
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(dataOne))
+		},
+		"POST " + path: func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			assert.Equal(t, subject, r.URL.Query().Get("subject"))
+			var input json.RawMessage
+			if assert.NoError(t, json.NewDecoder(r.Body).Decode(&input)) {
+				assert.JSONEq(t, `{"ifRevision":1,"value":{"decision":"approved"}}`, string(input))
+			}
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(dataOne))
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	tests := []struct {
+		command string
+		flags   []string
+		exit    int
+	}{
+		{"get", nil, 0},
+		{"set", []string{"--file", "-", "--if-revision", "1"}, 0},
+		{"set", []string{"--file", "-", "--create"}, 2},
+		{"delete", []string{"--if-revision", "1"}, 2},
+	}
+	for _, tc := range tests {
+		args := []string{"designs", "data", tc.command, artID, "answers", "item-1", "--subject", subject, "--json"}
+		result := testutil.RunCommand(t, append(args, tc.flags...), `{"decision":"approved"}`)
+		assert.Equal(t, tc.exit, result.ExitCode, result.Stderr)
+	}
+	assert.EqualValues(t, 2, requests.Load())
+}
+
 func TestDesignsReviewGuideAndInit(t *testing.T) {
 	const guide = `{"version":1,"kind":"web_app","runtime":"static_web","markdown":"# Review","facts":{},"template":{
 		"id":"review","subject":"Review","project":{"artifactKind":"web_app","runtime":"static_web","entrypoint":"index.html","capabilities":` + reviewDeclarations + `},
@@ -226,20 +266,24 @@ func TestDesignsPullMemberDeclarations(t *testing.T) {
 		name = "index.html"
 		html = "<h1>Review</h1>"
 	)
-	var old atomic.Bool
+	const allCapabilities = `[{"kind":"network","origins":["https://example.com"]},{"kind":"ai","contractVersion":1},{"kind":"data","contractVersion":1,"collections":[{"name":"answers","scope":"shared","access":"member_submit"}]},{"kind":"viewer","contractVersion":1}]`
+	var projection atomic.Int32
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{
 		"GET /artifacts/" + artID: func(w http.ResponseWriter, _ *http.Request) {
 			artifact := designPullFixture(name, html, 1)
 			version, err := json.Marshal(artifact.CurrentVersion)
 			if assert.NoError(t, err) {
-				node := json.RawMessage(version)
-				if !old.Load() {
-					node = json.RawMessage(strings.TrimSuffix(string(version), "}") + `,"memberRuntimeDeclarations":` + reviewDeclarations + "}")
+				node := strings.TrimSuffix(string(version), "}") + `,"memberRuntimeDeclarations":` + reviewDeclarations
+				switch projection.Load() {
+				case 0:
+					node += `,"projectCapabilities":` + allCapabilities
+				case 2:
+					node += `,"projectCapabilities":[]`
 				}
 				testutil.RespondJSON(w, http.StatusOK, struct {
 					api.Artifact
 					CurrentVersion json.RawMessage `json:"currentVersion"`
-				}{artifact, node})
+				}{artifact, json.RawMessage(node + "}")})
 			}
 		},
 		"GET /artifacts/" + artID + "/handoff": func(w http.ResponseWriter, _ *http.Request) {
@@ -257,18 +301,24 @@ func TestDesignsPullMemberDeclarations(t *testing.T) {
 	}.Handler())
 	setupHome(t, srv.URL)
 	dir := filepath.Join(t.TempDir(), "pull")
-	for _, legacy := range []bool{false, true} {
-		old.Store(legacy)
-		res := testutil.RunCommand(t, []string{"designs", "pull", artID, dir, "--json"}, "")
+	assertProjection := func(target, expected string) {
+		t.Helper()
+		res := testutil.RunCommand(t, []string{"designs", "pull", artID, target, "--json"}, "")
 		require.Equal(t, 0, res.ExitCode, res.Stderr)
 		var state struct {
 			Capabilities json.RawMessage `json:"capabilities"`
 		}
-		require.NoError(t, json.Unmarshal([]byte(readFile(t, filepath.Join(dir, ".copera", "design.json"))), &state))
-		if legacy {
+		require.NoError(t, json.Unmarshal([]byte(readFile(t, filepath.Join(target, ".copera", "design.json"))), &state))
+		if expected == "" {
 			assert.Empty(t, state.Capabilities)
 		} else {
-			assert.JSONEq(t, reviewDeclarations, string(state.Capabilities))
+			assert.JSONEq(t, expected, string(state.Capabilities))
 		}
 	}
+	assertProjection(dir, allCapabilities)
+	projection.Store(1)
+	assertProjection(dir, allCapabilities)
+	assertProjection(filepath.Join(t.TempDir(), "legacy"), "")
+	projection.Store(2)
+	assertProjection(dir, "[]")
 }

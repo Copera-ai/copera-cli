@@ -28,6 +28,7 @@ var (
 	designDataCollection = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
 	designDataKey        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 	designDataSubject    = regexp.MustCompile(`^av_[A-Za-z0-9_-]{43}$`)
+	designDataSubmission = regexp.MustCompile(`^(?:av_|pv_)[A-Za-z0-9_-]{43}$`)
 )
 
 func newDesignDataCmd(cli *CLI) *cobra.Command {
@@ -139,8 +140,8 @@ func newDesignDataGetCmd(cli *CLI) *cobra.Command {
 		Short: "Read a Design record",
 		Args:  designDataArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("subject") && !designDataSubject.MatchString(subject) {
-				return designUsageError(cli, fmt.Errorf("--subject must be a Design viewer ID"))
+			if cmd.Flags().Changed("subject") && !designDataSubmission.MatchString(subject) {
+				return designUsageError(cli, fmt.Errorf("--subject must be a Design viewer or public visitor ID"))
 			}
 			client, id, err := designDataClient(cli, args)
 			if err != nil {
@@ -150,7 +151,7 @@ func newDesignDataGetCmd(cli *CLI) *cobra.Command {
 			return printDesignData(cli, response, err)
 		},
 	}
-	cmd.Flags().StringVar(&subject, "subject", "", "Viewer ID of a shared submission")
+	cmd.Flags().StringVar(&subject, "subject", "", "Viewer or public visitor ID of a shared submission")
 	return cmd
 }
 
@@ -194,8 +195,8 @@ func newDesignDataSetCmd(cli *CLI) *cobra.Command {
 			if create == withRevision || (withRevision && (revision < 1 || revision > maxDesignDataRevision)) {
 				return designUsageError(cli, fmt.Errorf("provide exactly one of --create or --if-revision with a positive safe integer"))
 			}
-			if cmd.Flags().Changed("subject") && (create || !designDataSubject.MatchString(subject)) {
-				return designUsageError(cli, fmt.Errorf("--subject requires a Design viewer ID and an existing revision"))
+			if cmd.Flags().Changed("subject") && (create || !designDataSubmission.MatchString(subject)) {
+				return designUsageError(cli, fmt.Errorf("--subject requires a Design viewer or public visitor ID and an existing revision"))
 			}
 			value, err := readDesignDataObject(cli, file)
 			if err != nil {
@@ -216,7 +217,7 @@ func newDesignDataSetCmd(cli *CLI) *cobra.Command {
 	cmd.Flags().StringVar(&file, "file", "", "JSON object file, or - for stdin")
 	cmd.Flags().BoolVar(&create, "create", false, "Create the record only if its key is unused")
 	cmd.Flags().Int64Var(&revision, "if-revision", 0, "Replace only this record revision")
-	cmd.Flags().StringVar(&subject, "subject", "", "Viewer ID of an existing shared submission")
+	cmd.Flags().StringVar(&subject, "subject", "", "Viewer or public visitor ID of an existing shared submission")
 	return cmd
 }
 

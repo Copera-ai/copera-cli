@@ -260,6 +260,8 @@ func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os
 	if force {
 		project := designProject(state)
 		input.Project = &project
+	} else if state.Capabilities != nil {
+		input.Project = &api.ArtifactProjectSettings{Capabilities: state.Capabilities}
 	}
 	input.IdempotencyKey, err = designPushKey("", input)
 	if err != nil {
