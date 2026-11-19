@@ -872,8 +872,8 @@ func newTablesColumnsCmd(cli *CLI) *cobra.Command {
 }
 
 func newTablesColumnsAddCmd(cli *CLI) *cobra.Command {
-	var flagBoard, flagTable, flagLabel, flagType string
-	var flagOptions []string
+	var flagBoard, flagTable, flagLabel, flagType, flagConfig string
+	var flagOptions, flagOptionJSON []string
 
 	cmd := &cobra.Command{
 		Use:   "add",
@@ -882,10 +882,20 @@ func newTablesColumnsAddCmd(cli *CLI) *cobra.Command {
 
 --type must be one of (UPPERCASE):
   TEXT PARAGRAPH NUMBER MONEY DATE EMAIL PHONE WEBSITE CHECKBOX
-  STATUS DROPDOWN LABELS USERS LOCATION DESCRIPTION FILE
+  STATUS DROPDOWN LABELS USERS CONTACT LOCATION DESCRIPTION FILE CHECKLIST
+  LINK LOOKUP ROLLUP FORMULA CREATED_BY CREATED_AT LAST_MODIFIED_BY UPDATED_AT SLA
+
+--config accepts type-specific JSON: format, numberOptions, defaultValue, formula,
+tableRef, syncLink, linkMode, maxLinks, displayColumnId, restrictToViewId,
+linkingColumnRef, columnRef, aggregator, filter, slaConfig.
+SLA requires slaConfig; COUNTDOWN requires goalMs; COUNTUP requires startCondition.
+STOPWATCH supports only MANUAL/NONE triggers.
+Audit columns display read-only row metadata.
 
 --option provides selectable values for STATUS, DROPDOWN, and LABELS columns
 (repeatable). Format: "Label" or "Label:color".
+--option-json accepts {"label":"Open","color":"green","order":0,"statusGroup":"TODO"}
+(repeatable). statusGroup applies to STATUS and accepts TODO, IN_PROGRESS, or DONE.
 
 Example:
   copera tables columns add --board <B> --table <T> --label "Priority" --type STATUS \
@@ -924,11 +934,38 @@ Example:
 				return exitcodes.Newf(exitcodes.Usage, "invalid column type")
 			}
 
-			col, err := client.ColumnAdd(context.Background(), boardID, tableID, &api.AddColumnInput{
-				Label:   flagLabel,
-				Type:    flagType,
-				Options: parseColumnOptions(flagOptions),
-			})
+			input := &api.AddColumnInput{Label: flagLabel, Type: flagType, Options: parseColumnOptions(flagOptions)}
+			for _, raw := range flagOptionJSON {
+				var option api.ColumnOptionInput
+				decoder := json.NewDecoder(strings.NewReader(raw))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&option); err != nil {
+					return usageError(cli, fmt.Errorf("invalid --option-json: %w", err))
+				}
+				if err := validateColumnOption(option.Label, option.StatusGroup); err != nil {
+					return usageError(cli, err)
+				}
+				input.Options = append(input.Options, option)
+			}
+			if flagConfig != "" {
+				decoder := json.NewDecoder(strings.NewReader(flagConfig))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&input.ColumnConfiguration); err != nil {
+					return usageError(cli, fmt.Errorf("invalid --config JSON: %w", err))
+				}
+			}
+			if input.Type == "SLA" && input.SLAConfig == nil {
+				return usageError(cli, fmt.Errorf("SLA requires --config with slaConfig"))
+			}
+			if input.Type != "SLA" && input.SLAConfig != nil {
+				return usageError(cli, fmt.Errorf("slaConfig requires SLA"))
+			}
+			if input.SLAConfig != nil {
+				if err := validateSLAConfig(input.SLAConfig); err != nil {
+					return usageError(cli, err)
+				}
+			}
+			col, err := client.ColumnAdd(context.Background(), boardID, tableID, input)
 			if err != nil {
 				return apiError(cli, err)
 			}
@@ -955,17 +992,22 @@ Example:
 	cmd.Flags().StringVar(&flagLabel, "label", "", "Column label (required)")
 	cmd.Flags().StringVar(&flagType, "type", "", "Column type (required)")
 	cmd.Flags().StringArrayVar(&flagOptions, "option", nil, `Option for STATUS/DROPDOWN/LABELS: "Label" or "Label:color" (repeatable)`)
+	cmd.Flags().StringArrayVar(&flagOptionJSON, "option-json", nil, "Column option JSON with label, color, order, and statusGroup (repeatable)")
+	cmd.Flags().StringVar(&flagConfig, "config", "", "Type-specific column configuration JSON (including slaConfig)")
 	return cmd
 }
 
 func newTablesColumnsUpdateCmd(cli *CLI) *cobra.Command {
-	var flagBoard, flagTable, flagLabel string
-	var flagAddOptions []string
+	var flagBoard, flagTable, flagLabel, flagSLAConfig string
+	var flagAddOptions, flagUpdateOptions, flagDeleteOptionIDs []string
 
 	cmd := &cobra.Command{
 		Use:   "update <column-id>",
-		Short: "Update a column's label or add options",
-		Long: `Update a column. Rename via --label and/or append options via --add-option.
+		Short: "Update a column label, options, or SLA configuration",
+		Long: `Update a column. Rename via --label, append options via --add-option,
+edit existing options via --update-option JSON, remove named choices via
+--delete-option, or replace an SLA column configuration via --sla-config JSON.
+--update-option accepts {"optionId":"<id>","label":"Done","color":"green","order":2,"statusGroup":"DONE"}.
 
 --add-option only applies to STATUS/DROPDOWN/LABELS columns and is append-only
 (repeatable). Format: "Label" or "Label:color".
@@ -999,9 +1041,41 @@ Example:
 				input.Label = &flagLabel
 			}
 			input.AddOptions = parseColumnOptions(flagAddOptions)
-			if input.Label == nil && len(input.AddOptions) == 0 {
+			input.DeleteOptionIDs = flagDeleteOptionIDs
+			for _, raw := range flagUpdateOptions {
+				var option api.ColumnOptionUpdateInput
+				decoder := json.NewDecoder(strings.NewReader(raw))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&option); err != nil {
+					return usageError(cli, fmt.Errorf("invalid --update-option JSON: %w", err))
+				}
+				if option.OptionID == "" {
+					return usageError(cli, fmt.Errorf("--update-option requires optionId"))
+				}
+				if option.StatusGroup != nil {
+					if *option.StatusGroup == "" {
+						return usageError(cli, fmt.Errorf("statusGroup must be TODO, IN_PROGRESS, or DONE"))
+					}
+					if err := validateColumnOption("option", *option.StatusGroup); err != nil {
+						return usageError(cli, err)
+					}
+				}
+				input.UpdateOptions = append(input.UpdateOptions, option)
+			}
+			if cmd.Flags().Changed("sla-config") {
+				input.SLAConfig = &api.SLAConfig{}
+				decoder := json.NewDecoder(strings.NewReader(flagSLAConfig))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(input.SLAConfig); err != nil {
+					return usageError(cli, fmt.Errorf("invalid --sla-config JSON: %w", err))
+				}
+				if err := validateSLAConfig(input.SLAConfig); err != nil {
+					return usageError(cli, err)
+				}
+			}
+			if input.Label == nil && len(input.AddOptions) == 0 && len(input.UpdateOptions) == 0 && len(input.DeleteOptionIDs) == 0 && input.SLAConfig == nil {
 				cli.Printer.PrintError("missing_input", "nothing to update",
-					"Pass --label and/or --add-option", false)
+					"Pass --label, --add-option, --update-option, --delete-option, or --sla-config", false)
 				return exitcodes.Newf(exitcodes.Usage, "nothing to update")
 			}
 
@@ -1032,5 +1106,79 @@ Example:
 	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
 	cmd.Flags().StringVar(&flagLabel, "label", "", "New column label")
 	cmd.Flags().StringArrayVar(&flagAddOptions, "add-option", nil, `Option to append for STATUS/DROPDOWN/LABELS: "Label" or "Label:color" (repeatable)`)
+	cmd.Flags().StringArrayVar(&flagUpdateOptions, "update-option", nil, "Existing option JSON with optionId, label, color, order, and statusGroup (repeatable)")
+	cmd.Flags().StringArrayVar(&flagDeleteOptionIDs, "delete-option", nil, "Existing option ID to remove (repeatable)")
+	cmd.Flags().StringVar(&flagSLAConfig, "sla-config", "", "Replacement SLA configuration JSON")
 	return cmd
+}
+
+// validateSLAConfig checks structural rules locally; the API resolves workspace/table references.
+func validateSLAConfig(config *api.SLAConfig) error {
+	switch config.Mode {
+	case "STOPWATCH", "COUNTDOWN", "COUNTUP":
+	default:
+		return fmt.Errorf("SLA mode must be STOPWATCH, COUNTDOWN, or COUNTUP")
+	}
+	if config.GoalMs != nil && *config.GoalMs <= 0 {
+		return fmt.Errorf("SLA goalMs must be positive")
+	}
+	if config.Mode == "COUNTDOWN" && config.GoalMs == nil {
+		return fmt.Errorf("COUNTDOWN requires goalMs")
+	}
+	if config.Mode == "COUNTUP" && config.StartCondition == nil {
+		return fmt.Errorf("COUNTUP requires startCondition")
+	}
+	if thresholds := config.Thresholds; thresholds != nil {
+		if thresholds.WarningPct == nil || thresholds.CriticalPct == nil || *thresholds.WarningPct < 0 || *thresholds.CriticalPct > 1 || *thresholds.WarningPct >= *thresholds.CriticalPct {
+			return fmt.Errorf("SLA thresholds require 0 <= warningPct < criticalPct <= 1")
+		}
+	}
+	for _, entry := range []struct {
+		condition *api.SLACondition
+		start     bool
+	}{{config.StartCondition, true}, {config.PauseCondition, false}, {config.StopCondition, false}} {
+		condition := entry.condition
+		if condition == nil {
+			continue
+		}
+		if config.Mode == "STOPWATCH" && condition.Type != "MANUAL" && condition.Type != "NONE" {
+			return fmt.Errorf("STOPWATCH only supports MANUAL/NONE conditions")
+		}
+		switch condition.Type {
+		case "ON_CREATE":
+			if !entry.start {
+				return fmt.Errorf("ON_CREATE is only valid for startCondition")
+			}
+		case "STATUS_CHANGE":
+			if condition.StatusColumnID == "" || len(condition.StatusValues) == 0 || len(condition.StatusValues) > 100 {
+				return fmt.Errorf("STATUS_CHANGE requires statusColumnId and 1-100 statusValues")
+			}
+			seen := make(map[string]bool, len(condition.StatusValues))
+			for _, value := range condition.StatusValues {
+				if seen[value] {
+					return fmt.Errorf("statusValues must be unique")
+				}
+				seen[value] = true
+			}
+		case "MANUAL", "NONE":
+		default:
+			return fmt.Errorf("invalid SLA condition type")
+		}
+		if condition.Type != "STATUS_CHANGE" && (condition.StatusColumnID != "" || condition.StatusValues != nil) {
+			return fmt.Errorf("status references require STATUS_CHANGE")
+		}
+	}
+	return nil
+}
+
+func validateColumnOption(label, statusGroup string) error {
+	if strings.TrimSpace(label) == "" {
+		return fmt.Errorf("option label is required")
+	}
+	switch statusGroup {
+	case "", "TODO", "IN_PROGRESS", "DONE":
+		return nil
+	default:
+		return fmt.Errorf("statusGroup must be TODO, IN_PROGRESS, or DONE")
+	}
 }

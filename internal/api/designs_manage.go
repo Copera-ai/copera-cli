@@ -1,25 +1,24 @@
 package api
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
+	"net/url"
 	"path"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
 // ArtifactArchive is a signed link to a portable archive of a version.
 type ArtifactArchive struct {
-	URL           string   `json:"url"`
-	ByteLength    int64    `json:"byteLength"`
-	ContentDigest string   `json:"contentDigest"`
-	OmittedPaths  []string `json:"omittedPaths"`
+	URL            string   `json:"url"`
+	ByteLength     int64    `json:"byteLength"`
+	ContentDigest  string   `json:"contentDigest"`
+	OmittedPaths   []string `json:"omittedPaths"`
+	ArchiveVersion int      `json:"archiveVersion,omitempty"`
 }
 
 // ArtifactUploadedAsset describes an asset admitted to a Design.
@@ -71,51 +70,51 @@ type artifactForkInput struct {
 }
 
 // ArtifactArchiveLink requests a link for a pinned version's ZIP.
-func (c *Client) ArtifactArchiveLink(ctx context.Context, artifactID, versionID string) (*ArtifactArchive, error) {
+func (c *Client) ArtifactArchiveLink(ctx context.Context, artifactID, versionID string, version int) (*ArtifactArchive, error) {
 	var result ArtifactArchive
-	if err := c.do(ctx, http.MethodGet, artifactVersionPath(artifactID, versionID)+"/archive", nil, &result); err != nil {
+	endpoint := artifactVersionPath(artifactID, versionID) + "/archive"
+	if version != 0 {
+		endpoint = withQuery(endpoint, url.Values{"archiveVersion": {strconv.Itoa(version)}})
+	}
+	if err := c.do(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ArtifactImport creates a Design from a portable ZIP.
-func (c *Client) ArtifactImport(ctx context.Context, filename string, data []byte, key, tool string) (*Artifact, error) {
+func (c *Client) ArtifactImport(ctx context.Context, filename string, file ArtifactUpload, key, tool string) (*Artifact, error) {
 	metadata, err := json.Marshal(artifactImportMetadata{IdempotencyKey: key, Tool: tool})
 	if err != nil {
 		return nil, err
 	}
-	body, err := c.uploadMultipart(ctx, "/artifacts/archives", filepath.Base(filename), "application/zip", bytes.NewReader(data), metadata)
-	if err != nil {
-		return nil, err
-	}
+	form := artifactMultipart("metadata", metadata, []ArtifactCheckFile{
+		{Path: filepath.Base(filename), MediaType: "application/zip", ArtifactUpload: file},
+	})
 	var result Artifact
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("api: decode response: %w", err)
+	if err := c.doOnce(ctx, http.MethodPost, "/artifacts/archives", form, &result); err != nil {
+		return nil, err
 	}
 	return &result, nil
 }
 
-// ArtifactAssetUpload admits a binary asset so a version can refer to it.
-func (c *Client) ArtifactAssetUpload(ctx context.Context, artifactID, assetPath string, data []byte, usage, altText string) (*ArtifactUploadedAsset, error) {
-	digest := sha256.Sum256(data)
+// ArtifactAssetUpload admits an asset so a version can refer to it.
+func (c *Client) ArtifactAssetUpload(ctx context.Context, artifactID string, file ArtifactCheckFile, usage, altText string) (*ArtifactUploadedAsset, error) {
 	metadata, err := json.Marshal(artifactAssetMetadata{
-		Path:                  assetPath,
-		ExpectedContentDigest: hex.EncodeToString(digest[:]),
+		Path:                  file.Path,
+		ExpectedContentDigest: file.ContentDigest,
 		Usage:                 usage,
 		AltText:               altText,
 	})
 	if err != nil {
 		return nil, err
 	}
-	mediaType := http.DetectContentType(data)
+	file.Path = path.Base(file.Path)
+	form := artifactMultipart("metadata", metadata, []ArtifactCheckFile{file})
 	for attempt := 1; ; attempt++ {
-		body, err := c.uploadMultipart(ctx, artifactPath(artifactID)+"/assets", path.Base(assetPath), mediaType, bytes.NewReader(data), metadata)
+		var result ArtifactUploadedAsset
+		err := c.doOnce(ctx, http.MethodPost, artifactPath(artifactID)+"/assets", form, &result)
 		if err == nil {
-			var result ArtifactUploadedAsset
-			if err := json.Unmarshal(body, &result); err != nil {
-				return nil, fmt.Errorf("api: decode response: %w", err)
-			}
 			return &result, nil
 		}
 		var apiErr *APIError
@@ -129,6 +128,17 @@ func (c *Client) ArtifactAssetUpload(ctx context.Context, artifactID, assetPath 
 		case <-time.After(delay):
 		}
 	}
+}
+
+// ArtifactAssets lists the Design's admitted assets, including their byte lengths.
+func (c *Client) ArtifactAssets(ctx context.Context, artifactID string) ([]ArtifactUploadedAsset, error) {
+	var result struct {
+		Assets []ArtifactUploadedAsset `json:"assets"`
+	}
+	if err := c.do(ctx, http.MethodGet, artifactPath(artifactID)+"/design-assets", nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Assets, nil
 }
 
 // ArtifactRename updates a Design's title.
