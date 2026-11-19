@@ -1,12 +1,16 @@
 package commands_test
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/copera/copera-cli/internal/api"
 
 	"github.com/copera/copera-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -15,12 +19,12 @@ import (
 
 func TestDesignsManage(t *testing.T) {
 	const (
-		archiveBytes = "PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-		assetBytes   = "\x89PNG\r\n\x1a\nmock image"
-		designPath   = "/artifacts/" + artID
-		archivePath  = designPath + "/versions/" + verID + "/archive"
-		restorePath  = designPath + "/versions/" + ver2ID + "/restore"
+		assetBytes  = "\x89PNG\r\n\x1a\nmock image"
+		designPath  = "/artifacts/" + artID
+		archivePath = designPath + "/versions/" + verID + "/archive"
+		restorePath = designPath + "/versions/" + ver2ID + "/restore"
 	)
+	archiveBytes := designArchiveFixture(t, 2)
 	server := testutil.NewMockServer(t, testutil.MockRoutes{
 		"GET /workspace/info": func(w http.ResponseWriter, r *http.Request) {
 			testutil.RespondJSON(w, http.StatusOK, map[string]string{"slug": "launch"})
@@ -46,12 +50,14 @@ func TestDesignsManage(t *testing.T) {
 			})
 		},
 		"GET " + archivePath: func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "2", r.URL.Query().Get("archiveVersion"))
 			testutil.RespondJSON(w, http.StatusOK, struct {
 				URL           string   `json:"url"`
 				ByteLength    int      `json:"byteLength"`
 				ContentDigest string   `json:"contentDigest"`
 				OmittedPaths  []string `json:"omittedPaths"`
-			}{"http://" + r.Host + "/signed/pack.zip", len(archiveBytes), digestOf(archiveBytes), []string{}})
+				Version       int      `json:"archiveVersion"`
+			}{"http://" + r.Host + "/signed/pack.zip", len(archiveBytes), digestOf(archiveBytes), []string{}, 2})
 		},
 		"GET /signed/pack.zip": func(w http.ResponseWriter, r *http.Request) {
 			assert.Empty(t, r.Header.Get("Authorization"))
@@ -147,4 +153,89 @@ func assertDesignUpload(t *testing.T, r *http.Request, name, content string) map
 	var metadata map[string]string
 	assert.NoError(t, json.Unmarshal([]byte(r.FormValue("metadata")), &metadata))
 	return metadata
+}
+
+const designArchiveSource = "<h1>Portable Design</h1>"
+
+func designArchiveFixture(t *testing.T, version int) string {
+	t.Helper()
+	var data bytes.Buffer
+	writer := zip.NewWriter(&data)
+	part, err := writer.Create("index.html")
+	require.NoError(t, err)
+	_, err = io.WriteString(part, designArchiveSource)
+	require.NoError(t, err)
+	part, err = writer.Create("copera-artifact.json")
+	require.NoError(t, err)
+	manifest := struct {
+		Version   int                          `json:"archiveVersion"`
+		Title     string                       `json:"title"`
+		Project   json.RawMessage              `json:"project"`
+		Files     []designArchiveSourceFixture `json:"files"`
+		Binary    []struct{}                   `json:"binaryAssets"`
+		Authoring api.ArtifactManifest         `json:"authoringManifest"`
+	}{
+		Version: version,
+		Title:   "Portable Design",
+		Project: json.RawMessage(`{"schemaVersion":1,"runtime":"static_web","entrypoint":"index.html","artifactKind":"website"}`),
+		Files:   []designArchiveSourceFixture{{"index.html", "text/html", len(designArchiveSource), digestOf(designArchiveSource)}},
+		Binary:  []struct{}{},
+		Authoring: api.ArtifactManifest{
+			SchemaVersion: 1, DefaultPageID: "home", SharedDesign: api.ArtifactSharedDesign{Version: 1},
+			Assets: []api.ArtifactAsset{},
+			Pages: []api.ArtifactManifestPage{{
+				ID: "home", Title: "Home", Entrypoint: "index.html", Kind: "website", Surface: "web",
+				DefaultViewport: api.ArtifactViewport{Width: 1440, Height: 900}, ScaffoldVersion: "1",
+			}},
+		},
+	}
+	require.NoError(t, json.NewEncoder(part).Encode(manifest))
+	require.NoError(t, writer.Close())
+	return data.String()
+}
+
+type designArchiveSourceFixture struct {
+	Path          string `json:"path"`
+	MediaType     string `json:"mediaType"`
+	ByteLength    int    `json:"byteLength"`
+	ContentDigest string `json:"contentDigest"`
+}
+
+func TestDesignsExportRefusesV1WithoutSelectedInventory(t *testing.T) {
+	const designPath = "/artifacts/" + artID
+	archiveBytes := designArchiveFixture(t, 1)
+	artifact := api.Artifact{
+		ID: artID, CurrentDraftVersionID: verID,
+		CurrentVersion: api.ArtifactVersion{
+			ID: verID,
+			Files: []api.ArtifactFileRef{
+				{Path: "index.html", MediaType: "text/html", ContentDigest: digestOf(designArchiveSource), UTF8Bytes: int64(len(designArchiveSource))},
+			},
+			AuthoringManifest: api.ArtifactManifest{
+				Assets: []api.ArtifactAsset{{Path: "vendor/chart.js", MediaType: "application/javascript", ContentDigest: digestOf("chart bytes")}},
+			},
+		},
+	}
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET " + designPath: func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, artifact)
+		},
+		"GET " + designPath + "/versions/" + verID + "/archive": func(w http.ResponseWriter, r *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactArchive{
+				URL:        "http://" + r.Host + "/signed/old.zip",
+				ByteLength: int64(len(archiveBytes)), ContentDigest: digestOf(archiveBytes),
+			})
+		},
+		"GET /signed/old.zip": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, archiveBytes)
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	t.Setenv("GO_TEST", "1")
+	filename := filepath.Join(t.TempDir(), "kept.zip")
+	require.NoError(t, os.WriteFile(filename, []byte("existing"), 0o600))
+	result := testutil.RunCommand(t, []string{"designs", "export", artID, "-o", filename, "--json"}, "")
+	assert.NotEqual(t, 0, result.ExitCode)
+	assert.Contains(t, result.Stderr, "requires an API that supports portable ZIP v2")
+	assert.True(t, readFile(t, filename) == "existing", "existing destination changed")
 }

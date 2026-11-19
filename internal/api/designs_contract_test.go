@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -76,6 +78,13 @@ type designContractTransport func(*http.Request) (*http.Response, error)
 func (f designContractTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func designContractRequest(_ any, err error) error { return err }
+
+func designContractUpload(data string) ArtifactUpload {
+	return ArtifactUpload{
+		ByteLength: int64(len(data)), ContentDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(data))),
+		Open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(data)), nil },
+	}
+}
 
 func TestDesignsOpenAPIContract(t *testing.T) {
 	snapshotJSON, err := os.ReadFile("../../testdata/artifacts.openapi.json")
@@ -154,7 +163,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		}},
 		{"post", "/artifacts/", "200", ArtifactCreateInput{}, ArtifactCreateResult{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactCreate(ctx, ArtifactCreateInput{},
-				ArtifactCheckFile{Path: "assets/hero.png", MediaType: "image/png", Data: []byte("image bytes")}))
+				ArtifactCheckFile{Path: "assets/hero.png", MediaType: "image/png", ArtifactUpload: designContractUpload("image bytes")}))
 		}},
 		{"get", artifact, "200", nil, Artifact{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactGet(ctx, id))
@@ -203,19 +212,30 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 				return err
 			}
 			return designContractRequest(c.ArtifactCheck(ctx, ArtifactCheckInput{},
-				ArtifactCheckFile{Path: "assets/hero.png", MediaType: "image/png", Data: []byte("image bytes")}))
+				ArtifactCheckFile{Path: "assets/hero.png", MediaType: "image/png", ArtifactUpload: designContractUpload("image bytes")}))
 		}},
 		{"get", version + "/build", "200", nil, ArtifactBuildResult{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactBuild(ctx, id, versionID, 10))
+			if _, err := c.ArtifactBuild(ctx, id, versionID, 10); err != nil {
+				return err
+			}
+			return designContractRequest(c.ArtifactBuildForPreview(ctx, id, versionID, 10))
+		}},
+		{"get", version + "/pages/{pageId}/preview", "200", nil, ArtifactPreview{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactPagePreview(ctx, id, versionID, "home"))
 		}},
 		{"post", artifact + "/assets", "200", multipartAsset{}, ArtifactUploadedAsset{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactAssetUpload(ctx, id, "assets/logo.png", []byte("image bytes"), "image", "Logo"))
+			return designContractRequest(c.ArtifactAssetUpload(ctx, id, ArtifactCheckFile{Path: "assets/logo.png", MediaType: "image/png", ArtifactUpload: designContractUpload("image bytes")}, "image", "Logo"))
+		}},
+		{"get", artifact + "/design-assets", "200", nil, struct {
+			Assets []ArtifactUploadedAsset `json:"assets"`
+		}{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactAssets(ctx, id))
 		}},
 		{"get", version + "/archive", "200", nil, ArtifactArchive{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactArchiveLink(ctx, id, versionID))
+			return designContractRequest(c.ArtifactArchiveLink(ctx, id, versionID, 2))
 		}},
 		{"post", "/artifacts/archives", "200", multipartArchive{}, Artifact{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactImport(ctx, "design.zip", []byte("archive bytes"), "key", "codex"))
+			return designContractRequest(c.ArtifactImport(ctx, "design.zip", designContractUpload("archive bytes"), "key", "codex"))
 		}},
 		{"post", version + "/restore", "201", ArtifactRestoreInput{}, ArtifactPushResult{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactRestore(ctx, id, versionID, ArtifactRestoreInput{}))
@@ -299,9 +319,14 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			called := false
 			client.httpClient.Transport = designContractTransport(func(r *http.Request) (*http.Response, error) {
 				called = true
+				if r.Body != nil {
+					_, err := io.Copy(io.Discard, r.Body)
+					require.NoError(t, err)
+					require.NoError(t, r.Body.Close())
+				}
 				assert.Equal(t, strings.ToUpper(route.method), r.Method)
 				assert.Equal(t, strings.NewReplacer("{artifactId}", id, "{versionId}", versionID,
-					"{collection}", "answers", "{key}", "item-1").Replace(route.path), r.URL.Path)
+					"{pageId}", "home", "{collection}", "answers", "{key}", "item-1").Replace(route.path), r.URL.Path)
 				if route.method == "post" && (route.path == "/artifacts/" || route.path == "/artifacts/check") {
 					mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 					require.NoError(t, err)
@@ -332,6 +357,26 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			assert.True(t, called)
 		})
 	}
+
+	build := snapshot.Paths[version+"/build"]["get"]
+	t.Run("preview versus evidence wait", func(t *testing.T) {
+		var waitFor *designContractSchema
+		for _, param := range build.Parameters {
+			if param.In == "query" && param.Name == "waitFor" {
+				waitFor = param.Schema
+			}
+		}
+		require.NotNil(t, waitFor)
+		assert.True(t, waitFor.allows("preview"))
+		assert.True(t, waitFor.allows("evidence"))
+
+		response := build.Responses["200"].Content["application/json"].Schema
+		evidence := response.field("evidenceStatus")
+		require.NotNil(t, evidence)
+		for _, status := range []string{"pending", "ready", "failed"} {
+			assert.True(t, evidence.allows(status), "evidence status %q is missing", status)
+		}
+	})
 
 	conflict := snapshot.Paths[artifact+"/versions"]["post"].Responses["409"].Content["application/json"].Schema
 	require.NotNil(t, conflict)
@@ -415,4 +460,21 @@ func assertDesignContractFields(t *testing.T, schema *designContractSchema, mode
 		}
 		assertDesignContractFields(t, child, field.Type, path+"."+name)
 	}
+}
+
+// A changed file must abort a streaming form before its closing boundary.
+func TestDesignsUploadRefusesChangedFile(t *testing.T) {
+	client := New("https://api.example", "tok_test_fake", time.Second)
+	client.httpClient.Transport = designContractTransport(func(r *http.Request) (*http.Response, error) {
+		defer r.Body.Close()
+		_, err := io.Copy(io.Discard, r.Body)
+		require.ErrorContains(t, err, "file differs from its scanned size or SHA-256")
+		return nil, err
+	})
+	file := designContractUpload("before")
+	file.Open = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("change")), nil }
+	_, err := client.ArtifactCreate(context.Background(), ArtifactCreateInput{}, ArtifactCheckFile{
+		Path: "vendor/example.js", MediaType: "application/javascript", ArtifactUpload: file,
+	})
+	require.ErrorContains(t, err, "file differs from its scanned size or SHA-256")
 }

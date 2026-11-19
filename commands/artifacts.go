@@ -32,6 +32,7 @@ func newDesignsCmd(cli *CLI) *cobra.Command {
 		newDesignGuideCmd(cli),
 		newDesignDataCmd(cli),
 		newDesignInitCmd(cli),
+		newDesignVendorCmd(cli),
 		newDesignPullCmd(cli),
 		newDesignStatusCmd(cli),
 		newDesignDiffCmd(cli),

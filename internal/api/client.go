@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptrace"
 	"net/textproto"
 	"os"
 	"path/filepath"
@@ -81,6 +83,15 @@ func (e *APIError) ExitCode() int {
 		return exitcodes.RateLimit
 	default:
 		return exitcodes.Error
+	}
+}
+
+func (e *APIError) readRetryAfter(header http.Header) {
+	value := header.Get("Retry-After")
+	if seconds, err := strconv.ParseUint(value, 10, 31); err == nil {
+		e.RetryAfterSeconds = int(seconds)
+	} else if at, err := http.ParseTime(value); err == nil {
+		e.RetryAfterSeconds = int(min(max(0, at.Unix()-time.Now().Unix()), 1<<31-1))
 	}
 }
 
@@ -187,13 +198,7 @@ func (c *Client) uploadMultipart(ctx context.Context, path, filename, mediaType 
 		if apiErr.Message == "" {
 			apiErr.Message = http.StatusText(resp.StatusCode)
 		}
-		if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
-			if seconds, err := strconv.ParseUint(retryAfter, 10, 31); err == nil {
-				apiErr.RetryAfterSeconds = int(seconds)
-			} else if at, err := http.ParseTime(retryAfter); err == nil {
-				apiErr.RetryAfterSeconds = int(min(max(0, at.Unix()-time.Now().Unix()), 1<<31-1))
-			}
-		}
+		apiErr.readRetryAfter(resp.Header)
 		return nil, apiErr
 	}
 	return respBody, nil
@@ -279,16 +284,57 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 type multipartRequest struct {
-	data        []byte
-	contentType string
+	boundary string
+	write    func(*multipart.Writer) error
+}
+
+func newMultipartRequest(write func(*multipart.Writer) error) multipartRequest {
+	return multipartRequest{boundary: multipart.NewWriter(io.Discard).Boundary(), write: write}
+}
+
+func (body multipartRequest) stream(ctx context.Context) (io.ReadCloser, <-chan error, context.Context, func()) {
+	reader, writer := io.Pipe()
+	finished := make(chan error, 1)
+	ctx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(120*time.Second, func() { cancel(errors.New("upload timed out")) })
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) { timer.Stop() },
+	})
+	go func() {
+		multipartWriter := multipart.NewWriter(writer)
+		if err := multipartWriter.SetBoundary(body.boundary); err != nil {
+			finished <- err
+			_ = writer.CloseWithError(err)
+			return
+		}
+		err := body.write(multipartWriter)
+		if err == nil {
+			err = multipartWriter.Close()
+		}
+		finished <- err
+		_ = writer.CloseWithError(err)
+	}()
+	return reader, finished, ctx, func() {
+		timer.Stop()
+		cancel(nil)
+		_ = reader.Close()
+	}
 }
 
 func (c *Client) doOnce(ctx context.Context, method, path string, body, out any) error {
 	var bodyReader io.Reader
 	contentType := "application/json"
-	if multipart, ok := body.(multipartRequest); ok {
-		bodyReader = bytes.NewReader(multipart.data)
-		contentType = multipart.contentType
+	httpClient := c.httpClient
+	var uploadFinished <-chan error
+	if form, ok := body.(multipartRequest); ok {
+		reader, finished, uploadCtx, stop := form.stream(ctx)
+		defer stop()
+		ctx, bodyReader, uploadFinished = uploadCtx, reader, finished
+		contentType = "multipart/form-data; boundary=" + form.boundary
+		bulkClient := *httpClient
+		// Allow a full upload plus the time a synchronous Design check can take.
+		bulkClient.Timeout = max(httpClient.Timeout, 220*time.Second)
+		httpClient = &bulkClient
 	} else if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
@@ -311,11 +357,21 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 		fmt.Fprintf(c.verbose, ">> %s %s\n", method, req.URL.String())
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("api: %w", err)
 	}
 	defer resp.Body.Close()
+	if uploadFinished != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		select {
+		case err := <-uploadFinished:
+			if err != nil {
+				return fmt.Errorf("api: write multipart request: %w", err)
+			}
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
 
 	// 204 No Content is the only success status that never has a body.
 	// 202 Accepted may carry a queued-job response.
@@ -358,6 +414,9 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 		}
 		if apiErr.Message == "" {
 			apiErr.Message = http.StatusText(resp.StatusCode)
+		}
+		if uploadFinished != nil {
+			apiErr.readRetryAfter(resp.Header)
 		}
 		return apiErr
 	}

@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/testutil"
@@ -208,6 +210,160 @@ func TestDesignsPush(t *testing.T) {
 	asset, err := os.ReadFile(filepath.Join(dir, localPath))
 	require.NoError(t, err)
 	assert.Equal(t, png, asset)
+}
+
+func TestDesignsPushReusesMatchingCheck(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		edit          func(*testing.T, string)
+		rejected      bool
+		expectedCalls int32
+	}{
+		{name: "identical files and base", expectedCalls: 1},
+		{name: "changed contents", expectedCalls: 2, edit: func(t *testing.T, dir string) {
+			writePublishFixture(t, filepath.Join(dir, designEntrypoint), []byte("changed after check"))
+		}},
+		{name: "different file set", expectedCalls: 2, edit: func(t *testing.T, dir string) {
+			writePublishFixture(t, filepath.Join(dir, "style.css"), []byte("p { color: red; }"))
+		}},
+		{name: "different base", expectedCalls: 2, edit: func(t *testing.T, dir string) {
+			editDesignCheckState(t, dir, func(state map[string]json.RawMessage) {
+				state["baseVersionId"] = json.RawMessage(`"` + ver2ID + `"`)
+			})
+		}},
+		{name: "expired", expectedCalls: 2, edit: func(t *testing.T, dir string) {
+			editDesignCheckState(t, dir, func(state map[string]json.RawMessage) {
+				var receipt map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(state["lastCheck"], &receipt))
+				receipt["checkedAt"], _ = json.Marshal(time.Now().Add(-31 * time.Minute).Format(time.RFC3339Nano))
+				state["lastCheck"], _ = json.Marshal(receipt)
+			})
+		}},
+		{name: "rejected check invalidates a previous pass", rejected: true, expectedCalls: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := designPublishFolder(t)
+			var checks atomic.Int32
+			const prefix = "/artifacts/" + artID + "/versions"
+			srv := testutil.NewMockServer(t, testutil.MockRoutes{
+				"POST /artifacts/check": func(w http.ResponseWriter, _ *http.Request) {
+					n := checks.Add(1)
+					testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": !test.rejected || n != 2})
+				},
+				"POST " + prefix: func(w http.ResponseWriter, _ *http.Request) {
+					testutil.RespondJSON(w, http.StatusCreated, map[string]any{
+						"outcome": "created", "artifactId": artID, "headRevision": 5,
+						"version": artifactVersionFixture(ver2ID, 5), "buildState": "queued",
+					})
+				},
+				"GET " + prefix + "/" + ver2ID: func(w http.ResponseWriter, _ *http.Request) {
+					testutil.RespondJSON(w, http.StatusOK, artifactVersionFixture(ver2ID, 5))
+				},
+			}.Handler())
+			setupHome(t, srv.URL)
+
+			check := []string{"designs", "check", dir, "--json"}
+			passed := testutil.RunCommand(t, check, "")
+			require.Equal(t, 0, passed.ExitCode, passed.Stderr)
+			state, err := os.ReadFile(filepath.Join(dir, ".copera", "design.json"))
+			require.NoError(t, err)
+			assert.Contains(t, string(state), `"lastCheck"`)
+			if test.rejected {
+				failed := testutil.RunCommand(t, check, "")
+				require.Equal(t, 1, failed.ExitCode, failed.Stderr)
+			}
+			if test.edit != nil {
+				test.edit(t, dir)
+			}
+
+			push := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit", "--json"}, "")
+			require.Equal(t, 0, push.ExitCode, push.Stderr)
+			assert.Equal(t, test.expectedCalls, checks.Load())
+		})
+	}
+}
+
+func editDesignCheckState(t *testing.T, dir string, edit func(map[string]json.RawMessage)) {
+	t.Helper()
+	name := filepath.Join(dir, ".copera", "design.json")
+	data, err := os.ReadFile(name)
+	require.NoError(t, err)
+	var state map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &state))
+	edit(state)
+	data, err = json.Marshal(state)
+	require.NoError(t, err)
+	writePublishFixture(t, name, data)
+}
+
+func TestDesignsPushWaitForPreview(t *testing.T) {
+	const (
+		prefix   = "/artifacts/" + artID + "/versions"
+		readyAt  = "2026-11-18T15:00:00Z"
+		shellURL = "https://preview.example/exact-version"
+	)
+	for _, test := range []struct {
+		name          string
+		build         map[string]any
+		expectedError string
+	}{
+		{name: "preview while evidence is pending", build: map[string]any{
+			"state": "building", "done": false, "previewReadyAt": readyAt, "evidenceStatus": "pending",
+		}},
+		{name: "assembly fails", expectedError: "artifact_compile_failed", build: map[string]any{
+			"state": "failed", "done": true, "previewReadyAt": nil, "evidenceStatus": "failed", "failureCode": "artifact_compile_failed",
+		}},
+		{name: "old API ignores waitFor", expectedError: "--wait", build: map[string]any{
+			"state": "ready", "done": true,
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := designPublishFolder(t)
+			var previews, versionReads atomic.Int32
+			srv := testutil.NewMockServer(t, testutil.MockRoutes{
+				"POST " + prefix: func(w http.ResponseWriter, _ *http.Request) {
+					compact := artifactVersionFixture(ver2ID, 5)
+					delete(compact, "authoringManifest")
+					testutil.RespondJSON(w, http.StatusCreated, map[string]any{
+						"outcome": "created", "artifactId": artID, "headRevision": 5,
+						"version": compact, "buildState": "queued",
+					})
+				},
+				"GET " + prefix + "/" + ver2ID: func(w http.ResponseWriter, _ *http.Request) {
+					versionReads.Add(1)
+					testutil.RespondJSON(w, http.StatusOK, artifactVersionFixture(ver2ID, 5))
+				},
+				"GET " + prefix + "/" + ver2ID + "/build": func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, "preview", r.URL.Query().Get("waitFor"))
+					testutil.RespondJSON(w, http.StatusOK, test.build)
+				},
+				"GET " + prefix + "/" + ver2ID + "/pages/home/preview": func(w http.ResponseWriter, _ *http.Request) {
+					n := previews.Add(1)
+					response := map[string]string{"status": "ready"}
+					if n > 1 {
+						response["url"] = shellURL
+					}
+					testutil.RespondJSON(w, http.StatusOK, response)
+				},
+			}.Handler())
+			setupHome(t, srv.URL)
+
+			push := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit", "--no-check", "--wait-for-preview", "--json"}, "")
+			if test.expectedError != "" {
+				require.Equal(t, 1, push.ExitCode, push.Stderr)
+				assert.Contains(t, push.Stderr, test.expectedError)
+				assert.Zero(t, previews.Load())
+				state, err := os.ReadFile(filepath.Join(dir, ".copera", "design.json"))
+				require.NoError(t, err)
+				assert.Contains(t, string(state), `"baseVersionId": "`+ver2ID+`"`)
+				return
+			}
+			require.Equal(t, 0, push.ExitCode, push.Stderr)
+			assert.JSONEq(t, `{"artifactId":"`+artID+`","versionId":"`+ver2ID+`","state":"building","previewReadyAt":"`+readyAt+`","evidenceStatus":"pending","url":"`+shellURL+`"}`, push.Stdout)
+			assert.EqualValues(t, 2, previews.Load())
+			assert.EqualValues(t, 1, versionReads.Load())
+		})
+	}
 }
 
 func TestDesignsFirstPushWithImages(t *testing.T) {
@@ -523,4 +679,64 @@ func TestDesignsScreenshot(t *testing.T) {
 	image, err := os.ReadFile(file)
 	require.NoError(t, err)
 	assert.Equal(t, "mobile", string(image))
+}
+
+func TestDesignsCheckClassifiesVendorAndMedia(t *testing.T) {
+	dir := t.TempDir()
+	const tracked = "vendor/authored.js"
+	state := struct {
+		Kind    string            `json:"kind"`
+		Runtime string            `json:"runtime"`
+		Files   map[string]string `json:"files"`
+	}{"website", "static_web", map[string]string{tracked: digestOf("old")}}
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+	writePublishFixture(t, filepath.Join(dir, ".copera", "design.json"), data)
+	writePublishFixture(t, filepath.Join(dir, tracked), []byte("const authored = true;"))
+
+	vendor := "/*" + strings.Repeat("x", 1<<20) + "*/"
+	media := "\x00\x00\x00\x18ftypmp42" + strings.Repeat("\x00", 5<<20)
+	const vendorPath, mediaPath = "vendor/npm/chart/1.2.3/chart.JS", "movie.MP4"
+	writePublishFixture(t, filepath.Join(dir, vendorPath), []byte(vendor))
+	writePublishFixture(t, filepath.Join(dir, mediaPath), []byte(media))
+
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+			reader, err := r.MultipartReader()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			project, err := reader.NextPart()
+			if !assert.NoError(t, err) {
+				return
+			}
+			var input api.ArtifactCheckInput
+			assert.NoError(t, json.NewDecoder(project).Decode(&input))
+			assert.Equal(t, []api.ArtifactContentFile{{Path: tracked, MediaType: "text/javascript", Content: "const authored = true;"}}, input.Files)
+			for _, file := range []struct{ path, mime, digest string }{
+				{mediaPath, "video/mp4", digestOf(media)},
+				{vendorPath, "application/javascript", digestOf(vendor)},
+			} {
+				part, err := reader.NextPart()
+				if !assert.NoError(t, err) {
+					return
+				}
+				_, params, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+				assert.NoError(t, err)
+				assert.Equal(t, file.path, params["filename"])
+				assert.Equal(t, file.mime, part.Header.Get("Content-Type"))
+				hash := sha256.New()
+				_, err = io.Copy(hash, part)
+				assert.NoError(t, err)
+				assert.Equal(t, file.digest, hex.EncodeToString(hash.Sum(nil)))
+			}
+			_, err = reader.NextPart()
+			assert.ErrorIs(t, err, io.EOF)
+			testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	result := testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
+	require.Equal(t, 0, result.ExitCode, result.Stderr)
 }
