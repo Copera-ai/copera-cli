@@ -189,7 +189,7 @@ func newMediaSpeechCmd(cli *CLI) *cobra.Command {
 		Args:  publicCommandArgs(1, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var err error
-			input.Text, err = mediaText(args[0], "text", 5000)
+			input.Text, err = mediaText(args[0], "text", 50_000)
 			if err != nil {
 				return publicInputError(cli, err.Error())
 			}

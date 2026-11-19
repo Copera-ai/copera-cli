@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/copera/copera-cli/internal/testutil"
@@ -166,6 +167,29 @@ func TestMediaSpeechPreservesHTTPErrorCodeAndExit(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(res.Stderr), &errorBody))
 	assert.Equal(t, "media_daily_limit_reached", errorBody.Error)
+}
+
+func TestMediaSpeechNarrationLength(t *testing.T) {
+	narration := strings.Repeat("Word. ", 8333) + "Go"
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /media/speech": func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Text string `json:"text"`
+			}
+			if assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
+				assert.True(t, body.Text == narration, "the complete narration must reach the API")
+			}
+			testutil.RespondJSON(w, http.StatusPaymentRequired, map[string]string{
+				"code": "media_daily_limit_reached", "message": "Daily limit reached.",
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	accepted := testutil.RunCommand(t, []string{"media", "speech", narration, "--language", "en", "--idempotency-key", "long-speech", "--json"}, "")
+	assert.Contains(t, accepted.Stderr, "media_daily_limit_reached")
+	rejected := testutil.RunCommand(t, []string{"media", "speech", narration + "!", "--language", "en", "--idempotency-key", "oversize-speech", "--json"}, "")
+	assert.Contains(t, rejected.Stderr, "50000 UTF-16 code units")
 }
 
 func TestMediaSpeechRecordsExactProjectAssetPin(t *testing.T) {
