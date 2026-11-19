@@ -469,6 +469,72 @@ func TestDesignsFirstPushWithImages(t *testing.T) {
 	assert.Equal(t, digestOf(png+"logo"), state.Files[logo])
 }
 
+func TestDesignsForcePushStockReviewWithMissingIndexes(t *testing.T) {
+	const (
+		entrypoint = "index.html"
+		html       = "<h1>Review</h1>"
+		guidance   = "shared/DESIGN.md"
+		tokens     = "shared/tokens.css"
+		components = "shared/components.json"
+		assets     = "shared/assets.json"
+	)
+	remote := designPullFixture(entrypoint, html, 1)
+	remote.CurrentVersion.AuthoringManifest.SharedDesign = api.ArtifactSharedDesign{
+		Version: 1, GuidancePath: guidance, TokensPath: tokens, ComponentsPath: components, AssetsPath: assets,
+	}
+	remote.CurrentVersion.Files = append(remote.CurrentVersion.Files,
+		api.ArtifactFileRef{Path: guidance, MediaType: "text/markdown", ContentDigest: digestOf("# Review")},
+		api.ArtifactFileRef{Path: tokens, MediaType: "text/css", ContentDigest: digestOf("body {}")},
+		api.ArtifactFileRef{Path: components, MediaType: "application/json", ContentDigest: digestOf(`{"schemaVersion":1,"components":[]}`)},
+		api.ArtifactFileRef{Path: assets, MediaType: "application/json", ContentDigest: digestOf(`{"schemaVersion":1,"assets":[]}`)},
+	)
+	const guide = `{"version":1,"kind":"web_app","runtime":"static_web","markdown":"# Review","facts":{},"template":{
+		"id":"review","subject":"Review","project":{"artifactKind":"web_app","runtime":"static_web","entrypoint":"index.html","capabilities":` + reviewDeclarations + `},
+		"files":[{"path":"index.html","mediaType":"text/html","content":"<h1>Review</h1>"},
+			{"path":"shared/DESIGN.md","mediaType":"text/markdown","content":"# Review"},
+			{"path":"shared/tokens.css","mediaType":"text/css","content":"body {}"}]}}`
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(guide))
+		},
+		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
+		},
+		"POST /artifacts/": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusCreated, remote)
+		},
+		"GET /artifacts/" + artID: func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, remote)
+		},
+		"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+			var input api.ArtifactPushInput
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&input)) || !assert.NotNil(t, input.AuthoringManifest) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assert.ElementsMatch(t, []string{components, assets}, input.RemovedPaths)
+			if !assert.Equal(t, api.ArtifactSharedDesign{Version: 1, GuidancePath: guidance, TokensPath: tokens}, input.AuthoringManifest.SharedDesign) {
+				testutil.RespondJSON(w, http.StatusBadRequest, map[string]string{"message": "manifest references missing shared indexes"})
+				return
+			}
+			version := remote.CurrentVersion
+			version.ID, version.Version, version.AuthoringManifest = ver2ID, 2, *input.AuthoringManifest
+			testutil.RespondJSON(w, http.StatusCreated, api.ArtifactPushResult{
+				Outcome: "created", ArtifactID: artID, HeadRevision: 2, Version: version,
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	dir := filepath.Join(t.TempDir(), "review")
+	init := testutil.RunCommand(t, []string{"designs", "init", dir, "--template", "review", "--json"}, "")
+	require.Equal(t, 0, init.ExitCode, init.Stderr)
+	create := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "First version", "--no-check", "--json"}, "")
+	require.Equal(t, 0, create.ExitCode, create.Stderr)
+	forced := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Update review", "--force", "--no-check", "--json"}, "")
+	require.Equal(t, 0, forced.ExitCode, forced.Stderr)
+}
+
 func TestDesignsFirstPushRejected(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "draft")
 	var creates atomic.Int32

@@ -254,12 +254,18 @@ func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os
 	if err != nil {
 		return nil, false, err
 	}
-	if force || !slices.Equal(state.Manifest.Assets, manifest.Assets) || !slices.Equal(state.Manifest.Documents, manifest.Documents) {
-		input.AuthoringManifest = &manifest
-	}
 	if force {
+		shared := &manifest.SharedDesign
+		for _, index := range []*string{&shared.ComponentsPath, &shared.AssetsPath} {
+			if slices.Contains(input.RemovedPaths, *index) {
+				*index = ""
+			}
+		}
 		project := designProject(state)
 		input.Project = &project
+	}
+	if force || !slices.Equal(state.Manifest.Assets, manifest.Assets) || !slices.Equal(state.Manifest.Documents, manifest.Documents) {
+		input.AuthoringManifest = &manifest
 	}
 	input.IdempotencyKey, err = designPushKey("", input)
 	if err != nil {
