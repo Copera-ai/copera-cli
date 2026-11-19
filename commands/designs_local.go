@@ -9,10 +9,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/exitcodes"
@@ -209,7 +211,7 @@ func checkDesignPullTargets(root *os.Root, remote map[string]designFile) error {
 		}
 	}
 	for _, file := range remote {
-		if err := check(path.Join(designBaseDir, sha256Hex(file.Data))); err != nil {
+		if err := check(path.Join(designBaseDir, file.checksum())); err != nil {
 			return err
 		}
 	}
@@ -280,7 +282,7 @@ func validateRemoteDesignVersion(version *api.ArtifactVersion) error {
 	return nil
 }
 
-func readRemoteDesignFiles(ctx context.Context, client *api.Client, id string, version *api.ArtifactVersion) (map[string]designFile, error) {
+func readRemoteDesignFiles(ctx context.Context, client *api.Client, id string, version *api.ArtifactVersion, staging string) (map[string]designFile, error) {
 	if err := validateRemoteDesignVersion(version); err != nil {
 		return nil, err
 	}
@@ -329,19 +331,27 @@ func readRemoteDesignFiles(ctx context.Context, client *api.Client, id string, v
 		}
 		files[file.Path] = designFile{Data: data, MediaType: file.MediaType}
 	}
+	var assetBytes int64
 	for _, asset := range version.AuthoringManifest.Assets {
 		signed := assets[asset.Path]
 		if signed.URL == nil || *signed.URL == "" {
 			return nil, fmt.Errorf("design asset %q has no download link", asset.Path)
 		}
-		data, err := downloadHandoffAsset(ctx, client, *signed.URL)
+		temp, err := os.CreateTemp(staging, "asset-*")
 		if err != nil {
+			return nil, err
+		}
+		limit := min(designAssetLimit(asset.MediaType), (256<<20)-assetBytes)
+		n, err := downloadDesignBytes(ctx, client, *signed.URL, temp, 0, limit, asset.ContentDigest)
+		if err := errors.Join(err, temp.Close()); err != nil {
 			return nil, fmt.Errorf("download design asset %q: %w", asset.Path, err)
 		}
-		if asset.ContentDigest != "" && sha256Hex(data) != asset.ContentDigest {
-			return nil, fmt.Errorf("design asset %q does not match its checksum", asset.Path)
+		assetBytes += n
+		file := api.ArtifactUpload{
+			ByteLength: n, ContentDigest: asset.ContentDigest,
+			Open: func() (io.ReadCloser, error) { return os.Open(temp.Name()) },
 		}
-		files[asset.Path] = designFile{Data: data, MediaType: asset.MediaType, Binary: true}
+		files[asset.Path] = designFile{MediaType: asset.MediaType, Binary: true, Upload: &file}
 	}
 	return files, nil
 }
@@ -373,7 +383,8 @@ func newDesignPullCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
+			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
 			artifact, err := client.ArtifactGet(ctx, id)
 			if err != nil {
 				return designError(cli, err)
@@ -411,7 +422,14 @@ func newDesignPullCmd(cli *CLI) *cobra.Command {
 }
 
 func pullDesignVersion(ctx context.Context, client *api.Client, dir, id string, version *api.ArtifactVersion, headRevision int, workspaceID string) ([]string, error) {
-	remote, err := readRemoteDesignFiles(ctx, client, id, version)
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	staging, err := os.MkdirTemp("", "copera-design-pull-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(staging)
+	remote, err := readRemoteDesignFiles(ctx, client, id, version, staging)
 	if err != nil {
 		return nil, err
 	}
@@ -487,12 +505,9 @@ func applyDesignPull(root *os.Root, state *designState, remote map[string]design
 			}
 		}
 	}
-	local, localPaths, err := scanDesignTree(root)
+	local, localPaths, err := scanDesignTree(root, previous)
 	if err != nil {
 		return nil, err
-	}
-	if previous != nil {
-		markDesignAssets(previous, local)
 	}
 	remotePaths := make(designPaths)
 	for name := range remote {
@@ -546,10 +561,10 @@ func applyDesignPull(root *os.Root, state *designState, remote map[string]design
 	for _, name := range names {
 		next, exists := merged[name]
 		before, existed := local[name]
-		if !exists || (existed && bytes.Equal(before.Data, next.Data)) {
+		if !exists || (existed && sameDesignContent(before, next)) {
 			continue
 		}
-		if err := writeDesignFile(root, name, next.Data); err != nil {
+		if err := writeDesignContent(root, name, next); err != nil {
 			return nil, err
 		}
 	}
@@ -581,11 +596,10 @@ func newDesignStatusCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			local, err := scanDesignFiles(root)
+			local, err := scanDesignFiles(root, state)
 			if err != nil {
 				return designError(cli, err)
 			}
-			markDesignAssets(state, local)
 			status := struct {
 				ID            string         `json:"id"`
 				BaseVersionID string         `json:"baseVersionId"`
@@ -644,11 +658,10 @@ func newDesignDiffCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			local, err := scanDesignFiles(root)
+			local, err := scanDesignFiles(root, state)
 			if err != nil {
 				return designError(cli, err)
 			}
-			markDesignAssets(state, local)
 			changes := designChanges(state, local)
 			for index := range changes {
 				if err := designDiff(&changes[index], base, local); err != nil {

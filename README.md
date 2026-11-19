@@ -313,6 +313,7 @@ copera designs log <id|url> [--json]
 copera designs guide [--kind K] [--runtime static|react]
 copera designs guide --topic design-system-from-codebase
 copera designs init <dir> --kind K [--runtime static|react] [--system NAME_OR_ID | --no-system] [--kit none|shadcn]
+copera designs vendor <url> [--dir DIR] [--path P]
 copera designs pull <id|url> [dir] [--version N]
 copera designs status [dir]
 copera designs diff [dir]
@@ -373,6 +374,11 @@ brand and optional kit. You can import one using another account's profile.
 Use `systems refresh` from a Design's local folder to merge an updated install
 with its local edits. `fork --plain` creates an editable private React copy
 without managed shadcn ownership.
+
+`vendor` saves exact-version cdnjs or jsDelivr npm JavaScript, CSS and JSON,
+or a Google Fonts stylesheet and its WOFF2 files, in an initialized Design.
+Use the printed local paths in your HTML or CSS. The command prints each path
+and its SHA-256, and refuses to overwrite a file with different bytes.
 
 `check` uses multipart for local binaries that still need uploading and
 JSON otherwise. The first `push` creates the Design and saves text and
