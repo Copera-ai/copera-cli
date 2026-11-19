@@ -20,6 +20,7 @@ import (
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/exitcodes"
 	"github.com/copera/copera-cli/internal/output"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -181,15 +182,46 @@ func newMediaImageCmd(cli *CLI) *cobra.Command {
 }
 
 func newMediaSpeechCmd(cli *CLI) *cobra.Command {
+	const maxTextUnits = 50_000
+	const maxInputBytes = maxTextUnits * 4
 	var opts mediaSubmission
 	var input api.MediaSpeechInput
+	var filename string
 	cmd := &cobra.Command{
-		Use:   "speech <text>",
+		Use:   "speech [text | --file path]",
 		Short: "Synthesize narration using workspace AI credits",
-		Args:  publicCommandArgs(1, 1),
+		Long:  "Synthesize narration using workspace AI credits. Read text from stdin when no argument or file is given.",
+		Args:  publicCommandArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var narration string
+			if len(args) == 1 {
+				if cmd.Flags().Changed("file") {
+					return publicInputError(cli, "choose either positional text or --file")
+				}
+				narration = args[0]
+			} else {
+				source := cli.Stdin
+				if cmd.Flags().Changed("file") {
+					file, err := os.Open(filename)
+					if err != nil {
+						return publicInputError(cli, fmt.Sprintf("read narration file: %s", err))
+					}
+					defer file.Close()
+					source = file
+				} else if f, ok := source.(*os.File); ok && (isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())) {
+					return publicInputError(cli, "provide narration as positional text, --file, or piped stdin")
+				}
+				raw, err := io.ReadAll(io.LimitReader(source, maxInputBytes+1))
+				if err != nil {
+					return publicInputError(cli, fmt.Sprintf("read narration: %s", err))
+				}
+				if len(raw) > maxInputBytes {
+					return publicInputError(cli, fmt.Sprintf("narration input must be at most %d bytes", maxInputBytes))
+				}
+				narration = string(raw)
+			}
 			var err error
-			input.Text, err = mediaText(args[0], "text", 50_000)
+			input.Text, err = mediaText(narration, "text", maxTextUnits)
 			if err != nil {
 				return publicInputError(cli, err.Error())
 			}
@@ -206,6 +238,7 @@ func newMediaSpeechCmd(cli *CLI) *cobra.Command {
 		},
 	}
 	opts.addFlags(cmd)
+	cmd.Flags().StringVar(&filename, "file", "", "Read narration from a file")
 	cmd.Flags().StringVar(&input.Language, "language", "", "Narration language tag")
 	cmd.Flags().StringVar(&input.Voice, "voice", "", "Voice ID. Defaults to the language's default voice.")
 	cmd.Flags().StringVar(&input.Format, "format", "", "Output format: mp3, wav, or opus")

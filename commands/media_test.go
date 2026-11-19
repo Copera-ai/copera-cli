@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/copera/copera-cli/internal/testutil"
@@ -190,6 +191,46 @@ func TestMediaSpeechNarrationLength(t *testing.T) {
 	assert.Contains(t, accepted.Stderr, "media_daily_limit_reached")
 	rejected := testutil.RunCommand(t, []string{"media", "speech", narration + "!", "--language", "en", "--idempotency-key", "oversize-speech", "--json"}, "")
 	assert.Contains(t, rejected.Stderr, "50000 UTF-16 code units")
+}
+
+func TestMediaSpeechReadsLongNarrationFromFileAndStdin(t *testing.T) {
+	narration := strings.Repeat("語", 24999) + "\n\n" + strings.Repeat("字", 24999)
+	var requests atomic.Int32
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /media/speech": func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			var body struct {
+				Text string `json:"text"`
+			}
+			if assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
+				assert.True(t, body.Text == narration, "the complete narration must reach the API")
+			}
+			testutil.RespondJSON(w, http.StatusPaymentRequired, map[string]string{
+				"code": "media_daily_limit_reached", "message": "Daily limit reached.",
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	file := filepath.Join(t.TempDir(), "narration.txt")
+	require.NoError(t, os.WriteFile(file, []byte(narration+"\n"), 0o600))
+	args := []string{"media", "speech", "--language", "en", "--idempotency-key", "long-speech", "--json"}
+
+	fromFile := testutil.RunCommand(t, append(args, "--file", file), "")
+	assert.Equal(t, 1, fromFile.ExitCode, "stderr: %s", fromFile.Stderr)
+	assert.Contains(t, fromFile.Stderr, "media_daily_limit_reached")
+
+	fromStdin := testutil.RunCommand(t, args, narration+"\n")
+	assert.Equal(t, 1, fromStdin.ExitCode, "stderr: %s", fromStdin.Stderr)
+	assert.Contains(t, fromStdin.Stderr, "media_daily_limit_reached")
+
+	ambiguous := testutil.RunCommand(t, append(args, "--file", file, "Explain"), "")
+	assert.Equal(t, 2, ambiguous.ExitCode, "stderr: %s", ambiguous.Stderr)
+	assert.Contains(t, ambiguous.Stderr, "choose either positional text or --file")
+
+	oversize := testutil.RunCommand(t, args, narration+"!")
+	assert.Equal(t, 2, oversize.ExitCode, "stderr: %s", oversize.Stderr)
+	assert.Contains(t, oversize.Stderr, "50000 UTF-16 code units")
+	assert.Equal(t, int32(2), requests.Load())
 }
 
 func TestMediaSpeechRecordsExactProjectAssetPin(t *testing.T) {
