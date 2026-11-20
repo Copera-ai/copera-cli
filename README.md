@@ -358,6 +358,8 @@ Use `assets add --path` to choose the asset's path explicitly.
 `log` shows the version number, date, origin, author kind, tool, and change
 summary in the table and in JSON.
 
+For `designs data`, pass the revision as read to `--if-revision`. Public submissions use a 22-character token.
+
 `copera designs handoff` pulls everything a coding agent (or you) needs to
 build the artifact as a real app into one folder:
 

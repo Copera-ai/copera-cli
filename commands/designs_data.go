@@ -21,8 +21,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const maxDesignDataRevision = 1<<53 - 1
 const designDataPollInterval = 3 * time.Second
+const designDataRevisionHelp = "Record revision as last read. Public submissions use a 22-character token"
 
 var (
 	designDataCollection = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
@@ -183,17 +183,17 @@ func newDesignDataListCmd(cli *CLI) *cobra.Command {
 }
 
 func newDesignDataSetCmd(cli *CLI) *cobra.Command {
-	var file, subject string
+	var file, subject, revisionFlag string
 	var create bool
-	var revision int64
 	cmd := &cobra.Command{
 		Use:   "set <id|url> <collection> <key>",
 		Short: "Create or replace a Design record",
 		Args:  designDataArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			withRevision := cmd.Flags().Changed("if-revision")
-			if create == withRevision || (withRevision && (revision < 1 || revision > maxDesignDataRevision)) {
-				return designUsageError(cli, fmt.Errorf("provide exactly one of --create or --if-revision with a positive safe integer"))
+			revision, err := api.ParseArtifactDataRevision(revisionFlag)
+			if create == withRevision || (withRevision && err != nil) {
+				return designUsageError(cli, fmt.Errorf("provide exactly one of --create or --if-revision with a positive safe integer or a 22-character token"))
 			}
 			if cmd.Flags().Changed("subject") && (create || !designDataSubmission.MatchString(subject)) {
 				return designUsageError(cli, fmt.Errorf("--subject requires a Design viewer or public visitor ID and an existing revision"))
@@ -216,7 +216,7 @@ func newDesignDataSetCmd(cli *CLI) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&file, "file", "", "JSON object file, or - for stdin")
 	cmd.Flags().BoolVar(&create, "create", false, "Create the record only if its key is unused")
-	cmd.Flags().Int64Var(&revision, "if-revision", 0, "Replace only this record revision")
+	cmd.Flags().StringVar(&revisionFlag, "if-revision", "", designDataRevisionHelp)
 	cmd.Flags().StringVar(&subject, "subject", "", "Viewer or public visitor ID of an existing shared submission")
 	return cmd
 }
@@ -245,15 +245,15 @@ func newDesignDataBatchCmd(cli *CLI) *cobra.Command {
 }
 
 func newDesignDataDeleteCmd(cli *CLI) *cobra.Command {
-	var subject string
-	var input api.ArtifactDataDeleteInput
+	var subject, revisionFlag string
 	cmd := &cobra.Command{
 		Use:   "delete <id|url> <collection> <key>",
 		Short: "Delete a Design record at a specific revision",
 		Args:  designDataArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if input.IfRevision < 1 || input.IfRevision > maxDesignDataRevision {
-				return designUsageError(cli, fmt.Errorf("--if-revision requires a positive safe integer"))
+			revision, err := api.ParseArtifactDataRevision(revisionFlag)
+			if err != nil {
+				return designUsageError(cli, fmt.Errorf("--if-revision requires a positive safe integer or a 22-character token"))
 			}
 			if cmd.Flags().Changed("subject") && !designDataSubject.MatchString(subject) {
 				return designUsageError(cli, fmt.Errorf("--subject must be a Design viewer ID"))
@@ -262,11 +262,11 @@ func newDesignDataDeleteCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := client.ArtifactDataDelete(cmd.Context(), id, args[1], args[2], subject, input)
+			response, err := client.ArtifactDataDelete(cmd.Context(), id, args[1], args[2], subject, api.ArtifactDataDeleteInput{IfRevision: revision})
 			return printDesignData(cli, response, err)
 		},
 	}
-	cmd.Flags().Int64Var(&input.IfRevision, "if-revision", 0, "Delete only this record revision")
+	cmd.Flags().StringVar(&revisionFlag, "if-revision", "", designDataRevisionHelp)
 	cmd.Flags().StringVar(&subject, "subject", "", "Viewer ID of a shared submission")
 	return cmd
 }

@@ -104,6 +104,19 @@ func designContractUpload(data string) ArtifactUpload {
 	}
 }
 
+func TestArtifactDataRevisionJSON(t *testing.T) {
+	for _, wire := range []string{`9007199254740991`, `"abcdefghijklmnopqrs-_1"`} {
+		t.Run(wire, func(t *testing.T) {
+			input := `{"ifRevision":` + wire + `}`
+			var request ArtifactDataDeleteInput
+			require.NoError(t, json.Unmarshal([]byte(input), &request))
+			body, err := json.Marshal(request)
+			require.NoError(t, err)
+			assert.Equal(t, input, string(body))
+		})
+	}
+}
+
 func TestDesignsOpenAPIContract(t *testing.T) {
 	snapshotJSON, err := os.ReadFile("../../testdata/artifacts.openapi.json")
 	require.NoError(t, err)
@@ -135,11 +148,11 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		DesignSystems []ArtifactDesignSystem `json:"designSystems"`
 	}
 	type dataRecordBody struct {
-		Key       string          `json:"key"`
-		Revision  int64           `json:"revision"`
-		UpdatedAt string          `json:"updatedAt"`
-		Subject   *string         `json:"subject"`
-		Value     json.RawMessage `json:"value"`
+		Key       string               `json:"key"`
+		Revision  ArtifactDataRevision `json:"revision"`
+		UpdatedAt string               `json:"updatedAt"`
+		Subject   *string              `json:"subject"`
+		Value     json.RawMessage      `json:"value"`
 	}
 	type dataOne struct {
 		DataNotice string         `json:"dataNotice"`
@@ -273,7 +286,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			return designContractRequest(c.ArtifactDataSet(ctx, id, "answers", "item-1", "", ArtifactDataSetInput{Value: json.RawMessage(`{}`)}))
 		}},
 		{"delete", dataRecord, "200", ArtifactDataDeleteInput{}, dataDelete{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactDataDelete(ctx, id, "answers", "item-1", "", ArtifactDataDeleteInput{IfRevision: 1}))
+			return designContractRequest(c.ArtifactDataDelete(ctx, id, "answers", "item-1", "", ArtifactDataDeleteInput{IfRevision: ArtifactDataRevision{wire: "1"}}))
 		}},
 		{"post", data + "/batch", "200", dataBatchInput{}, dataBatch{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactDataBatch(ctx, id, "answers", json.RawMessage(`{"records":[{"key":"item-1","ifRevision":1,"value":{}}]}`)))
