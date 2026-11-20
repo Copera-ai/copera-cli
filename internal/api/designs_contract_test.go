@@ -25,6 +25,10 @@ type designContractSchema struct {
 	Enum       []json.RawMessage
 	Required   []string
 	Format     string
+	Type       string
+	Minimum    int64
+	Maximum    int64
+	Pattern    string
 }
 
 func TestPhase6DesignCapabilitiesDecode(t *testing.T) {
@@ -105,14 +109,37 @@ func designContractUpload(data string) ArtifactUpload {
 }
 
 func TestArtifactDataRevisionJSON(t *testing.T) {
-	for _, wire := range []string{`9007199254740991`, `"abcdefghijklmnopqrs-_1"`} {
-		t.Run(wire, func(t *testing.T) {
-			input := `{"ifRevision":` + wire + `}`
+	for _, tc := range []struct {
+		wire  string
+		valid bool
+	}{
+		{`9007199254740991`, true},
+		{`"abcdefghijklmnopqrs-_1"`, true},
+		{`9007199254740992`, false},
+		{`"short"`, false},
+	} {
+		t.Run(tc.wire, func(t *testing.T) {
 			var request ArtifactDataDeleteInput
-			require.NoError(t, json.Unmarshal([]byte(input), &request))
+			var record struct {
+				Revision ArtifactDataRevision `json:"revision"`
+			}
+			requestJSON := `{"ifRevision":` + tc.wire + `}`
+			recordJSON := `{"revision":` + tc.wire + `}`
+			requestErr := json.Unmarshal([]byte(requestJSON), &request)
+			recordErr := json.Unmarshal([]byte(recordJSON), &record)
+			if !tc.valid {
+				assert.ErrorIs(t, requestErr, errArtifactDataRevision)
+				assert.ErrorIs(t, recordErr, errArtifactDataRevision)
+				return
+			}
+			require.NoError(t, requestErr)
+			require.NoError(t, recordErr)
 			body, err := json.Marshal(request)
 			require.NoError(t, err)
-			assert.Equal(t, input, string(body))
+			assert.Equal(t, requestJSON, string(body))
+			body, err = json.Marshal(record)
+			require.NoError(t, err)
+			assert.Equal(t, recordJSON, string(body))
 		})
 	}
 }
@@ -133,6 +160,26 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		data       = artifact + "/data/{collection}"
 		dataRecord = data + "/records/{key}"
 	)
+	t.Run("record revision union", func(t *testing.T) {
+		record := snapshot.Paths[dataRecord]
+		request := record["delete"].RequestBody.Content["application/json"].Schema
+		response := record["get"].Responses["200"].Content["application/json"].Schema
+		require.NotNil(t, request)
+		require.NotNil(t, response)
+		require.NotNil(t, response.field("record"))
+		want := []*designContractSchema{
+			{Type: "integer", Minimum: 1, Maximum: 9007199254740991},
+			{Type: "string", Pattern: "^[A-Za-z0-9_-]{22}$"},
+		}
+		for name, field := range map[string]*designContractSchema{
+			"ifRevision": request.field("ifRevision"),
+			"revision":   response.field("record").field("revision"),
+		} {
+			if assert.NotNil(t, field, "%s is missing from the snapshot", name) {
+				assert.ElementsMatch(t, want, field.AnyOf, "%s must allow safe integers and revision tokens", name)
+			}
+		}
+	})
 	type multipartAsset struct {
 		File     string                `json:"file"`
 		Metadata artifactAssetMetadata `json:"metadata"`

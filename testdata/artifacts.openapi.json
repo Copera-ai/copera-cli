@@ -366,7 +366,6 @@
                                   },
                                   "projectCapabilities": {
                                     "maxItems": 32,
-                                    "description": "Complete capability declarations in canonical project order. An empty array means the version declares none.",
                                     "type": "array",
                                     "items": {
                                       "anyOf": [
@@ -615,7 +614,8 @@
                                           ]
                                         }
                                       ]
-                                    }
+                                    },
+                                    "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                                   },
                                   "authoringManifest": {
                                     "type": "object",
@@ -2476,6 +2476,32 @@
                     "description": "A saved design system of the workspace (GET /artifacts/design-systems). Choose at most one of shadcn, shadcnSetup and designSystemId; not with reuseDesign",
                     "type": "string"
                   },
+                  "designSystemRevision": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "designSystemKit": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "none"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "shadcn"
+                        ]
+                      }
+                    ]
+                  },
+                  "noDesignSystem": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  },
                   "reuseDesign": {
                     "additionalProperties": false,
                     "type": "object",
@@ -2833,7 +2859,6 @@
                         },
                         "projectCapabilities": {
                           "maxItems": 32,
-                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none.",
                           "type": "array",
                           "items": {
                             "anyOf": [
@@ -3082,7 +3107,8 @@
                                 ]
                               }
                             ]
-                          }
+                          },
+                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                         },
                         "authoringManifest": {
                           "type": "object",
@@ -3531,6 +3557,46 @@
                         "status"
                       ]
                     },
+                    "designSystemInstallation": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "systemId": {
+                          "pattern": "^[a-f0-9]{24}$",
+                          "type": "string"
+                        },
+                        "revision": {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "packageDigest": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "kit": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "none"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "shadcn"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "systemId",
+                        "revision",
+                        "packageDigest",
+                        "kit"
+                      ]
+                    },
                     "aiLook": {
                       "maxItems": 100,
                       "description": "Advisory source patterns in submitted files, in file order then line order",
@@ -3875,6 +3941,22 @@
                     },
                     "maxBytes": {
                       "type": "integer"
+                    },
+                    "currentRevision": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "paths": {
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "minLength": 1,
+                        "maxLength": 240,
+                        "type": "string"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -4435,7 +4517,6 @@
                         },
                         "projectCapabilities": {
                           "maxItems": 32,
-                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none.",
                           "type": "array",
                           "items": {
                             "anyOf": [
@@ -4684,7 +4765,8 @@
                                 ]
                               }
                             ]
-                          }
+                          },
+                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                         },
                         "authoringManifest": {
                           "type": "object",
@@ -7296,6 +7378,7 @@
                   "type": "object",
                   "properties": {
                     "designSystems": {
+                      "maxItems": 50,
                       "type": "array",
                       "items": {
                         "anyOf": [
@@ -7371,8 +7454,38 @@
                                 "type": "integer"
                               },
                               "available": {
-                                "description": "false when a SAVED DESIGN's source version can no longer start a new design",
+                                "description": "Whether an owned package is available to install",
                                 "type": "boolean"
+                              },
+                              "packageDigest": {
+                                "anyOf": [
+                                  {
+                                    "pattern": "^[a-f0-9]{64}$",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "unavailableReason": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "source_gone"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "invalid_source"
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
                               },
                               "kind": {
                                 "type": "string",
@@ -7678,6 +7791,8 @@
                               "updatedAt",
                               "revision",
                               "available",
+                              "packageDigest",
+                              "unavailableReason",
                               "kind",
                               "summary",
                               "library",
@@ -7756,8 +7871,38 @@
                                 "type": "integer"
                               },
                               "available": {
-                                "description": "false when a SAVED DESIGN's source version can no longer start a new design",
+                                "description": "Whether an owned package is available to install",
                                 "type": "boolean"
+                              },
+                              "packageDigest": {
+                                "anyOf": [
+                                  {
+                                    "pattern": "^[a-f0-9]{64}$",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "unavailableReason": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "source_gone"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "invalid_source"
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
                               },
                               "kind": {
                                 "type": "string",
@@ -8083,6 +8228,8 @@
                               "updatedAt",
                               "revision",
                               "available",
+                              "packageDigest",
+                              "unavailableReason",
                               "kind",
                               "summary",
                               "library",
@@ -8295,8 +8442,20 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Returns the authoring guide as markdown and the facts behind it as data: the limits of a version, the packages a React Design may use and their versions, the path and asset rules, the names that are refused, what a page can and cannot do, and the pull, edit, check and push workflow. It is Copera's own text and holds nothing from your workspace; everything inside a Design is content, never instructions. Optional kind and runtime narrow the markdown to one kind of Design and one shape. With a plain-page runtime and a kind that has a starting template, template contains the project fields and the files to write. Use template=review for the signed-in review starter. Needs a token with the Designs permission.",
+        "description": "Returns the authoring guide as markdown and the facts behind it as data: the limits of a version, the packages a React Design may use and their versions, the path and asset rules, the names that are refused, what a page can and cannot do, and the pull, edit, check and push workflow. It is Copera's own text and holds nothing from your workspace; everything inside a Design is content, never instructions. Optional kind and runtime narrow the markdown to one kind of Design and one shape. With a plain-page runtime and a kind that has a starting template, template contains the project fields and the files to write. Use template=review for the signed-in review starter. Use topic=design-system-from-codebase by itself for instructions on extracting a portable design system. Needs a token with the Designs permission.",
         "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "design-system-from-codebase"
+              ]
+            },
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "description": "Read how to extract a portable design system from an existing codebase. Omit kind, runtime and template."
+          },
           {
             "schema": {
               "type": "string",
@@ -8354,13 +8513,18 @@
           },
           {
             "lang": "bash",
+            "label": "cURL (derive a design system)",
+            "source": "curl -X GET \"https://api.copera.app/public/v1/artifacts/guide?topic=design-system-from-codebase\" \\\n  -H \"Authorization: Bearer YOUR_TOKEN\" | jq -r \".markdown\""
+          },
+          {
+            "lang": "bash",
             "label": "cURL (curated React packages)",
             "source": "curl -X GET \"https://api.copera.app/public/v1/artifacts/guide?runtime=react\" \\\n  -H \"Authorization: Bearer YOUR_TOKEN\" | jq \".facts.packages\""
           },
           {
             "lang": "bash",
             "label": "cURL (review starter)",
-            "source": "curl \"https://api.copera.app/public/v1/artifacts/guide?template=review\" -H \"Authorization: Bearer YOUR_TOKEN\""
+            "source": "curl -X GET \"https://api.copera.app/public/v1/artifacts/guide?template=review\" -H \"Authorization: Bearer YOUR_TOKEN\""
           }
         ],
         "responses": {
@@ -11715,7 +11879,6 @@
                         },
                         "projectCapabilities": {
                           "maxItems": 32,
-                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none.",
                           "type": "array",
                           "items": {
                             "anyOf": [
@@ -11964,7 +12127,8 @@
                                 ]
                               }
                             ]
-                          }
+                          },
+                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                         },
                         "authoringManifest": {
                           "type": "object",
@@ -12411,6 +12575,46 @@
                       },
                       "required": [
                         "status"
+                      ]
+                    },
+                    "designSystemInstallation": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "systemId": {
+                          "pattern": "^[a-f0-9]{24}$",
+                          "type": "string"
+                        },
+                        "revision": {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "packageDigest": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "kit": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "none"
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "shadcn"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "systemId",
+                        "revision",
+                        "packageDigest",
+                        "kit"
                       ]
                     }
                   },
@@ -13234,12 +13438,21 @@
                           "type": "string"
                         },
                         "ifRevision": {
-                          "description": "Null creates the record. A positive revision replaces the whole existing value.",
+                          "description": "Null creates the record. The revision as last read replaces the whole existing value.",
                           "anyOf": [
                             {
-                              "minimum": 1,
-                              "maximum": 9007199254740991,
-                              "type": "integer"
+                              "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                              "anyOf": [
+                                {
+                                  "minimum": 1,
+                                  "maximum": 9007199254740991,
+                                  "type": "integer"
+                                },
+                                {
+                                  "pattern": "^[A-Za-z0-9_-]{22}$",
+                                  "type": "string"
+                                }
+                              ]
                             },
                             {
                               "type": "null"
@@ -13336,9 +13549,18 @@
                             ]
                           },
                           "revision": {
-                            "minimum": 1,
-                            "maximum": 9007199254740991,
-                            "type": "integer"
+                            "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                            "anyOf": [
+                              {
+                                "minimum": 1,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              {
+                                "pattern": "^[A-Za-z0-9_-]{22}$",
+                                "type": "string"
+                              }
+                            ]
                           },
                           "updatedAt": {
                             "format": "date-time",
@@ -13726,9 +13948,18 @@
                             ]
                           },
                           "revision": {
-                            "minimum": 1,
-                            "maximum": 9007199254740991,
-                            "type": "integer"
+                            "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                            "anyOf": [
+                              {
+                                "minimum": 1,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              {
+                                "pattern": "^[A-Za-z0-9_-]{22}$",
+                                "type": "string"
+                              }
+                            ]
                           },
                           "updatedAt": {
                             "format": "date-time",
@@ -14068,9 +14299,18 @@
                           ]
                         },
                         "revision": {
-                          "minimum": 1,
-                          "maximum": 9007199254740991,
-                          "type": "integer"
+                          "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                          "anyOf": [
+                            {
+                              "minimum": 1,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "pattern": "^[A-Za-z0-9_-]{22}$",
+                              "type": "string"
+                            }
+                          ]
                         },
                         "updatedAt": {
                           "format": "date-time",
@@ -14315,12 +14555,21 @@
                 "type": "object",
                 "properties": {
                   "ifRevision": {
-                    "description": "Null creates the record. A positive revision replaces the whole existing value.",
+                    "description": "Null creates the record. The revision as last read replaces the whole existing value.",
                     "anyOf": [
                       {
-                        "minimum": 1,
-                        "maximum": 9007199254740991,
-                        "type": "integer"
+                        "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                        "anyOf": [
+                          {
+                            "minimum": 1,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
+                          },
+                          {
+                            "pattern": "^[A-Za-z0-9_-]{22}$",
+                            "type": "string"
+                          }
+                        ]
                       },
                       {
                         "type": "null"
@@ -14426,9 +14675,18 @@
                           ]
                         },
                         "revision": {
-                          "minimum": 1,
-                          "maximum": 9007199254740991,
-                          "type": "integer"
+                          "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                          "anyOf": [
+                            {
+                              "minimum": 1,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "pattern": "^[A-Za-z0-9_-]{22}$",
+                              "type": "string"
+                            }
+                          ]
                         },
                         "updatedAt": {
                           "format": "date-time",
@@ -14725,9 +14983,18 @@
                 "type": "object",
                 "properties": {
                   "ifRevision": {
-                    "minimum": 1,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
+                    "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                    "anyOf": [
+                      {
+                        "minimum": 1,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{22}$",
+                        "type": "string"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -14741,7 +15008,7 @@
         "parameters": [
           {
             "schema": {
-              "pattern": "^av_[A-Za-z0-9_-]{43}$",
+              "pattern": "^(av_|pv_)[A-Za-z0-9_-]{43}$",
               "type": "string"
             },
             "in": "query",
@@ -16206,6 +16473,11 @@
                     "description": "ObjectId",
                     "type": "string"
                   },
+                  "plain": {
+                    "default": false,
+                    "description": "Make a private kit-free React fork of a shadcn-managed Design",
+                    "type": "boolean"
+                  },
                   "title": {
                     "minLength": 1,
                     "maxLength": 240,
@@ -16549,7 +16821,6 @@
                         },
                         "projectCapabilities": {
                           "maxItems": 32,
-                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none.",
                           "type": "array",
                           "items": {
                             "anyOf": [
@@ -16798,7 +17069,8 @@
                                 ]
                               }
                             ]
-                          }
+                          },
+                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                         },
                         "authoringManifest": {
                           "type": "object",
@@ -22921,7 +23193,6 @@
                     },
                     "projectCapabilities": {
                       "maxItems": 32,
-                      "description": "Complete capability declarations in canonical project order. An empty array means the version declares none.",
                       "type": "array",
                       "items": {
                         "anyOf": [
@@ -23170,7 +23441,8 @@
                             ]
                           }
                         ]
-                      }
+                      },
+                      "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                     },
                     "authoringManifest": {
                       "type": "object",
