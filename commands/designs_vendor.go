@@ -300,7 +300,7 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 		return nil, "", fmt.Errorf("vendor download from %s must contain 1 to %d bytes", req.URL.Host, limit)
 	}
 	mediaType := res.Header.Get("Content-Type")
-	if mediaType != "" {
+	if mediaType != "" && req.URL.Host != "fonts.gstatic.com" {
 		mediaType, _, err = mime.ParseMediaType(mediaType)
 		if err != nil {
 			return nil, "", fmt.Errorf("vendor download from %s returned an invalid content type", req.URL.Host)
@@ -533,11 +533,11 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 				remote := value
 				name := urls[remote]
 				if name == "" {
-					font, mediaType, err := downloadDesignVendor(ctx, client, remote, designVendorFileLimit, bytesLeft)
+					font, _, err := downloadDesignVendor(ctx, client, remote, designVendorFileLimit, bytesLeft)
 					if err != nil {
 						return nil, err
 					}
-					if !validDesignVendorWOFF2(font, mediaType) {
+					if !validDesignVendorWOFF2(font) {
 						return nil, fmt.Errorf("Google Fonts returned an invalid WOFF2 file")
 					}
 					file := newDesignVendorFile("", font, "local_sha256")
@@ -568,11 +568,9 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 	return files, nil
 }
 
-func validDesignVendorWOFF2(data []byte, mediaType string) bool {
+func validDesignVendorWOFF2(data []byte) bool {
 	const headerSize = 48
-	return (mediaType == "" || mediaType == "font/woff2" || mediaType == "application/font-woff2" ||
-		mediaType == "application/octet-stream") &&
-		len(data) > headerSize && string(data[:4]) == "wOF2" &&
+	return len(data) > headerSize && string(data[:4]) == "wOF2" &&
 		binary.BigEndian.Uint32(data[8:12]) == uint32(len(data)) &&
 		binary.BigEndian.Uint16(data[12:14]) > 0 && binary.BigEndian.Uint16(data[14:16]) == 0 &&
 		binary.BigEndian.Uint32(data[20:24]) > 0 && binary.BigEndian.Uint32(data[20:24]) < uint32(len(data)-headerSize)

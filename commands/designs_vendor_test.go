@@ -156,7 +156,7 @@ func TestDesignVendorScopedNPMAndRedirect(t *testing.T) {
 func TestDesignVendorGoogleFontsSnapshotsLocalCSS(t *testing.T) {
 	const remote = "https://fonts.googleapis.com/css2?family=Inter&display=swap"
 	const canonical = "https://fonts.googleapis.com/css2?display=swap&family=Inter"
-	const font = "https://fonts.gstatic.com/s/inter/v20/example.woff2"
+	const font = "https://fonts.gstatic.com/l/font?kit=example"
 	fontBytes := make([]byte, 64)
 	copy(fontBytes, "wOF2")
 	binary.BigEndian.PutUint32(fontBytes[8:12], uint32(len(fontBytes)))
@@ -169,7 +169,9 @@ func TestDesignVendorGoogleFontsSnapshotsLocalCSS(t *testing.T) {
 		font + ") format('woff2'); unicode-range: U+0000-00FF; }"
 	responses := map[string]vendorTestResponse{
 		canonical: {status: 200, body: "/* latin */\n" + css},
-		font:      {status: 200, body: string(fontBytes)},
+		font: {status: 200, body: string(fontBytes), header: http.Header{
+			"Content-Type": {"text/html; charset=utf-8"},
+		}},
 	}
 	dir := vendorTestFolder(t, responses)
 	got, err := runVendorTestCommand(t, dir, remote)
@@ -195,6 +197,24 @@ func TestDesignVendorGoogleFontsSnapshotsLocalCSS(t *testing.T) {
 	written, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(result.Files[1].Path)))
 	require.NoError(t, err)
 	assert.Equal(t, fontBytes, written)
+
+	for _, test := range []struct {
+		name, body string
+	}{
+		{"HTML", "<html>Not a font</html>"},
+		{"truncated WOFF2", string(fontBytes[:len(fontBytes)-1])},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			original := responses[font]
+			t.Cleanup(func() { responses[font] = original })
+			responses[font] = vendorTestResponse{status: 200, body: test.body, header: http.Header{
+				"Content-Type": {"font/woff2"},
+			}}
+			_, err := runVendorTestCommand(t, dir, remote, "--path", "vendor/invalid/fonts.css")
+			require.ErrorContains(t, err, "Google Fonts returned an invalid WOFF2 file")
+			require.NoDirExists(t, filepath.Join(dir, "vendor", "invalid"))
+		})
+	}
 
 	const css2 = "https://fonts.googleapis.com/css2?"
 	for _, test := range []struct {
