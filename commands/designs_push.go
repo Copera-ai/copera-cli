@@ -138,14 +138,24 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 			if waitForPreview {
 				return waitForDesignPreview(committedCtx, cli, client, pushed, defaultPageID, progress)
 			}
+			appURL, err := designAppURL(ctx, client, state.ID)
+			if err != nil {
+				cli.Printer.Info("Version %s was saved. Run copera designs open %s for its URL: %s", pushed.Version.ID, state.ID, err)
+			}
 			if wait {
-				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, vendorHint, progress)
+				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, vendorHint, progress, appURL)
 			}
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(pushed)
+				return cli.Printer.PrintJSON(struct {
+					*api.ArtifactPushResult
+					URL string `json:"url,omitempty"`
+				}{pushed, appURL})
 			}
 			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", pushed.Version.Version, pushed.Version.ID))
 			cli.Printer.PrintLine("Build: " + pushed.BuildState)
+			if appURL != "" {
+				cli.Printer.PrintLine("URL: " + appURL)
+			}
 			return nil
 		},
 	}
@@ -649,7 +659,7 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 	}
 }
 
-func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, check *designBuildReport, vendorHint func(*designBuildReport), progress string) error {
+func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, check *designBuildReport, vendorHint func(*designBuildReport), progress, appURL string) error {
 	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
 	for {
 		build, err := client.ArtifactBuild(ctx, state.ID, state.BaseVersionID, wait)
@@ -674,7 +684,7 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 
 		report := &designBuildReport{
 			State: build.State, FailureCode: build.FailureCode, ArtifactBuildFindings: build.ArtifactBuildFindings,
-			Version: version,
+			Version: version, URL: appURL,
 		}
 		vendorHint(report)
 		if check != nil {

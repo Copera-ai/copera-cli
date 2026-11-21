@@ -262,7 +262,8 @@ func TestDesignsRootHelperFilesAreLocal(t *testing.T) {
 		"GET /artifacts/" + artID + "/handoff": func(w http.ResponseWriter, _ *http.Request) {
 			content := source
 			testutil.RespondJSON(w, http.StatusOK, api.ArtifactHandoff{
-				Files: []api.ArtifactHandoffFile{{Path: name, Content: &content}},
+				Artifact: api.ArtifactHandoffArtifact{URL: "https://app.copera.ai/acme/ai/artifacts/" + artID},
+				Files:    []api.ArtifactHandoffFile{{Path: name, Content: &content}},
 			})
 		},
 		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {

@@ -319,6 +319,7 @@ type designBuildReport struct {
 	FailureCode string                `json:"failureCode,omitempty"`
 	Warnings    []api.ArtifactWarning `json:"warnings,omitempty"`
 	Version     *api.ArtifactVersion  `json:"version,omitempty"`
+	URL         string                `json:"url,omitempty"`
 	DarkScheme  *bool                 `json:"darkScheme,omitempty"`
 	api.ArtifactBuildFindings
 	Screenshots               []string               `json:"screenshots"`
@@ -383,6 +384,9 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", report.Version.Version, report.Version.ID))
 		}
 		cli.Printer.PrintLine("Build: " + report.State)
+		if report.URL != "" {
+			cli.Printer.PrintLine("URL: " + report.URL)
+		}
 		if report.DarkScheme != nil && !*report.DarkScheme {
 			cli.Printer.PrintLine("darkScheme: false")
 		}
@@ -399,6 +403,9 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 				message = designSourceLocation(entry.Source.File, entry.Source.Line, entry.Source.Column) + ": " + message
 			}
 			cli.Printer.PrintLine(message)
+		}
+		if report.Version != nil && len(report.Screenshots) > 0 {
+			cli.Printer.PrintLine("Screenshots: .copera/shots/")
 		}
 		for _, page := range report.ScreenshotPages {
 			label := "Page " + page.PageID

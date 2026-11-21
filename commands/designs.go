@@ -106,14 +106,9 @@ func newDesignOpenCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pack, err := client.ArtifactHandoff(cmd.Context(), id, api.ArtifactHandoffOpts{})
+			link, err := designAppURL(cmd.Context(), client, id)
 			if err != nil {
 				return designError(cli, err)
-			}
-			link := pack.Artifact.URL
-			u, err := url.Parse(link)
-			if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
-				return designError(cli, fmt.Errorf("the API did not return a valid Design URL"))
 			}
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(struct {
@@ -129,6 +124,19 @@ func newDesignOpenCmd(cli *CLI) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func designAppURL(ctx context.Context, client *api.Client, id string) (string, error) {
+	pack, err := client.ArtifactHandoff(ctx, id, api.ArtifactHandoffOpts{})
+	if err != nil {
+		return "", err
+	}
+	link := pack.Artifact.URL
+	u, err := url.Parse(link)
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("the API did not return a valid Design URL")
+	}
+	return link, nil
 }
 
 type designLogEntry struct {
