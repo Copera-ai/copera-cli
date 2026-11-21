@@ -300,6 +300,14 @@ upload.
 
 ### Designs
 
+#### What's new in 0.18.0
+
+- Build Designs in a local folder, preview changes, and save new versions. Pin web libraries and fonts, reuse a recent check when nothing changed, and wait for a preview with `designs push --wait-for-preview`.
+- Export and import Design systems, choose a default, and apply a saved revision to an existing Design.
+- Start a signed-in review page with `designs init <dir> --template review`. Read, edit, and watch Design records with `designs data`. Use the revision returned by the API when updating a record, including public submissions.
+- Generate images and narration, transcribe audio, and link selected board rows, meeting notes, chats, docs, or Drive files to a Design.
+- Read, reply to, resolve, and watch for Design comments. Use `designs ask` to request a change from Copera AI. Project capability settings travel with Designs when you pull, check, or push them.
+
 `artifacts` is an alias for `designs`. The original read commands require a
 Personal Access Token with Drive access. The authoring commands require a
 token with Designs permission.
