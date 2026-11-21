@@ -1,14 +1,21 @@
 package commands
 
 import (
-	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/copera/copera-cli/internal/build"
-	"github.com/copera/copera-cli/internal/cache"
+	"github.com/copera/copera-cli/internal/exitcodes"
 	"github.com/copera/copera-cli/internal/updater"
 	"github.com/spf13/cobra"
 )
+
+type updateResult struct {
+	Current string `json:"current"`
+	Target  string `json:"target"`
+	Action  string `json:"action"`
+}
 
 func newUpdateCmd(cli *CLI) *cobra.Command {
 	var flagVersion string
@@ -17,35 +24,37 @@ func newUpdateCmd(cli *CLI) *cobra.Command {
 		Use:   "update",
 		Short: "Update copera to the latest version",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if version, resumed, err := updater.ResumeInstall(); resumed {
+				return printUpdateResult(cli, version, "updated", err)
+			}
 			if build.Version == "dev" {
+				if cli.Printer.IsJSON() {
+					return printUpdateResult(cli, "", "", fmt.Errorf("update is unavailable for development builds"))
+				}
 				cli.Printer.Info("Running a development build — update is not available.")
 				return nil
 			}
 
-			version := flagVersion
+			version := strings.TrimPrefix(flagVersion, "v")
 			if version == "" {
-				// Always bypass cache on explicit `copera update` — the user
-				// is asking for a fresh check. The --no-cache flag is kept for
-				// backwards compat but is effectively always true here.
-				result := updater.CheckVersion(context.Background(), cache.SharedDir(), true)
-				if result == nil || !result.HasUpdate {
-					cli.Printer.Info("Already up to date (v%s).", build.Version)
-					return nil
+				latest, err := updater.LatestVersion(cmd.Context())
+				if err != nil {
+					return printUpdateResult(cli, "", "", err)
 				}
-				version = result.Latest
+				version = latest
+				if version == strings.TrimPrefix(build.Version, "v") {
+					return printUpdateResult(cli, version, "up_to_date", nil)
+				}
 			}
 
-			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(map[string]any{
-					"current": build.Version,
-					"target":  version,
-					"action":  "updating",
-				})
+			stdin, _ := cli.Stdin.(*os.File)
+			interactive := !cli.IsNonInteractive() && !cli.Printer.IsJSON() &&
+				stdin != nil && stderrIsTTY(stdin) && stderrIsTTY(cli.Printer.Out)
+			if !cli.Printer.IsJSON() {
+				cli.Printer.PrintLine(fmt.Sprintf("Updating copera: v%s → v%s", build.Version, version))
 			}
 
-			cli.Printer.PrintLine(fmt.Sprintf("Updating copera: v%s → v%s", build.Version, version))
-
-			if !flagForce && !cli.IsNonInteractive() {
+			if !flagForce && interactive {
 				fmt.Fprintf(cli.Printer.Out, "Continue? [Y/n]: ")
 				var ans string
 				fmt.Fscanln(cli.Stdin, &ans)
@@ -55,18 +64,27 @@ func newUpdateCmd(cli *CLI) *cobra.Command {
 				}
 			}
 
-			if err := updater.Update(context.Background(), version); err != nil {
-				cli.Printer.PrintError("update_failed", err.Error(),
-					"Try downloading manually from https://cli.copera.ai", false)
-				return err
-			}
-
-			cli.Printer.Info("Updated to v%s.", version)
-			return nil
+			return printUpdateResult(cli, version, "updated", updater.Update(cmd.Context(), version, interactive))
 		},
 	}
 
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Update to a specific version (e.g. 1.2.0)")
 	cmd.Flags().BoolVar(&flagForce, "force", false, "Skip confirmation prompt")
 	return cmd
+}
+
+func printUpdateResult(cli *CLI, version, action string, err error) error {
+	if err != nil {
+		cli.Printer.PrintError("update_failed", err.Error(), "", false)
+		return exitcodes.New(exitcodes.Error, nil)
+	}
+	if cli.Printer.IsJSON() {
+		return cli.Printer.PrintJSON(updateResult{Current: build.Version, Target: version, Action: action})
+	}
+	if action == "up_to_date" {
+		cli.Printer.Info("Already up to date (v%s).", build.Version)
+	} else {
+		cli.Printer.Info("Updated to v%s.", version)
+	}
+	return nil
 }

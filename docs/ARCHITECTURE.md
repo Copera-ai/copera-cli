@@ -147,6 +147,31 @@ version.go    — version (--json)
 schema.go     — schema <command>
 ```
 
+### Design authoring
+
+- `designs init <dir> --adopt --kind K [--title T] [--entry FILE]` scans an existing
+  static project and writes only local metadata and guide files in `.copera/`.
+  It requests the `existing-app` guide and falls back to the kind guide if
+  the API rejects that topic.
+- `designs vendor --all [dir]` shares the single-URL downloader and rewrites
+  supported source references to project-relative vendor files.
+- `designs check [dir]` renders a dry run. `designs push [dir] -m SUMMARY`
+  saves a version and returns the Design app URL. Check and push with `--wait`
+  report screenshots by page under `.copera/shots/`, including the route
+  and omitted page IDs when the API supplies them. Only the first push accepts
+  `--title`.
+- `designs guide --topic TOPIC` forwards the topic to the API. Known topics
+  include `existing-app`, `narration`, `live-runtime`, and
+  `design-system-from-codebase`.
+
+### Self-update
+
+`copera update` verifies the downloaded release archive against its
+published checksum. In a Unix installation with a writable executable and
+a protected parent directory, it stages the update in a temporary directory
+and keeps a backup during replacement. A terminal is required for any
+elevation prompt. JSON reports the completed result.
+
 ---
 
 ## Auth Flow

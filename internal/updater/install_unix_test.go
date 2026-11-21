@@ -68,7 +68,7 @@ func TestInstallBinaryWritableDirectory(t *testing.T) {
 		return nil
 	}
 
-	require.NoError(t, installBinary(src, dest))
+	require.NoError(t, installBinary(src, dest, "0.19.0", false))
 	installed, err := os.ReadFile(dest)
 	require.NoError(t, err)
 	require.Equal(t, newBinary, installed)
