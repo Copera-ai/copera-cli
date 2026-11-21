@@ -62,6 +62,16 @@ type designVendorFile struct {
 	sourceURLs    []string
 }
 
+type designVendorTemporaryError struct{ error }
+
+func (e designVendorTemporaryError) Unwrap() error { return e.error }
+
+func isDesignVendorTemporary(err error) bool {
+	var temporary designVendorTemporaryError
+	return !errors.Is(err, context.Canceled) &&
+		(errors.Is(err, context.DeadlineExceeded) || errors.As(err, &temporary))
+}
+
 func newDesignVendorCmd(cli *CLI) *cobra.Command {
 	var dir, destination string
 	var all bool
@@ -266,6 +276,14 @@ func validateDesignVendorPath(name, ext string) error {
 }
 
 func downloadDesignVendor(ctx context.Context, client *http.Client, remote string, limit int64, bytesLeft *int64) ([]byte, string, error) {
+	data, mediaType, err := downloadDesignVendorAttempt(ctx, client, remote, limit, bytesLeft)
+	if isDesignVendorTemporary(err) && ctx.Err() == nil {
+		return downloadDesignVendorAttempt(ctx, client, remote, limit, bytesLeft)
+	}
+	return data, mediaType, err
+}
+
+func downloadDesignVendorAttempt(ctx context.Context, client *http.Client, remote string, limit int64, bytesLeft *int64) ([]byte, string, error) {
 	readLimit := limit + 1
 	if bytesLeft != nil {
 		if *bytesLeft == 0 {
@@ -280,11 +298,15 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 	req.Header.Set("User-Agent", designVendorUserAgent)
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", designVendorTemporaryError{err}
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("vendor download from %s returned HTTP %d", req.URL.Host, res.StatusCode)
+		err := fmt.Errorf("vendor download from %s returned HTTP %d", req.URL.Host, res.StatusCode)
+		if res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500 && res.StatusCode < 600 {
+			err = designVendorTemporaryError{err}
+		}
+		return nil, "", err
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, readLimit))
 	if bytesLeft != nil {
@@ -293,11 +315,11 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 			return nil, "", errDesignVendorDownloadLimit
 		}
 	}
-	if err != nil {
-		return nil, "", err
-	}
-	if len(data) == 0 || int64(len(data)) > limit {
+	if int64(len(data)) > limit || (len(data) == 0 && err == nil) {
 		return nil, "", fmt.Errorf("vendor download from %s must contain 1 to %d bytes", req.URL.Host, limit)
+	}
+	if err != nil {
+		return nil, "", designVendorTemporaryError{err}
 	}
 	mediaType := res.Header.Get("Content-Type")
 	if mediaType != "" && req.URL.Host != "fonts.gstatic.com" {
