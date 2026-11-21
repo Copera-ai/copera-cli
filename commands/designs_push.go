@@ -748,7 +748,7 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 				if build.State != "ready" {
 					return designPushError(cli, fmt.Errorf("download Design screenshot: %w", err), progress)
 				}
-				cli.Printer.Info("Warning: download Design screenshot: %s", err)
+				cli.Printer.Info("Warning: download Design screenshot: %s", designsTerminalLine(err.Error()))
 				continue
 			}
 			name, err := saveDesignShot(root, shot.PageID, shot.Width, shot.Scheme, data)
