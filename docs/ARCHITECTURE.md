@@ -151,12 +151,15 @@ schema.go     — schema <command>
 
 - `designs init <dir> --adopt --kind K [--title T] [--entry FILE]` scans an existing
   static project and writes only local metadata and guide files in `.copera/`.
-  It requests the `existing-app` guide and falls back to the kind guide if
-  the API rejects that topic.
+  It declines the default Design system and reports the files it will publish.
+  It uses the kind guide if the `existing-app` topic request fails.
 - `designs vendor --all [dir]` shares the single-URL downloader and rewrites
-  supported source references to project-relative vendor files.
+  supported source references to project-relative vendor files. Each run
+  processes up to 32 distinct URLs and 20 MiB, and reports failed downloads
+  without discarding successful ones.
 - `designs check [dir]` renders a dry run. `designs push [dir] -m SUMMARY`
-  saves a version and returns the Design app URL. Check and push with `--wait`
+  saves a version and returns the Design app URL as `appUrl` in JSON.
+  Preview mode also returns its preview link as `url`. Check and push with `--wait`
   report screenshots by page under `.copera/shots/`, including the route
   and omitted page IDs when the API supplies them. Only the first push accepts
   `--title`.
@@ -166,11 +169,12 @@ schema.go     — schema <command>
 
 ### Self-update
 
-`copera update` verifies the downloaded release archive against its
-published checksum. In a Unix installation with a writable executable and
-a protected parent directory, it stages the update in a temporary directory
-and keeps a backup during replacement. A terminal is required for any
-elevation prompt. JSON reports the completed result.
+`copera update` verifies the downloaded release archive against its published
+checksum. Linux can replace a writable executable in a protected parent
+directory. The staged runner rechecks the executable's SHA-256, reports the
+backup path, and ignores interrupt signals during replacement and recovery.
+On macOS, a protected parent directory requires a terminal for elevation.
+JSON reports the completed result.
 
 ---
 
