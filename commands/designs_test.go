@@ -119,7 +119,7 @@ func TestDesignGuideTopicPassThrough(t *testing.T) {
 		"GET /artifacts/guide": func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Query().Get("topic") {
 			case "future-topic":
-				testutil.RespondJSON(w, http.StatusOK, api.ArtifactGuide{Markdown: "# Future guide\n"})
+				testutil.RespondJSON(w, http.StatusOK, api.ArtifactGuide{Version: 1, Markdown: "# Future <guide> & tools\n"})
 			case "unsupported":
 				testutil.RespondJSON(w, http.StatusBadRequest, map[string]string{
 					"error": "Unknown topic", "code": "INVALID_TOPIC",
@@ -130,9 +130,16 @@ func TestDesignGuideTopicPassThrough(t *testing.T) {
 		},
 	}.Handler())
 	setupHome(t, srv.URL)
-	res := testutil.RunCommand(t, []string{"designs", "guide", "--topic", "future-topic", "--output", "plain"}, "")
+	args := []string{"designs", "guide", "--topic", "future-topic"}
+	res := testutil.RunCommand(t, args, "")
 	require.Equal(t, 0, res.ExitCode, res.Stderr)
-	assert.Equal(t, "# Future guide\n", res.Stdout)
+	assert.Equal(t, "# Future <guide> & tools\n", res.Stdout)
+	for _, flags := range [][]string{{"--json"}, {"--output", "json"}} {
+		res = testutil.RunCommand(t, append(args, flags...), "")
+		require.Equal(t, 0, res.ExitCode, res.Stderr)
+		assert.Contains(t, res.Stdout, `"# Future <guide> & tools\n"`)
+		assert.Contains(t, res.Stdout, `"facts":`)
+	}
 
 	res = testutil.RunCommand(t, []string{"designs", "guide", "--topic", "unsupported", "--json"}, "")
 	assert.NotEqual(t, 0, res.ExitCode)

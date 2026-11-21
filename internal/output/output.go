@@ -75,6 +75,9 @@ func (p *Printer) IsJSON() bool {
 	return p.resolvedFormat() == FormatJSON
 }
 
+// IsExplicitJSON reports whether JSON was selected before auto-detection.
+func (p *Printer) IsExplicitJSON() bool { return p.format == FormatJSON }
+
 // IsTable reports whether the effective output format is a human table.
 func (p *Printer) IsTable() bool {
 	return p.resolvedFormat() == FormatTable
@@ -84,6 +87,7 @@ func (p *Printer) IsTable() bool {
 func (p *Printer) PrintJSON(v any) error {
 	enc := json.NewEncoder(p.Out)
 	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
 	return enc.Encode(v)
 }
 
@@ -117,6 +121,7 @@ func (p *Printer) PrintError(errType, message, suggestion string, transient bool
 		Transient:  transient,
 	}
 	enc := json.NewEncoder(p.Err)
+	enc.SetEscapeHTML(false)
 	if enc.Encode(e) == nil {
 		p.errorPrinted = true
 	}

@@ -20,13 +20,15 @@ import (
 )
 
 func TestDesignsReportMissingLink(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "author's files")
+	dir := filepath.Join(t.TempDir(), "author's files & notes")
 	require.NoError(t, os.Mkdir(dir, 0o755))
 	quoted := "'" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
 	for _, args := range [][]string{{"check", dir}, {"vendor", "--all", dir}} {
 		t.Run(args[0], func(t *testing.T) {
 			res := testutil.RunCommand(t, append([]string{"designs", "--json"}, args...), "")
 			assert.Equal(t, exitcodes.Usage, res.ExitCode)
+			assert.Contains(t, res.Stderr, " --adopt --kind <kind>")
+			assert.Contains(t, res.Stderr, "files & notes")
 			var reported output.StructuredError
 			require.NoError(t, json.Unmarshal([]byte(res.Stderr), &reported))
 			assert.Equal(t, output.StructuredError{

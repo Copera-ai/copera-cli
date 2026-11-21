@@ -425,7 +425,7 @@ func TestDesignVendorAllRewritesReferences(t *testing.T) {
 
 	got, err := stdout("--all", dir, "--json")
 	require.NoError(t, err)
-	assert.Contains(t, got, strings.ReplaceAll(fonts, "&", "\\u0026"))
+	assert.Contains(t, got, fonts)
 	assert.Contains(t, got, stylesheet)
 	assert.Contains(t, got, script)
 	assert.Contains(t, got, scriptPath)

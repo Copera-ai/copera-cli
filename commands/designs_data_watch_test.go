@@ -37,7 +37,7 @@ func TestDesignsDataWatchRetryAndInterrupt(t *testing.T) {
 			retryAfter string
 			body       string
 		}{
-			{0, "", 200, "", `{"dataNotice":"notice","changed":false,"cursor":"start"}`},
+			{0, "", 200, "", `{"dataNotice":"<notice> & data","changed":false,"cursor":"start"}`},
 			{3 * time.Second, "start", 429, "8", `{"code":"rate_limit_exceeded","message":"Wait"}`},
 			{11 * time.Second, "start", 200, "", `{"dataNotice":"notice","changed":false,"cursor":"start"}`},
 			{14 * time.Second, "start", 200, "", `{"dataNotice":"notice","changed":true,"cursor":"new"}`},
@@ -66,7 +66,7 @@ func TestDesignsDataWatchRetryAndInterrupt(t *testing.T) {
 		for _, line := range lines {
 			assert.True(t, json.Valid([]byte(line)))
 		}
-		assert.JSONEq(t, checks[0].body, lines[0])
+		assert.Equal(t, checks[0].body, lines[0])
 		assert.JSONEq(t, checks[3].body, lines[1])
 		assert.Empty(t, stderr.String())
 	})
