@@ -76,7 +76,7 @@ terminal. The noninteractive error gives the exact command when elevation is nee
 ### What's new in 0.19.0
 
 - Publish an existing static app with `designs init --adopt`, `designs vendor --all`, and `designs push --wait`. Adoption lists the files to publish, skips hidden paths, and refuses credential files. Bulk vendoring keeps successful downloads and reports skips.
-- Set the Design title on init or first push, or let Copera CLI infer it from distinct page titles.
+- Set the Design title on init or first push, or let Copera CLI infer it from the entry page and matching page titles.
 - Every push mode prints the Design link. Check and push with `--wait` save screenshots for every page returned by the API.
 - Request an authoring guide with `designs guide --topic`. Adoption uses the kind guide if the topic request fails.
 - Self-update verifies the release checksum and completes in noninteractive and JSON mode.
@@ -430,9 +430,11 @@ it saves and rewrites the successful downloads.
 JSON otherwise. It saves returned screenshots under `.copera/shots/` and
 lists them by page, with the route when available. The first `push` creates
 the Design and saves text and binaries together in version 1. The title
-comes from `push --title`, then `init --title`, then the most widely shared
-leading or trailing part of distinct page titles, with ties favoring the
-entry page. Fallbacks are the entry page's title and a humanized folder name.
+comes from `push --title`, then `init --title`, then a leading or trailing part
+of the entry page's title. The part must occur on the same side of another
+distinct page title whose opposite part differs. More matches win, with ties
+favoring the leading part. Fallbacks are the full entry title and a humanized
+folder name.
 The CLI collapses whitespace in explicit titles and applies the API's
 240-character title limit.
 Use `designs rename` to change a saved Design's title.

@@ -294,26 +294,26 @@ func sharedDesignPageTitle(entryTitle, entrypoint string, files map[string]desig
 		trailing bool
 	}
 	type matches struct {
+		entryOther string
 		count      int
-		firstOther string
 		varies     bool
-		entry      bool
 	}
 	parts := make(map[part]matches)
 	record := func(key part, other string, entry bool) {
-		if other == "" || !strings.ContainsFunc(key.text, func(r rune) bool {
-			return unicode.IsLetter(r) || unicode.IsDigit(r)
-		}) {
+		if other == "" {
 			return
 		}
-		match := parts[key]
-		if match.count == 0 {
-			match.firstOther = other
+		if entry {
+			if strings.ContainsFunc(key.text, func(r rune) bool {
+				return unicode.IsLetter(r) || unicode.IsDigit(r)
+			}) {
+				parts[key] = matches{entryOther: other}
+			}
+		} else if match, ok := parts[key]; ok {
+			match.varies = match.varies || other != match.entryOther
+			match.count++
+			parts[key] = match
 		}
-		match.varies = match.varies || other != match.firstOther
-		match.entry = match.entry || entry
-		match.count++
-		parts[key] = match
 	}
 	addTitle := func(title string, entry bool) {
 		for _, separator := range separators {
@@ -337,23 +337,23 @@ func sharedDesignPageTitle(entryTitle, entrypoint string, files map[string]desig
 			addTitle(title, false)
 		}
 	}
-	var shared string
-	var best matches
+	var shared part
+	var bestCount int
 	for key, match := range parts {
-		if !match.varies || match.count < best.count {
+		if !match.varies || match.count < bestCount {
 			continue
 		}
-		if match.count == best.count {
-			if best.entry && !match.entry {
+		if match.count == bestCount {
+			if key.trailing && !shared.trailing {
 				continue
 			}
-			if best.entry == match.entry && (len(key.text) < len(shared) || len(key.text) == len(shared) && key.text >= shared) {
+			if key.trailing == shared.trailing && len(key.text) <= len(shared.text) {
 				continue
 			}
 		}
-		shared, best = key.text, match
+		shared, bestCount = key, match.count
 	}
-	return shared
+	return shared.text
 }
 
 func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile, summary, title string) (*api.ArtifactPushResult, error) {
