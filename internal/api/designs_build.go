@@ -22,7 +22,7 @@ type ArtifactProjectSettings struct {
 	Entrypoint   string                      `json:"entrypoint,omitempty"`
 	Dependencies []ArtifactDependency        `json:"dependencies,omitempty"`
 	Presentation *ArtifactPresentation       `json:"presentation,omitempty"`
-	Capabilities []ArtifactProjectCapability `json:"capabilities,omitempty"`
+	Capabilities []ArtifactProjectCapability `json:"capabilities,omitzero"`
 }
 
 type ArtifactPresentation struct {
@@ -39,6 +39,20 @@ type ArtifactProjectCapability struct {
 	Migration     *struct {
 		Strategy string `json:"strategy"`
 	} `json:"migration,omitempty"`
+	ContractVersion int                      `json:"contractVersion,omitempty"`
+	Collections     []ArtifactDataCollection `json:"collections,omitempty"`
+}
+
+type ArtifactDataCollection struct {
+	Name   string `json:"name"`
+	Scope  string `json:"scope"`
+	Access string `json:"access,omitempty"`
+}
+
+type ArtifactMemberRuntimeDeclaration struct {
+	Kind            string                   `json:"kind"`
+	ContractVersion int                      `json:"contractVersion"`
+	Collections     []ArtifactDataCollection `json:"collections,omitempty"`
 }
 
 type ArtifactCheckInput struct {

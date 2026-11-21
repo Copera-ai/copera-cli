@@ -83,21 +83,22 @@ type ArtifactPreview struct {
 
 // ArtifactVersion is an immutable artifact version and its file inventory.
 type ArtifactVersion struct {
-	ID                string            `json:"id"`
-	ArtifactID        string            `json:"artifactId"`
-	Version           int               `json:"version"`
-	ParentVersionID   string            `json:"parentVersionId,omitempty"`
-	Runtime           string            `json:"runtime"`
-	Entrypoint        string            `json:"entrypoint"`
-	ContentDigest     string            `json:"contentDigest"`
-	AuthoringManifest ArtifactManifest  `json:"authoringManifest"`
-	Files             []ArtifactFileRef `json:"files"`
-	CreatedAt         time.Time         `json:"createdAt"`
-	Origin            *string           `json:"origin,omitempty"`
-	AuthorKind        *string           `json:"authorKind,omitempty"`
-	Tool              *string           `json:"tool,omitempty"`
-	ChangeSummary     *string           `json:"changeSummary,omitempty"`
-	Preview           *ArtifactPreview  `json:"preview,omitempty"`
+	ID                        string                             `json:"id"`
+	ArtifactID                string                             `json:"artifactId"`
+	Version                   int                                `json:"version"`
+	ParentVersionID           string                             `json:"parentVersionId,omitempty"`
+	Runtime                   string                             `json:"runtime"`
+	Entrypoint                string                             `json:"entrypoint"`
+	ContentDigest             string                             `json:"contentDigest"`
+	AuthoringManifest         ArtifactManifest                   `json:"authoringManifest"`
+	Files                     []ArtifactFileRef                  `json:"files"`
+	CreatedAt                 time.Time                          `json:"createdAt"`
+	Origin                    *string                            `json:"origin,omitempty"`
+	AuthorKind                *string                            `json:"authorKind,omitempty"`
+	Tool                      *string                            `json:"tool,omitempty"`
+	ChangeSummary             *string                            `json:"changeSummary,omitempty"`
+	Preview                   *ArtifactPreview                   `json:"preview,omitempty"`
+	MemberRuntimeDeclarations []ArtifactMemberRuntimeDeclaration `json:"memberRuntimeDeclarations,omitempty"`
 }
 
 // Artifact is an artifact's metadata with its current version.

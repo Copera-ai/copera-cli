@@ -22,17 +22,24 @@ import (
 )
 
 func newDesignInitCmd(cli *CLI) *cobra.Command {
-	var kind, runtime, system, kit string
+	var kind, runtime, system, kit, template string
 	var decline bool
 	cmd := &cobra.Command{
 		Use:   "init <dir>",
 		Short: "Set up a local Design project",
 		Args:  systemArgs(cli, cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(kind) == "" {
+			requestRuntime := runtime
+			if template != "" && !cmd.Flags().Changed("runtime") {
+				requestRuntime = ""
+			}
+			if err := validateDesignTemplate(kind, requestRuntime, template); err != nil {
+				return designUsageError(cli, err)
+			}
+			if template == "" && strings.TrimSpace(kind) == "" {
 				return systemUsage(cli, fmt.Errorf("kind must not be empty"))
 			}
-			if runtime != "static" && runtime != "react" {
+			if template == "" && runtime != "static" && runtime != "react" {
 				return systemUsage(cli, fmt.Errorf("runtime must be static or react"))
 			}
 			if cmd.Flags().Changed("system") && (decline || strings.TrimSpace(system) == "") {
@@ -57,7 +64,7 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			guide, err := client.ArtifactGuide(ctx, kind, runtime)
+			guide, err := client.ArtifactGuide(ctx, kind, requestRuntime, template)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -164,6 +171,7 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 	cmd.Flags().StringVar(&system, "system", "", "Saved design system name or ID")
 	cmd.Flags().BoolVar(&decline, "no-system", false, "Start without a saved Design system")
 	cmd.Flags().StringVar(&kit, "kit", "none", "Optional kit (none or shadcn)")
+	cmd.Flags().StringVar(&template, "template", "", "Starter template (review)")
 	cmd.SetFlagErrorFunc(systemFlags(cli))
 	return cmd
 }
@@ -441,7 +449,7 @@ func pullDesignVersion(ctx context.Context, client *api.Client, dir, id string, 
 		workspaceID = workspace.ID
 	}
 	kind := defaultDesignKind(version.AuthoringManifest)
-	guide, err := client.ArtifactGuide(ctx, kind, version.Runtime)
+	guide, err := client.ArtifactGuide(ctx, kind, version.Runtime, "")
 	if err != nil {
 		return nil, err
 	}
@@ -451,6 +459,11 @@ func pullDesignVersion(ctx context.Context, client *api.Client, dir, id string, 
 	state := &designState{
 		ID: id, Workspace: workspaceID, BaseVersionID: version.ID, HeadRevision: headRevision,
 		Kind: kind, Runtime: version.Runtime, Entrypoint: version.Entrypoint, Manifest: version.AuthoringManifest,
+	}
+	for _, declaration := range version.MemberRuntimeDeclarations {
+		state.Capabilities = append(state.Capabilities, api.ArtifactProjectCapability{
+			Kind: declaration.Kind, ContractVersion: declaration.ContractVersion, Collections: declaration.Collections,
+		})
 	}
 	root, err := openDesignDir(dir, true)
 	if err != nil {

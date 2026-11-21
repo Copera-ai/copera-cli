@@ -87,20 +87,22 @@ func designContractUpload(data string) ArtifactUpload {
 }
 
 func TestDesignsOpenAPIContract(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/artifacts.openapi.json")
+	snapshotJSON, err := os.ReadFile("../../testdata/artifacts.openapi.json")
 	require.NoError(t, err)
 	var snapshot struct {
 		Paths map[string]map[string]designContractOperation
 	}
-	require.NoError(t, json.Unmarshal(data, &snapshot))
+	require.NoError(t, json.Unmarshal(snapshotJSON, &snapshot))
 	ctx := context.Background()
 	const (
-		id        = "aaaaaaaaaaaaaaaaaaaaaaaa"
-		versionID = "bbbbbbbbbbbbbbbbbbbbbbbb"
-		artifact  = "/artifacts/{artifactId}"
-		version   = artifact + "/versions/{versionId}"
-		systems   = "/artifacts/design-systems"
-		system    = systems + "/{systemId}"
+		id         = "aaaaaaaaaaaaaaaaaaaaaaaa"
+		versionID  = "bbbbbbbbbbbbbbbbbbbbbbbb"
+		artifact   = "/artifacts/{artifactId}"
+		version    = artifact + "/versions/{versionId}"
+		systems    = "/artifacts/design-systems"
+		system     = systems + "/{systemId}"
+		data       = artifact + "/data/{collection}"
+		dataRecord = data + "/records/{key}"
 	)
 	type multipartAsset struct {
 		File     string                `json:"file"`
@@ -113,6 +115,43 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 	type startersResult struct {
 		Starters []ArtifactStarter `json:"starters"`
 	}
+	type dataRecordBody struct {
+		Key       string          `json:"key"`
+		Revision  int64           `json:"revision"`
+		UpdatedAt string          `json:"updatedAt"`
+		Subject   *string         `json:"subject"`
+		Value     json.RawMessage `json:"value"`
+	}
+	type dataOne struct {
+		DataNotice string         `json:"dataNotice"`
+		Record     dataRecordBody `json:"record"`
+	}
+	type dataBatch struct {
+		DataNotice string           `json:"dataNotice"`
+		Records    []dataRecordBody `json:"records"`
+	}
+	type dataBatchInput struct {
+		Records []struct {
+			Key     string `json:"key"`
+			Subject string `json:"subject,omitempty"`
+			ArtifactDataSetInput
+		} `json:"records"`
+	}
+	type dataPage struct {
+		dataBatch
+		NextCursor  *string `json:"nextCursor"`
+		WatchCursor string  `json:"watchCursor"`
+	}
+	type dataDelete struct {
+		DataNotice string `json:"dataNotice"`
+		Deleted    bool   `json:"deleted"`
+	}
+	type dataWatch struct {
+		DataNotice string `json:"dataNotice"`
+		Changed    bool   `json:"changed"`
+		Cursor     string `json:"cursor"`
+	}
+
 	routes := []struct {
 		method, path, success string
 		input, output         any
@@ -159,7 +198,10 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			return designContractRequest(c.ArtifactStarters(ctx))
 		}},
 		{"get", "/artifacts/guide", "200", nil, ArtifactGuide{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactGuide(ctx, "landing_page", "react"))
+			if _, err := c.ArtifactGuide(ctx, "landing_page", "react", ""); err != nil {
+				return err
+			}
+			return designContractRequest(c.ArtifactGuide(ctx, "", "", "review"))
 		}},
 		{"get", "/artifacts/guide", "200", nil, ArtifactGuide{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactGuideTopic(ctx, "design-system-from-codebase"))
@@ -233,6 +275,26 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		{"post", artifact + "/fork", "200", ArtifactForkInput{}, ArtifactForkResult{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactFork(ctx, id, ArtifactForkInput{VersionID: versionID, Title: "Copy", Plain: true, IdempotencyKey: "key", Tool: "codex"}))
 		}},
+		{"get", dataRecord, "200", nil, dataOne{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDataGet(ctx, id, "answers", "item-1", "av_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
+		}},
+		{"get", data + "/records", "200", nil, dataPage{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDataList(ctx, id, "answers", ArtifactDataListOpts{
+				Limit: 10, Cursor: "v1.page.sig", Filter: `{"decision":"approved"}`,
+			}))
+		}},
+		{"post", dataRecord, "200", ArtifactDataSetInput{}, dataOne{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDataSet(ctx, id, "answers", "item-1", "", ArtifactDataSetInput{Value: json.RawMessage(`{}`)}))
+		}},
+		{"delete", dataRecord, "200", ArtifactDataDeleteInput{}, dataDelete{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDataDelete(ctx, id, "answers", "item-1", "", ArtifactDataDeleteInput{IfRevision: 1}))
+		}},
+		{"post", data + "/batch", "200", dataBatchInput{}, dataBatch{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDataBatch(ctx, id, "answers", json.RawMessage(`{"records":[{"key":"item-1","ifRevision":1,"value":{}}]}`)))
+		}},
+		{"get", data + "/watch", "200", nil, dataWatch{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactDataWatch(ctx, id, "answers", "v1.mark.sig"))
+		}},
 	}
 	for _, route := range routes {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
@@ -251,6 +313,10 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 				assert.NotNil(t, packages.Items.field("name"))
 				assert.NotNil(t, packages.Items.field("version"))
 				for _, parameter := range op.Parameters {
+					if parameter.Name == "template" {
+						require.NotNil(t, parameter.Schema)
+						assert.True(t, parameter.Schema.allows("review"), "review template is missing")
+					}
 					if parameter.Name == "kind" {
 						require.NotNil(t, parameter.Schema)
 						for _, kind := range []string{"landing_page", "web_app", "deck", "report", "dashboard",
@@ -296,6 +362,8 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 					"{versionId}", versionID,
 					"{systemId}", id,
 					"{pageId}", "home",
+					"{collection}", "answers",
+					"{key}", "item-1",
 				).Replace(route.path)
 				assert.Equal(t, wantPath, r.URL.Path)
 				if route.method == "post" && (route.path == "/artifacts/" || route.path == "/artifacts/check") {
@@ -315,9 +383,13 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 				for name := range r.URL.Query() {
 					assert.True(t, query[name], "query parameter %q is missing from the snapshot", name)
 				}
+				body := "{}"
+				if r.URL.Query().Get("template") == "review" {
+					body = `{"template":{"id":"review"}}`
+				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader("{}")),
+					Body:       io.NopCloser(strings.NewReader(body)),
 				}, nil
 			})
 			require.NoError(t, route.call(client))
@@ -371,6 +443,9 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		list := snapshot.Paths[artifact+"/versions"]["get"].Responses["200"].Content["application/json"].Schema
 		listedVersion := list.field("edges").Items.field("node")
 		getVersion := snapshot.Paths[version]["get"].Responses["200"].Content["application/json"].Schema
+		assert.Nil(t, listedVersion.field("memberRuntimeDeclarations"))
+		receipt := snapshot.Paths[artifact+"/versions"]["post"].Responses["201"].Content["application/json"].Schema
+		assert.Nil(t, receipt.field("version").field("memberRuntimeDeclarations"))
 		for _, name := range []string{"version", "createdAt", "origin", "authorKind", "tool", "changeSummary"} {
 			assert.NotNil(t, listedVersion.field(name), "version list field %q", name)
 			assert.NotNil(t, getVersion.field(name), "version detail field %q", name)
@@ -419,9 +494,9 @@ func assertDesignContractFields(t *testing.T, schema *designContractSchema, mode
 			continue
 		}
 		// Older previews exposed visualReviewStatus. The compact version DTO
-		// used by the list and push omits the full source manifest and inventory.
+		// used by list and push omits expanded source and declarations.
 		if child == nil && (name == "visualReviewStatus" ||
-			(model == reflect.TypeFor[ArtifactVersion]() && (name == "authoringManifest" || name == "files") &&
+			(model == reflect.TypeFor[ArtifactVersion]() && (name == "authoringManifest" || name == "files" || name == "memberRuntimeDeclarations") &&
 				(path == "response.edges[].node" || path == "response.version"))) {
 			continue
 		}
