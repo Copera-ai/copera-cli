@@ -107,6 +107,13 @@ func TestDesignsGuide(t *testing.T) {
 	assert.Equal(t, "# Author a Design\n", res.Stdout)
 }
 
+func TestDesignsGuideUnknownFlag(t *testing.T) {
+	res := testutil.RunCommand(t, []string{"designs", "guide", "--bogus"}, "")
+	assert.Equal(t, 2, res.ExitCode, res.Stderr)
+	assert.Empty(t, res.Stdout)
+	assert.JSONEq(t, `{"error":"invalid_usage","message":"unknown flag: --bogus","transient":false}`, res.Stderr)
+}
+
 func TestDesignGuideTopicPassThrough(t *testing.T) {
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{
 		"GET /artifacts/guide": func(w http.ResponseWriter, r *http.Request) {
