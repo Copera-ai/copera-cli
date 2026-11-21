@@ -60,9 +60,13 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		data []byte
 		refs []designOutsideReference
 	}
+	type vendoredTarget struct {
+		path  string
+		index int
+	}
 	toRewrite := make(map[string]sourceFile)
 	var sources []designOutsideReference
-	byURL := make(map[string]int)
+	byURL := make(map[string]vendoredTarget)
 	byHost := make(map[string][]int)
 	failed := make(map[string]string)
 	for _, name := range slices.Sorted(maps.Keys(files)) {
@@ -83,7 +87,7 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		}
 		toRewrite[name] = sourceFile{data, refs}
 		for _, ref := range refs {
-			if ref.hint {
+			if ref.hint || ref.preload {
 				continue
 			}
 			if ref.Reason != "" {
@@ -94,7 +98,7 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 			if _, exists := byURL[key]; exists {
 				continue
 			}
-			byURL[key] = -1
+			byURL[key] = vendoredTarget{}
 			sources = append(sources, ref)
 		}
 	}
@@ -116,7 +120,15 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 			return designError(cli, err)
 		}
 		i := len(result.Vendored)
-		byURL[key] = i
+		byURL[key] = vendoredTarget{path: ref.source.path, index: i}
+		for _, file := range downloaded {
+			for _, remote := range file.sourceURLs {
+				byURL[remote] = vendoredTarget{path: file.Path, index: i}
+			}
+			if strings.EqualFold(filepath.Ext(file.Path), ".css") && slices.Contains(written, file.Path) {
+				result.Skipped = append(result.Skipped, scanDesignCSSReferences(file.Path, file.data)...)
+			}
+		}
 		byHost[ref.Host] = append(byHost[ref.Host], i)
 		if ref.Host == "fonts.googleapis.com" {
 			byHost["fonts.gstatic.com"] = append(byHost["fonts.gstatic.com"], i)
@@ -139,19 +151,25 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 				if len(owners) == 0 {
 					continue
 				}
-			case ref.Reason == "":
-				key := ref.source.url.String()
-				if reason := failed[key]; reason != "" {
-					ref.Reason = reason
+			case ref.preload || ref.Reason == "":
+				var target vendoredTarget
+				if ref.source.url != nil {
+					key := ref.source.url.String()
+					target = byURL[key]
+					if reason := failed[key]; reason != "" {
+						ref.Reason = reason
+					}
+				}
+				if target.path == "" {
 					result.Skipped = append(result.Skipped, ref)
 					continue
 				}
-				relative, err := filepath.Rel(filepath.Dir(filepath.FromSlash(name)), filepath.FromSlash(ref.source.path))
+				relative, err := filepath.Rel(filepath.Dir(filepath.FromSlash(name)), filepath.FromSlash(target.path))
 				if err != nil {
 					return designError(cli, err)
 				}
 				replacement = filepath.ToSlash(relative)
-				owners = []int{byURL[key]}
+				owners = []int{target.index}
 			default:
 				continue
 			}
@@ -176,7 +194,12 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		if !bytes.Equal(current, file.data) {
 			return designError(cli, fmt.Errorf("%q changed during vendoring; run vendor --all again", name))
 		}
-		if err := writeDesignFile(root, name, rewritten.Bytes()); err != nil {
+		info, err := root.Lstat(filepath.FromSlash(name))
+		if err != nil {
+			return designError(cli, err)
+		}
+		mode := info.Mode()
+		if err := writeDesignContentWithMode(root, name, designFile{Data: rewritten.Bytes()}, &mode); err != nil {
 			return designError(cli, err)
 		}
 		result.Changed = true

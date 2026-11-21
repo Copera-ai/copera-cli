@@ -232,6 +232,10 @@ func writeDesignFile(root *os.Root, name string, data []byte) error {
 }
 
 func writeDesignContent(root *os.Root, name string, file designFile) error {
+	return writeDesignContentWithMode(root, name, file, nil)
+}
+
+func writeDesignContentWithMode(root *os.Root, name string, file designFile, mode *fs.FileMode) error {
 	local, err := designRelativePath(name)
 	if err != nil {
 		return err
@@ -250,7 +254,11 @@ func writeDesignContent(root *os.Root, name string, file designFile) error {
 		return err
 	}
 	defer func() { _ = root.Remove(temp) }()
-	if err := errors.Join(file.write(f), f.Close()); err != nil {
+	writeErr := file.write(f)
+	if writeErr == nil && mode != nil {
+		writeErr = f.Chmod(*mode)
+	}
+	if err := errors.Join(writeErr, f.Close()); err != nil {
 		return err
 	}
 	return root.Rename(temp, local)

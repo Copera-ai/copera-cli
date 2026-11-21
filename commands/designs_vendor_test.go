@@ -500,3 +500,93 @@ func TestDesignVendorAllSuggestsPushWithMessagePlaceholder(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(got), &result))
 	assert.Equal(t, `copera designs push --wait -m "<what this version is>" '`+dir+`'`, result.NextCommand)
 }
+
+func TestDesignVendorAllStyleImportsNoscriptAndPreloads(t *testing.T) {
+	const styles = "cdn.jsdelivr.net/npm/lib@1.2.3/main.css"
+	const script = "cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/main.js"
+	const googleCSS = "https://fonts.googleapis.com/css2?family=Test"
+	const font = "https://fonts.gstatic.com/test.woff2"
+	const nested = "https://cdn.jsdelivr.net/npm/other@1.2.3/nested.css"
+	const nonResource = "https://example.net/reference"
+	const stylesheet = `@import "` + nested + `";`
+	fontBytes := make([]byte, 64)
+	copy(fontBytes, "wOF2")
+	binary.BigEndian.PutUint32(fontBytes[8:12], uint32(len(fontBytes)))
+	binary.BigEndian.PutUint16(fontBytes[12:14], 1)
+	binary.BigEndian.PutUint32(fontBytes[20:24], 10)
+	fontCSS := "@font-face { font-family: 'Test'; src: url(" + font + ") format('woff2'); }"
+	dir := vendorTestFolder(t, map[string]vendorTestResponse{
+		"https://" + styles: {status: 200, body: stylesheet},
+		"https://" + script: {status: 200, body: "/* script */"},
+		googleCSS:           {status: 200, body: fontCSS},
+		font:                {status: 200, body: string(fontBytes)},
+		"https://data.jsdelivr.com/v1/packages/npm/lib@1.2.3?structure=flat": {status: 200, body: `{"files":[{"name":"/main.css"}]}`},
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri":         {status: 200, body: `{"files":["main.js"]}`},
+	})
+	indexFile := filepath.Join(dir, "index.html")
+	cssFile := filepath.Join(dir, "app.css")
+	nonResources := `<a href="` + nonResource + `">View</a>`
+	for _, rel := range []string{"canonical", "alternate", "author", "license", "help", "next", "prev", "me"} {
+		nonResources += `<link rel="` + rel + `" href="` + nonResource + `">`
+	}
+	original := "<style>\n@import url(http://" + styles + ");\n@import \"https://" + styles + "\";\n</style>" +
+		`<link rel="preload" as="style" href="//` + styles + `">` +
+		`<link rel="preload" as="script" href="http://` + script + `">` +
+		`<link rel="preload" as="font" href="` + font + `">` +
+		`<noscript><link rel="stylesheet" href="//` + styles + `"></noscript>` +
+		`<script src="//` + script + `"></script>` +
+		`<link rel="stylesheet" href="` + googleCSS + `">` + nonResources
+	require.NoError(t, os.WriteFile(indexFile, []byte(original), 0o644))
+	require.NoError(t, os.WriteFile(cssFile, []byte(`@import'https://`+styles+`' screen;`), 0o644))
+
+	got, err := runVendorTestCommand(t, dir, "--all")
+	require.NoError(t, err)
+	assert.NotContains(t, got, nonResource)
+	assert.Contains(t, got, nested)
+	assert.Contains(t, got, "keep their downloaded bytes")
+	index, err := os.ReadFile(indexFile)
+	require.NoError(t, err)
+	stylePath := "vendor/npm/lib/1.2.3/main.css"
+	scriptPath := "vendor/cdnjs/lib/1.2.3/main.js"
+	fontURLDigest := sha256.Sum256([]byte(googleCSS))
+	fontDir := fmt.Sprintf("vendor/fonts/%x/", fontURLDigest[:8])
+	fontPath := fmt.Sprintf("%s%x.woff2", fontDir, sha256.Sum256(fontBytes))
+	want := "<style>\n@import url(" + stylePath + ");\n@import \"" + stylePath + "\";\n</style>" +
+		`<link rel="preload" as="style" href="` + stylePath + `">` +
+		`<link rel="preload" as="script" href="` + scriptPath + `">` +
+		`<link rel="preload" as="font" href="` + fontPath + `">` +
+		`<noscript><link rel="stylesheet" href="` + stylePath + `"></noscript>` +
+		`<script src="` + scriptPath + `"></script>` +
+		`<link rel="stylesheet" href="` + fontDir + `fonts.css">` + nonResources
+	assert.Equal(t, want, string(index))
+	css, err := os.ReadFile(cssFile)
+	require.NoError(t, err)
+	assert.Equal(t, `@import'`+stylePath+`' screen;`, string(css))
+	downloaded, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(stylePath)))
+	require.NoError(t, err)
+	assert.Equal(t, stylesheet, string(downloaded))
+}
+
+func TestDesignVendorAllPreservesMalformedAttributesAndFileMode(t *testing.T) {
+	const script = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/main.js"
+	dir := vendorTestFolder(t, map[string]vendorTestResponse{
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri": {status: 200, body: `{"files":["main.js"]}`},
+		script: {status: 200, body: "/* script */"},
+	})
+	malformed := `<script =src="KEEP" src="` + script + `"></script>`
+	file := filepath.Join(dir, "index.html")
+	require.NoError(t, os.WriteFile(file, []byte(malformed+`<script src="`+script+`"></script>`), 0o644))
+	require.NoError(t, os.Chmod(file, 0o750))
+	before, err := os.Stat(file)
+	require.NoError(t, err)
+
+	got, err := runVendorTestCommand(t, dir, "--all")
+	require.NoError(t, err)
+	assert.Contains(t, got, "attribute value differs")
+	rewritten, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.Equal(t, malformed+`<script src="vendor/cdnjs/lib/1.2.3/main.js"></script>`, string(rewritten))
+	after, err := os.Stat(file)
+	require.NoError(t, err)
+	assert.Equal(t, before.Mode(), after.Mode())
+}

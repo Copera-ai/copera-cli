@@ -57,6 +57,7 @@ type designVendorFile struct {
 	ContentDigest string `json:"contentDigest"`
 	Verification  string `json:"verification"`
 	data          []byte
+	sourceURLs    []string
 }
 
 func newDesignVendorCmd(cli *CLI) *cobra.Command {
@@ -521,7 +522,7 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 	}
 	files := make([]designVendorFile, 1, len(urls)+1)
 	var localCSS strings.Builder
-	written := make(map[string]bool)
+	written := make(map[string]int)
 	for _, rule := range rules {
 		localCSS.WriteString("@font-face {\n")
 		for _, declaration := range rule {
@@ -544,8 +545,11 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 						return nil, err
 					}
 					urls[remote] = name
-					if !written[name] {
-						written[name] = true
+					if i, exists := written[name]; exists {
+						files[i].sourceURLs = append(files[i].sourceURLs, remote)
+					} else {
+						file.sourceURLs = []string{remote}
+						written[name] = len(files)
 						files = append(files, file)
 					}
 				}
