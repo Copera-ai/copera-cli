@@ -68,6 +68,10 @@ copera update
 Use `copera update --version 1.2.0` to install a specific version, or
 `copera update --force` to skip the confirmation prompt.
 
+### What's new in 0.18.2
+
+- `copera designs vendor` accepts Google Fonts URLs copied directly from Google, including semicolon-separated axis values and multiple families.
+
 ### What's new in 0.18.1
 
 - `copera update` no longer fails with "Text file busy" when it needs administrator rights.
@@ -389,6 +393,8 @@ without managed shadcn ownership.
 
 `vendor` saves exact-version cdnjs or jsDelivr npm JavaScript, CSS and JSON,
 or a Google Fonts stylesheet and its WOFF2 files, in an initialized Design.
+Quote a Google Fonts stylesheet URL as copied, including axis values such as
+`Inter:wght@400;600`, repeated `family` parameters, and `display=swap`.
 Use the printed local paths in your HTML or CSS. The command prints each path
 and its SHA-256, and refuses to overwrite a file with different bytes.
 
