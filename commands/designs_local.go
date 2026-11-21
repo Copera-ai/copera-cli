@@ -459,11 +459,7 @@ func pullDesignVersion(ctx context.Context, client *api.Client, dir, id string, 
 	state := &designState{
 		ID: id, Workspace: workspaceID, BaseVersionID: version.ID, HeadRevision: headRevision,
 		Kind: kind, Runtime: version.Runtime, Entrypoint: version.Entrypoint, Manifest: version.AuthoringManifest,
-	}
-	for _, declaration := range version.MemberRuntimeDeclarations {
-		state.Capabilities = append(state.Capabilities, api.ArtifactProjectCapability{
-			Kind: declaration.Kind, ContractVersion: declaration.ContractVersion, Collections: declaration.Collections,
-		})
+		Capabilities: version.ProjectCapabilities,
 	}
 	root, err := openDesignDir(dir, true)
 	if err != nil {
@@ -499,6 +495,9 @@ func applyDesignPull(root *os.Root, state *designState, remote map[string]design
 		if previous.BaseVersionID == state.BaseVersionID {
 			state.BuildState = previous.BuildState
 			state.Dependencies = previous.Dependencies
+			if state.Capabilities == nil {
+				state.Capabilities = previous.Capabilities
+			}
 		}
 		state.AssetPaths = make(map[string]string)
 		for name, canonical := range previous.AssetPaths {

@@ -96,6 +96,57 @@ func TestDesignsCheck(t *testing.T) {
 	assert.Equal(t, "shot", string(image))
 }
 
+func TestDesignsExistingCapabilitySettings(t *testing.T) {
+	for _, capabilities := range []string{"", "[]", `[{"kind":"ai","contractVersion":1}]`} {
+		t.Run(capabilities, func(t *testing.T) {
+			dir := designPublishFolder(t)
+			if capabilities != "" {
+				path := filepath.Join(dir, ".copera", "design.json")
+				state, err := os.ReadFile(path)
+				require.NoError(t, err)
+				state = []byte(strings.TrimSuffix(string(state), "}") + `,"capabilities":` + capabilities + "}")
+				require.NoError(t, os.WriteFile(path, state, 0600))
+			}
+			var requests atomic.Int32
+			checkProject := func(r *http.Request) {
+				requests.Add(1)
+				var input struct {
+					Project json.RawMessage `json:"project"`
+				}
+				if assert.NoError(t, json.NewDecoder(r.Body).Decode(&input)) {
+					if capabilities == "" {
+						assert.Empty(t, input.Project)
+					} else {
+						assert.JSONEq(t, `{"capabilities":`+capabilities+"}", string(input.Project))
+					}
+				}
+			}
+			srv := testutil.NewMockServer(t, testutil.MockRoutes{
+				"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+					checkProject(r)
+					testutil.RespondJSON(w, http.StatusOK, json.RawMessage(`{"ok":true}`))
+				},
+				"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+					checkProject(r)
+					testutil.RespondJSON(w, http.StatusOK, api.ArtifactPushResult{
+						Outcome: "unchanged", ArtifactID: artID, HeadRevision: 4,
+						Version: api.ArtifactVersion{ID: verID, Version: 1}, BuildState: "ready",
+					})
+				},
+			}.Handler())
+			setupHome(t, srv.URL)
+			for _, args := range [][]string{
+				{"designs", "check", dir, "--json"},
+				{"designs", "push", dir, "-m", "Update declarations", "--no-check", "--json"},
+			} {
+				result := testutil.RunCommand(t, args, "")
+				assert.Equal(t, 0, result.ExitCode, result.Stderr)
+			}
+			assert.EqualValues(t, 2, requests.Load())
+		})
+	}
+}
+
 func TestDesignsPush(t *testing.T) {
 	dir := designPublishFolder(t)
 	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}

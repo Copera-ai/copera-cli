@@ -305,6 +305,8 @@ func pushDesignFiles(ctx context.Context, cli *CLI, client *api.Client, root *os
 		}
 		project := designProject(state)
 		input.Project = &project
+	} else if state.Capabilities != nil {
+		input.Project = &api.ArtifactProjectSettings{Capabilities: state.Capabilities}
 	}
 	if force || !slices.Equal(state.Manifest.Assets, manifest.Assets) || !slices.Equal(state.Manifest.Documents, manifest.Documents) {
 		input.AuthoringManifest = &manifest

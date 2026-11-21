@@ -224,7 +224,7 @@
                                   },
                                   "memberRuntimeDeclarations": {
                                     "minItems": 1,
-                                    "maxItems": 2,
+                                    "maxItems": 9,
                                     "description": "Declared signed-in runtime abilities for this version. Contains no record data, personal consent, or owner approval.",
                                     "type": "array",
                                     "items": {
@@ -332,9 +332,290 @@
                                             "kind",
                                             "contractVersion"
                                           ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "ai",
+                                                "speech",
+                                                "dictation",
+                                                "images",
+                                                "files",
+                                                "copera",
+                                                "room"
+                                              ]
+                                            },
+                                            "contractVersion": {
+                                              "type": "number",
+                                              "enum": [
+                                                1
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "contractVersion"
+                                          ]
                                         }
                                       ]
                                     }
+                                  },
+                                  "projectCapabilities": {
+                                    "maxItems": 32,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "network"
+                                              ]
+                                            },
+                                            "origins": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "origins"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "storage"
+                                              ]
+                                            },
+                                            "scopes": {
+                                              "type": "array",
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "local"
+                                                    ]
+                                                  },
+                                                  {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "session"
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "namespace": {
+                                              "type": "string"
+                                            },
+                                            "schemaVersion": {
+                                              "minimum": 1,
+                                              "type": "integer"
+                                            },
+                                            "migration": {
+                                              "type": "object",
+                                              "properties": {
+                                                "strategy": {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "reset"
+                                                  ]
+                                                }
+                                              },
+                                              "required": [
+                                                "strategy"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "scopes",
+                                            "namespace",
+                                            "schemaVersion",
+                                            "migration"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "downloads"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "clipboard_write"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "fullscreen"
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "data"
+                                              ]
+                                            },
+                                            "contractVersion": {
+                                              "type": "number",
+                                              "enum": [
+                                                1
+                                              ]
+                                            },
+                                            "collections": {
+                                              "minItems": 1,
+                                              "maxItems": 16,
+                                              "type": "array",
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "name": {
+                                                        "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                                        "type": "string"
+                                                      },
+                                                      "scope": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                          "shared"
+                                                        ]
+                                                      },
+                                                      "access": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                          "member_read",
+                                                          "member_edit",
+                                                          "member_submit",
+                                                          "owner_only"
+                                                        ]
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "name",
+                                                      "scope",
+                                                      "access"
+                                                    ]
+                                                  },
+                                                  {
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "name": {
+                                                        "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                                        "type": "string"
+                                                      },
+                                                      "scope": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                          "viewer"
+                                                        ]
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "name",
+                                                      "scope"
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "contractVersion",
+                                            "collections"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "viewer"
+                                              ]
+                                            },
+                                            "contractVersion": {
+                                              "type": "number",
+                                              "enum": [
+                                                1
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "contractVersion"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "ai",
+                                                "speech",
+                                                "dictation",
+                                                "images",
+                                                "files",
+                                                "copera",
+                                                "room"
+                                              ]
+                                            },
+                                            "contractVersion": {
+                                              "type": "number",
+                                              "enum": [
+                                                1
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "contractVersion"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                                   },
                                   "authoringManifest": {
                                     "type": "object",
@@ -1501,6 +1782,34 @@
                                 "kind",
                                 "contractVersion"
                               ]
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ai",
+                                    "speech",
+                                    "dictation",
+                                    "images",
+                                    "files",
+                                    "copera",
+                                    "room"
+                                  ]
+                                },
+                                "contractVersion": {
+                                  "type": "number",
+                                  "enum": [
+                                    1
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "contractVersion"
+                              ]
                             }
                           ]
                         }
@@ -2408,7 +2717,7 @@
                         },
                         "memberRuntimeDeclarations": {
                           "minItems": 1,
-                          "maxItems": 2,
+                          "maxItems": 9,
                           "description": "Declared signed-in runtime abilities for this version. Contains no record data, personal consent, or owner approval.",
                           "type": "array",
                           "items": {
@@ -2516,9 +2825,290 @@
                                   "kind",
                                   "contractVersion"
                                 ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "speech",
+                                      "dictation",
+                                      "images",
+                                      "files",
+                                      "copera",
+                                      "room"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
                               }
                             ]
                           }
+                        },
+                        "projectCapabilities": {
+                          "maxItems": 32,
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "network"
+                                    ]
+                                  },
+                                  "origins": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "origins"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "storage"
+                                    ]
+                                  },
+                                  "scopes": {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "local"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "namespace": {
+                                    "type": "string"
+                                  },
+                                  "schemaVersion": {
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "migration": {
+                                    "type": "object",
+                                    "properties": {
+                                      "strategy": {
+                                        "type": "string",
+                                        "enum": [
+                                          "reset"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "strategy"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "scopes",
+                                  "namespace",
+                                  "schemaVersion",
+                                  "migration"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "downloads"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "clipboard_write"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "fullscreen"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "data"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  },
+                                  "collections": {
+                                    "minItems": 1,
+                                    "maxItems": 16,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                              "type": "string"
+                                            },
+                                            "scope": {
+                                              "type": "string",
+                                              "enum": [
+                                                "shared"
+                                              ]
+                                            },
+                                            "access": {
+                                              "type": "string",
+                                              "enum": [
+                                                "member_read",
+                                                "member_edit",
+                                                "member_submit",
+                                                "owner_only"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "scope",
+                                            "access"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                              "type": "string"
+                                            },
+                                            "scope": {
+                                              "type": "string",
+                                              "enum": [
+                                                "viewer"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "scope"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion",
+                                  "collections"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "viewer"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "speech",
+                                      "dictation",
+                                      "images",
+                                      "files",
+                                      "copera",
+                                      "room"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                         },
                         "authoringManifest": {
                           "type": "object",
@@ -3785,7 +4375,7 @@
                         },
                         "memberRuntimeDeclarations": {
                           "minItems": 1,
-                          "maxItems": 2,
+                          "maxItems": 9,
                           "description": "Declared signed-in runtime abilities for this version. Contains no record data, personal consent, or owner approval.",
                           "type": "array",
                           "items": {
@@ -3893,9 +4483,290 @@
                                   "kind",
                                   "contractVersion"
                                 ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "speech",
+                                      "dictation",
+                                      "images",
+                                      "files",
+                                      "copera",
+                                      "room"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
                               }
                             ]
                           }
+                        },
+                        "projectCapabilities": {
+                          "maxItems": 32,
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "network"
+                                    ]
+                                  },
+                                  "origins": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "origins"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "storage"
+                                    ]
+                                  },
+                                  "scopes": {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "local"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "namespace": {
+                                    "type": "string"
+                                  },
+                                  "schemaVersion": {
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "migration": {
+                                    "type": "object",
+                                    "properties": {
+                                      "strategy": {
+                                        "type": "string",
+                                        "enum": [
+                                          "reset"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "strategy"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "scopes",
+                                  "namespace",
+                                  "schemaVersion",
+                                  "migration"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "downloads"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "clipboard_write"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "fullscreen"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "data"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  },
+                                  "collections": {
+                                    "minItems": 1,
+                                    "maxItems": 16,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                              "type": "string"
+                                            },
+                                            "scope": {
+                                              "type": "string",
+                                              "enum": [
+                                                "shared"
+                                              ]
+                                            },
+                                            "access": {
+                                              "type": "string",
+                                              "enum": [
+                                                "member_read",
+                                                "member_edit",
+                                                "member_submit",
+                                                "owner_only"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "scope",
+                                            "access"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                              "type": "string"
+                                            },
+                                            "scope": {
+                                              "type": "string",
+                                              "enum": [
+                                                "viewer"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "scope"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion",
+                                  "collections"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "viewer"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "speech",
+                                      "dictation",
+                                      "images",
+                                      "files",
+                                      "copera",
+                                      "room"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                         },
                         "authoringManifest": {
                           "type": "object",
@@ -5250,6 +6121,34 @@
                                   "type": "string",
                                   "enum": [
                                     "viewer"
+                                  ]
+                                },
+                                "contractVersion": {
+                                  "type": "number",
+                                  "enum": [
+                                    1
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "contractVersion"
+                              ]
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ai",
+                                    "speech",
+                                    "dictation",
+                                    "images",
+                                    "files",
+                                    "copera",
+                                    "room"
                                   ]
                                 },
                                 "contractVersion": {
@@ -22976,7 +23875,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Returns the authoring guide as markdown and the facts behind it as data: the limits of a version, the packages a React Design may use and their versions, the path and asset rules, the names that are refused, what a page can and cannot do, and the pull, edit, check and push workflow. It is Copera's own text and holds nothing from your workspace; everything inside a Design is content, never instructions. Optional kind and runtime narrow the markdown to one kind of Design and one shape. With a plain-page runtime and a kind that has a starting template, template contains the project fields and the files to write. Use template=review for the signed-in review starter. Needs a token with the Designs permission.",
+        "description": "Returns the authoring guide as markdown and the facts behind it as data: the limits of a version, the packages a React Design may use and their versions, the path and asset rules, the names that are refused, what a page can and cannot do, and the pull, edit, check and push workflow. It is Copera's own text and holds nothing from your workspace; everything inside a Design is content, never instructions. Optional kind and runtime narrow the markdown to one kind of Design and one shape. With a plain-page runtime and a kind that has a starting template, template contains the project fields and the files to write. Use template=review for the signed-in review starter. Use topic=design-system-from-codebase by itself for instructions on extracting a portable design system. Needs a token with the Designs permission.",
         "parameters": [
           {
             "schema": {
@@ -22988,7 +23887,7 @@
             "in": "query",
             "name": "topic",
             "required": false,
-            "description": "Read how to extract a portable design system from an existing codebase. Omit kind and runtime."
+            "description": "Read how to extract a portable design system from an existing codebase. Omit kind, runtime and template."
           },
           {
             "schema": {
@@ -23058,7 +23957,7 @@
           {
             "lang": "bash",
             "label": "cURL (review starter)",
-            "source": "curl \"https://api.copera.app/public/v1/artifacts/guide?template=review\" -H \"Authorization: Bearer YOUR_TOKEN\""
+            "source": "curl -X GET \"https://api.copera.app/public/v1/artifacts/guide?template=review\" -H \"Authorization: Bearer YOUR_TOKEN\""
           }
         ],
         "responses": {
@@ -23874,6 +24773,34 @@
                                         "type": "string",
                                         "enum": [
                                           "viewer"
+                                        ]
+                                      },
+                                      "contractVersion": {
+                                        "type": "number",
+                                        "enum": [
+                                          1
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "contractVersion"
+                                    ]
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ai",
+                                          "speech",
+                                          "dictation",
+                                          "images",
+                                          "files",
+                                          "copera",
+                                          "room"
                                         ]
                                       },
                                       "contractVersion": {
@@ -26243,7 +27170,7 @@
                         },
                         "memberRuntimeDeclarations": {
                           "minItems": 1,
-                          "maxItems": 2,
+                          "maxItems": 9,
                           "description": "Declared signed-in runtime abilities for this version. Contains no record data, personal consent, or owner approval.",
                           "type": "array",
                           "items": {
@@ -26351,9 +27278,290 @@
                                   "kind",
                                   "contractVersion"
                                 ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "speech",
+                                      "dictation",
+                                      "images",
+                                      "files",
+                                      "copera",
+                                      "room"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
                               }
                             ]
                           }
+                        },
+                        "projectCapabilities": {
+                          "maxItems": 32,
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "network"
+                                    ]
+                                  },
+                                  "origins": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "origins"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "storage"
+                                    ]
+                                  },
+                                  "scopes": {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "local"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "namespace": {
+                                    "type": "string"
+                                  },
+                                  "schemaVersion": {
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "migration": {
+                                    "type": "object",
+                                    "properties": {
+                                      "strategy": {
+                                        "type": "string",
+                                        "enum": [
+                                          "reset"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "strategy"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "scopes",
+                                  "namespace",
+                                  "schemaVersion",
+                                  "migration"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "downloads"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "clipboard_write"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "fullscreen"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "data"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  },
+                                  "collections": {
+                                    "minItems": 1,
+                                    "maxItems": 16,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                              "type": "string"
+                                            },
+                                            "scope": {
+                                              "type": "string",
+                                              "enum": [
+                                                "shared"
+                                              ]
+                                            },
+                                            "access": {
+                                              "type": "string",
+                                              "enum": [
+                                                "member_read",
+                                                "member_edit",
+                                                "member_submit",
+                                                "owner_only"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "scope",
+                                            "access"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                              "type": "string"
+                                            },
+                                            "scope": {
+                                              "type": "string",
+                                              "enum": [
+                                                "viewer"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "scope"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion",
+                                  "collections"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "viewer"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "speech",
+                                      "dictation",
+                                      "images",
+                                      "files",
+                                      "copera",
+                                      "room"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                         },
                         "authoringManifest": {
                           "type": "object",
@@ -29793,12 +31001,21 @@
                           "type": "string"
                         },
                         "ifRevision": {
-                          "description": "Null creates the record. A positive revision replaces the whole existing value.",
+                          "description": "Null creates the record. The revision as last read replaces the whole existing value.",
                           "anyOf": [
                             {
-                              "minimum": 1,
-                              "maximum": 9007199254740991,
-                              "type": "integer"
+                              "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                              "anyOf": [
+                                {
+                                  "minimum": 1,
+                                  "maximum": 9007199254740991,
+                                  "type": "integer"
+                                },
+                                {
+                                  "pattern": "^[A-Za-z0-9_-]{22}$",
+                                  "type": "string"
+                                }
+                              ]
                             },
                             {
                               "type": "null"
@@ -29895,9 +31112,18 @@
                             ]
                           },
                           "revision": {
-                            "minimum": 1,
-                            "maximum": 9007199254740991,
-                            "type": "integer"
+                            "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                            "anyOf": [
+                              {
+                                "minimum": 1,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              {
+                                "pattern": "^[A-Za-z0-9_-]{22}$",
+                                "type": "string"
+                              }
+                            ]
                           },
                           "updatedAt": {
                             "format": "date-time",
@@ -30275,7 +31501,7 @@
                           "subject": {
                             "anyOf": [
                               {
-                                "pattern": "^av_[A-Za-z0-9_-]{43}$",
+                                "pattern": "^(av_|pv_)[A-Za-z0-9_-]{43}$",
                                 "description": "Required for a shared submission. Omit it for common records.",
                                 "type": "string"
                               },
@@ -30285,9 +31511,18 @@
                             ]
                           },
                           "revision": {
-                            "minimum": 1,
-                            "maximum": 9007199254740991,
-                            "type": "integer"
+                            "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                            "anyOf": [
+                              {
+                                "minimum": 1,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              {
+                                "pattern": "^[A-Za-z0-9_-]{22}$",
+                                "type": "string"
+                              }
+                            ]
                           },
                           "updatedAt": {
                             "format": "date-time",
@@ -30547,7 +31782,7 @@
         "parameters": [
           {
             "schema": {
-              "pattern": "^av_[A-Za-z0-9_-]{43}$",
+              "pattern": "^(av_|pv_)[A-Za-z0-9_-]{43}$",
               "type": "string"
             },
             "in": "query",
@@ -30617,7 +31852,7 @@
                         "subject": {
                           "anyOf": [
                             {
-                              "pattern": "^av_[A-Za-z0-9_-]{43}$",
+                              "pattern": "^(av_|pv_)[A-Za-z0-9_-]{43}$",
                               "description": "Required for a shared submission. Omit it for common records.",
                               "type": "string"
                             },
@@ -30627,9 +31862,18 @@
                           ]
                         },
                         "revision": {
-                          "minimum": 1,
-                          "maximum": 9007199254740991,
-                          "type": "integer"
+                          "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                          "anyOf": [
+                            {
+                              "minimum": 1,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "pattern": "^[A-Za-z0-9_-]{22}$",
+                              "type": "string"
+                            }
+                          ]
                         },
                         "updatedAt": {
                           "format": "date-time",
@@ -30874,12 +32118,21 @@
                 "type": "object",
                 "properties": {
                   "ifRevision": {
-                    "description": "Null creates the record. A positive revision replaces the whole existing value.",
+                    "description": "Null creates the record. The revision as last read replaces the whole existing value.",
                     "anyOf": [
                       {
-                        "minimum": 1,
-                        "maximum": 9007199254740991,
-                        "type": "integer"
+                        "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                        "anyOf": [
+                          {
+                            "minimum": 1,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
+                          },
+                          {
+                            "pattern": "^[A-Za-z0-9_-]{22}$",
+                            "type": "string"
+                          }
+                        ]
                       },
                       {
                         "type": "null"
@@ -30905,7 +32158,7 @@
         "parameters": [
           {
             "schema": {
-              "pattern": "^av_[A-Za-z0-9_-]{43}$",
+              "pattern": "^(av_|pv_)[A-Za-z0-9_-]{43}$",
               "type": "string"
             },
             "in": "query",
@@ -30975,7 +32228,7 @@
                         "subject": {
                           "anyOf": [
                             {
-                              "pattern": "^av_[A-Za-z0-9_-]{43}$",
+                              "pattern": "^(av_|pv_)[A-Za-z0-9_-]{43}$",
                               "description": "Required for a shared submission. Omit it for common records.",
                               "type": "string"
                             },
@@ -30985,9 +32238,18 @@
                           ]
                         },
                         "revision": {
-                          "minimum": 1,
-                          "maximum": 9007199254740991,
-                          "type": "integer"
+                          "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                          "anyOf": [
+                            {
+                              "minimum": 1,
+                              "maximum": 9007199254740991,
+                              "type": "integer"
+                            },
+                            {
+                              "pattern": "^[A-Za-z0-9_-]{22}$",
+                              "type": "string"
+                            }
+                          ]
                         },
                         "updatedAt": {
                           "format": "date-time",
@@ -31284,9 +32546,18 @@
                 "type": "object",
                 "properties": {
                   "ifRevision": {
-                    "minimum": 1,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
+                    "description": "A positive integer for a common record, or an opaque 22-character token for a public submission. Pass it back exactly as it was read.",
+                    "anyOf": [
+                      {
+                        "minimum": 1,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      {
+                        "pattern": "^[A-Za-z0-9_-]{22}$",
+                        "type": "string"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -31300,7 +32571,7 @@
         "parameters": [
           {
             "schema": {
-              "pattern": "^av_[A-Za-z0-9_-]{43}$",
+              "pattern": "^(av_|pv_)[A-Za-z0-9_-]{43}$",
               "type": "string"
             },
             "in": "query",
@@ -34120,7 +35391,7 @@
           "public",
           "Public API Artifacts"
         ],
-        "description": "Copies one version of a Design (the head unless versionId names another) into a new Design that you own, private to you. The original is untouched. Answers 200 with the new Design, like the create route (201 is only for a new version: push and restore); a retry with the same idempotencyKey answers with the same Design, and the same key for a different fork is refused with 409 and reason idempotency_key_reused (a fork never meets a stale head or a busy writer: it makes a new Design). Anyone who can read the Design can fork it. A title that looks like a credential is refused with 400 and the field named in issues; invisible characters are removed. Needs a token with the Designs permission.",
+        "description": "Copies one version of a Design (the head unless versionId names another) into a new Design that you own, private to you. The original is untouched. Answers 200 with the new Design, like the create route (201 is only for a new version: push and restore). A retry with the same idempotencyKey answers with the same Design. A key reused for a different fork answers 409 with reason idempotency_key_reused. If the copied assets would exceed the destination workspace's retained Design asset quota, the answer is 409 with reason workspace_asset_quota and maxBytes. Anyone who can read the Design can fork it. A title that looks like a credential is refused with 400 and the field named in issues; invisible characters are removed. Needs a token with the Designs permission.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -34341,7 +35612,7 @@
                         },
                         "memberRuntimeDeclarations": {
                           "minItems": 1,
-                          "maxItems": 2,
+                          "maxItems": 9,
                           "description": "Declared signed-in runtime abilities for this version. Contains no record data, personal consent, or owner approval.",
                           "type": "array",
                           "items": {
@@ -34449,9 +35720,290 @@
                                   "kind",
                                   "contractVersion"
                                 ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "speech",
+                                      "dictation",
+                                      "images",
+                                      "files",
+                                      "copera",
+                                      "room"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
                               }
                             ]
                           }
+                        },
+                        "projectCapabilities": {
+                          "maxItems": 32,
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "network"
+                                    ]
+                                  },
+                                  "origins": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "origins"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "storage"
+                                    ]
+                                  },
+                                  "scopes": {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "local"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "namespace": {
+                                    "type": "string"
+                                  },
+                                  "schemaVersion": {
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "migration": {
+                                    "type": "object",
+                                    "properties": {
+                                      "strategy": {
+                                        "type": "string",
+                                        "enum": [
+                                          "reset"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "strategy"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "scopes",
+                                  "namespace",
+                                  "schemaVersion",
+                                  "migration"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "downloads"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "clipboard_write"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "fullscreen"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "data"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  },
+                                  "collections": {
+                                    "minItems": 1,
+                                    "maxItems": 16,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                              "type": "string"
+                                            },
+                                            "scope": {
+                                              "type": "string",
+                                              "enum": [
+                                                "shared"
+                                              ]
+                                            },
+                                            "access": {
+                                              "type": "string",
+                                              "enum": [
+                                                "member_read",
+                                                "member_edit",
+                                                "member_submit",
+                                                "owner_only"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "scope",
+                                            "access"
+                                          ]
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                              "type": "string"
+                                            },
+                                            "scope": {
+                                              "type": "string",
+                                              "enum": [
+                                                "viewer"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "scope"
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion",
+                                  "collections"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "viewer"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
+                              },
+                              {
+                                "additionalProperties": false,
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ai",
+                                      "speech",
+                                      "dictation",
+                                      "images",
+                                      "files",
+                                      "copera",
+                                      "room"
+                                    ]
+                                  },
+                                  "contractVersion": {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "contractVersion"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                         },
                         "authoringManifest": {
                           "type": "object",
@@ -35080,9 +36632,14 @@
                     "reason": {
                       "type": "string",
                       "enum": [
-                        "idempotency_key_reused"
+                        "idempotency_key_reused",
+                        "workspace_asset_quota"
                       ],
-                      "description": "idempotency_key_reused: the idempotencyKey was used for a different request"
+                      "description": "idempotency_key_reused: the idempotencyKey was used for a different request; workspace_asset_quota: The copied assets would exceed the destination workspace's retained Design asset quota"
+                    },
+                    "maxBytes": {
+                      "description": "Retained Design asset quota in bytes",
+                      "type": "integer"
                     }
                   },
                   "required": [
@@ -39953,6 +41510,34 @@
                                 "kind",
                                 "contractVersion"
                               ]
+                            },
+                            {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ai",
+                                    "speech",
+                                    "dictation",
+                                    "images",
+                                    "files",
+                                    "copera",
+                                    "room"
+                                  ]
+                                },
+                                "contractVersion": {
+                                  "type": "number",
+                                  "enum": [
+                                    1
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "contractVersion"
+                              ]
                             }
                           ]
                         }
@@ -40528,7 +42113,7 @@
                         "unavailable",
                         "expired"
                       ],
-                      "description": "queued right after a push or a restore stored a version: poll the build route for the compiler result. An answer that stores nothing (outcome unchanged or replayed) carries the state of the version it names. queued: the build is waiting for the build service; building: the build is running; ready: the build finished and the page renders; failed: the build failed: read the build route for the findings; unavailable: the version has no build output to show; expired: the preview of that build is no longer valid"
+                      "description": "The version's preview state, initially queued after a push or restore. Poll the build route for its evidence state. An answer that stores nothing (outcome unchanged or replayed) carries the preview state of the version it names. queued: the build is waiting for the build service; building: the build is running; ready: the private preview renders; build evidence can still be pending; failed: the build failed: read the build route for the findings; unavailable: the version has no build output to show; expired: the preview of that build is no longer valid"
                     },
                     "warnings": {
                       "description": "Source-quality findings: advice for an outside tool, never a refusal",
@@ -40829,7 +42414,7 @@
                         "unavailable",
                         "expired"
                       ],
-                      "description": "queued right after a push or a restore stored a version: poll the build route for the compiler result. An answer that stores nothing (outcome unchanged or replayed) carries the state of the version it names. queued: the build is waiting for the build service; building: the build is running; ready: the build finished and the page renders; failed: the build failed: read the build route for the findings; unavailable: the version has no build output to show; expired: the preview of that build is no longer valid"
+                      "description": "The version's preview state, initially queued after a push or restore. Poll the build route for its evidence state. An answer that stores nothing (outcome unchanged or replayed) carries the preview state of the version it names. queued: the build is waiting for the build service; building: the build is running; ready: the private preview renders; build evidence can still be pending; failed: the build failed: read the build route for the findings; unavailable: the version has no build output to show; expired: the preview of that build is no longer valid"
                     },
                     "warnings": {
                       "description": "Source-quality findings: advice for an outside tool, never a refusal",
@@ -41200,7 +42785,7 @@
                       }
                     },
                     "maxBytes": {
-                      "description": "upload_too_large: the file limit in bytes",
+                      "description": "The exceeded file, form or workspace limit in bytes",
                       "type": "integer"
                     },
                     "retryAfterSeconds": {
@@ -41308,9 +42893,10 @@
                     "reason": {
                       "type": "string",
                       "enum": [
-                        "budget_unavailable"
+                        "budget_unavailable",
+                        "builder_unavailable"
                       ],
-                      "description": "budget_unavailable: the budget of Design pushes and checks could not be read: try again"
+                      "description": "budget_unavailable: the budget of Design pushes and checks could not be read: try again; builder_unavailable: the configured builder cannot accept the expanded React packages yet"
                     },
                     "retryAfterSeconds": {
                       "minimum": 1,
@@ -41889,7 +43475,7 @@
                     },
                     "memberRuntimeDeclarations": {
                       "minItems": 1,
-                      "maxItems": 2,
+                      "maxItems": 9,
                       "description": "Declared signed-in runtime abilities for this version. Contains no record data, personal consent, or owner approval.",
                       "type": "array",
                       "items": {
@@ -41997,9 +43583,290 @@
                               "kind",
                               "contractVersion"
                             ]
+                          },
+                          {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "ai",
+                                  "speech",
+                                  "dictation",
+                                  "images",
+                                  "files",
+                                  "copera",
+                                  "room"
+                                ]
+                              },
+                              "contractVersion": {
+                                "type": "number",
+                                "enum": [
+                                  1
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "contractVersion"
+                            ]
                           }
                         ]
                       }
+                    },
+                    "projectCapabilities": {
+                      "maxItems": 32,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "network"
+                                ]
+                              },
+                              "origins": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "origins"
+                            ]
+                          },
+                          {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "storage"
+                                ]
+                              },
+                              "scopes": {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "local"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              "namespace": {
+                                "type": "string"
+                              },
+                              "schemaVersion": {
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "migration": {
+                                "type": "object",
+                                "properties": {
+                                  "strategy": {
+                                    "type": "string",
+                                    "enum": [
+                                      "reset"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "strategy"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "scopes",
+                              "namespace",
+                              "schemaVersion",
+                              "migration"
+                            ]
+                          },
+                          {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "downloads"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "clipboard_write"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "fullscreen"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          },
+                          {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "data"
+                                ]
+                              },
+                              "contractVersion": {
+                                "type": "number",
+                                "enum": [
+                                  1
+                                ]
+                              },
+                              "collections": {
+                                "minItems": 1,
+                                "maxItems": 16,
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "type": "object",
+                                      "properties": {
+                                        "name": {
+                                          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                          "type": "string"
+                                        },
+                                        "scope": {
+                                          "type": "string",
+                                          "enum": [
+                                            "shared"
+                                          ]
+                                        },
+                                        "access": {
+                                          "type": "string",
+                                          "enum": [
+                                            "member_read",
+                                            "member_edit",
+                                            "member_submit",
+                                            "owner_only"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "name",
+                                        "scope",
+                                        "access"
+                                      ]
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "type": "object",
+                                      "properties": {
+                                        "name": {
+                                          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+                                          "type": "string"
+                                        },
+                                        "scope": {
+                                          "type": "string",
+                                          "enum": [
+                                            "viewer"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "name",
+                                        "scope"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "contractVersion",
+                              "collections"
+                            ]
+                          },
+                          {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "viewer"
+                                ]
+                              },
+                              "contractVersion": {
+                                "type": "number",
+                                "enum": [
+                                  1
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "contractVersion"
+                            ]
+                          },
+                          {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "ai",
+                                  "speech",
+                                  "dictation",
+                                  "images",
+                                  "files",
+                                  "copera",
+                                  "room"
+                                ]
+                              },
+                              "contractVersion": {
+                                "type": "number",
+                                "enum": [
+                                  1
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "contractVersion"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "Complete capability declarations in canonical project order. An empty array means the version declares none."
                     },
                     "authoringManifest": {
                       "type": "object",
@@ -44778,7 +46645,7 @@
                         "unavailable",
                         "expired"
                       ],
-                      "description": "queued right after a push or a restore stored a version: poll the build route for the compiler result. An answer that stores nothing (outcome unchanged or replayed) carries the state of the version it names. queued: the build is waiting for the build service; building: the build is running; ready: the build finished and the page renders; failed: the build failed: read the build route for the findings; unavailable: the version has no build output to show; expired: the preview of that build is no longer valid"
+                      "description": "The version's preview state, initially queued after a push or restore. Poll the build route for its evidence state. An answer that stores nothing (outcome unchanged or replayed) carries the preview state of the version it names. queued: the build is waiting for the build service; building: the build is running; ready: the private preview renders; build evidence can still be pending; failed: the build failed: read the build route for the findings; unavailable: the version has no build output to show; expired: the preview of that build is no longer valid"
                     },
                     "warnings": {
                       "description": "Source-quality findings: advice for an outside tool, never a refusal",
@@ -45001,7 +46868,7 @@
                         "unavailable",
                         "expired"
                       ],
-                      "description": "queued right after a push or a restore stored a version: poll the build route for the compiler result. An answer that stores nothing (outcome unchanged or replayed) carries the state of the version it names. queued: the build is waiting for the build service; building: the build is running; ready: the build finished and the page renders; failed: the build failed: read the build route for the findings; unavailable: the version has no build output to show; expired: the preview of that build is no longer valid"
+                      "description": "The version's preview state, initially queued after a push or restore. Poll the build route for its evidence state. An answer that stores nothing (outcome unchanged or replayed) carries the preview state of the version it names. queued: the build is waiting for the build service; building: the build is running; ready: the private preview renders; build evidence can still be pending; failed: the build failed: read the build route for the findings; unavailable: the version has no build output to show; expired: the preview of that build is no longer valid"
                     },
                     "warnings": {
                       "description": "Source-quality findings: advice for an outside tool, never a refusal",

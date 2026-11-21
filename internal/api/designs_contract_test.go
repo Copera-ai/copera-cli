@@ -25,6 +25,28 @@ type designContractSchema struct {
 	Enum       []json.RawMessage
 	Required   []string
 	Format     string
+	Type       string
+	Minimum    int64
+	Maximum    int64
+	Pattern    string
+}
+
+func TestPhase6DesignCapabilitiesDecode(t *testing.T) {
+	for _, kind := range []string{"ai", "speech", "dictation", "images", "files", "copera", "room"} {
+		var capability ArtifactProjectCapability
+		require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"kind":%q,"contractVersion":1}`, kind)), &capability))
+		assert.Equal(t, kind, capability.Kind)
+		assert.Equal(t, 1, capability.ContractVersion)
+	}
+	for _, input := range []string{
+		`{"kind":"ai","contractVersion":2}`,
+		`{"kind":"speech","contractVersion":1,"origins":[]}`,
+		`{"kind":"copera","contractVersion":1,"grant":true}`,
+		`{"kind":"room"}`,
+	} {
+		var capability ArtifactProjectCapability
+		assert.Error(t, json.Unmarshal([]byte(input), &capability))
+	}
 }
 
 func (s *designContractSchema) field(name string) *designContractSchema {
@@ -94,6 +116,42 @@ func designContractUpload(data string) ArtifactUpload {
 	}
 }
 
+func TestArtifactDataRevisionJSON(t *testing.T) {
+	for _, tc := range []struct {
+		wire  string
+		valid bool
+	}{
+		{`9007199254740991`, true},
+		{`"abcdefghijklmnopqrs-_1"`, true},
+		{`9007199254740992`, false},
+		{`"short"`, false},
+	} {
+		t.Run(tc.wire, func(t *testing.T) {
+			var request ArtifactDataDeleteInput
+			var record struct {
+				Revision ArtifactDataRevision `json:"revision"`
+			}
+			requestJSON := `{"ifRevision":` + tc.wire + `}`
+			recordJSON := `{"revision":` + tc.wire + `}`
+			requestErr := json.Unmarshal([]byte(requestJSON), &request)
+			recordErr := json.Unmarshal([]byte(recordJSON), &record)
+			if !tc.valid {
+				assert.ErrorIs(t, requestErr, errArtifactDataRevision)
+				assert.ErrorIs(t, recordErr, errArtifactDataRevision)
+				return
+			}
+			require.NoError(t, requestErr)
+			require.NoError(t, recordErr)
+			body, err := json.Marshal(request)
+			require.NoError(t, err)
+			assert.Equal(t, requestJSON, string(body))
+			body, err = json.Marshal(record)
+			require.NoError(t, err)
+			assert.Equal(t, recordJSON, string(body))
+		})
+	}
+}
+
 func TestDesignsOpenAPIContract(t *testing.T) {
 	snapshotJSON, err := os.ReadFile("../../testdata/artifacts.openapi.json")
 	require.NoError(t, err)
@@ -114,6 +172,26 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 	)
 	const commentID = "cccccccccccccccccccccccc"
 	includeEarlier := false
+	t.Run("record revision union", func(t *testing.T) {
+		record := snapshot.Paths[dataRecord]
+		request := record["delete"].RequestBody.Content["application/json"].Schema
+		response := record["get"].Responses["200"].Content["application/json"].Schema
+		require.NotNil(t, request)
+		require.NotNil(t, response)
+		require.NotNil(t, response.field("record"))
+		want := []*designContractSchema{
+			{Type: "integer", Minimum: 1, Maximum: 9007199254740991},
+			{Type: "string", Pattern: "^[A-Za-z0-9_-]{22}$"},
+		}
+		for name, field := range map[string]*designContractSchema{
+			"ifRevision": request.field("ifRevision"),
+			"revision":   response.field("record").field("revision"),
+		} {
+			if assert.NotNil(t, field, "%s is missing from the snapshot", name) {
+				assert.ElementsMatch(t, want, field.AnyOf, "%s must allow safe integers and revision tokens", name)
+			}
+		}
+	})
 	type multipartAsset struct {
 		File     string                `json:"file"`
 		Metadata artifactAssetMetadata `json:"metadata"`
@@ -126,11 +204,11 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		Starters []ArtifactStarter `json:"starters"`
 	}
 	type dataRecordBody struct {
-		Key       string          `json:"key"`
-		Revision  int64           `json:"revision"`
-		UpdatedAt string          `json:"updatedAt"`
-		Subject   *string         `json:"subject"`
-		Value     json.RawMessage `json:"value"`
+		Key       string               `json:"key"`
+		Revision  ArtifactDataRevision `json:"revision"`
+		UpdatedAt string               `json:"updatedAt"`
+		Subject   *string              `json:"subject"`
+		Value     json.RawMessage      `json:"value"`
 	}
 	type dataOne struct {
 		DataNotice string         `json:"dataNotice"`
@@ -297,7 +375,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 			return designContractRequest(c.ArtifactDataSet(ctx, id, "answers", "item-1", "", ArtifactDataSetInput{Value: json.RawMessage(`{}`)}))
 		}},
 		{"delete", dataRecord, "200", ArtifactDataDeleteInput{}, dataDelete{}, func(c *Client) error {
-			return designContractRequest(c.ArtifactDataDelete(ctx, id, "answers", "item-1", "", ArtifactDataDeleteInput{IfRevision: 1}))
+			return designContractRequest(c.ArtifactDataDelete(ctx, id, "answers", "item-1", "", ArtifactDataDeleteInput{IfRevision: ArtifactDataRevision{wire: "1"}}))
 		}},
 		{"post", data + "/batch", "200", dataBatchInput{}, dataBatch{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactDataBatch(ctx, id, "answers", json.RawMessage(`{"records":[{"key":"item-1","ifRevision":1,"value":{}}]}`)))
@@ -474,8 +552,11 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		listedVersion := list.field("edges").Items.field("node")
 		getVersion := snapshot.Paths[version]["get"].Responses["200"].Content["application/json"].Schema
 		assert.Nil(t, listedVersion.field("memberRuntimeDeclarations"))
+		assert.Nil(t, listedVersion.field("projectCapabilities"))
 		receipt := snapshot.Paths[artifact+"/versions"]["post"].Responses["201"].Content["application/json"].Schema
 		assert.Nil(t, receipt.field("version").field("memberRuntimeDeclarations"))
+		assert.Nil(t, receipt.field("version").field("projectCapabilities"))
+		require.NotNil(t, getVersion.field("projectCapabilities"))
 		for _, name := range []string{"version", "createdAt", "origin", "authorKind", "tool", "changeSummary"} {
 			assert.NotNil(t, listedVersion.field(name), "version list field %q", name)
 			assert.NotNil(t, getVersion.field(name), "version detail field %q", name)
@@ -526,7 +607,7 @@ func assertDesignContractFields(t *testing.T, schema *designContractSchema, mode
 		// Older previews exposed visualReviewStatus. The compact version DTO
 		// used by list and push omits expanded source and declarations.
 		if child == nil && (name == "visualReviewStatus" ||
-			(model == reflect.TypeFor[ArtifactVersion]() && (name == "authoringManifest" || name == "files" || name == "memberRuntimeDeclarations") &&
+			(model == reflect.TypeFor[ArtifactVersion]() && (name == "authoringManifest" || name == "files" || name == "memberRuntimeDeclarations" || name == "projectCapabilities") &&
 				(path == "response.edges[].node" || path == "response.version"))) {
 			continue
 		}

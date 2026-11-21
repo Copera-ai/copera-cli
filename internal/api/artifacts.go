@@ -99,6 +99,7 @@ type ArtifactVersion struct {
 	ChangeSummary             *string                            `json:"changeSummary,omitempty"`
 	Preview                   *ArtifactPreview                   `json:"preview,omitempty"`
 	MemberRuntimeDeclarations []ArtifactMemberRuntimeDeclaration `json:"memberRuntimeDeclarations,omitempty"`
+	ProjectCapabilities       []ArtifactProjectCapability        `json:"projectCapabilities,omitzero"`
 }
 
 // Artifact is an artifact's metadata with its current version.

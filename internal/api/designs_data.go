@@ -4,23 +4,72 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"time"
 )
 
 const ArtifactDataBodyLimit = 24 * 1024
+const maxArtifactDataRevision = 1<<53 - 1
+
+var (
+	artifactDataRevisionToken = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
+	errArtifactDataRevision   = errors.New("revision must be a positive safe integer or a 22-character token")
+)
+
+// ArtifactDataRevision holds a numeric revision or an opaque public submission token.
+type ArtifactDataRevision struct {
+	wire string
+}
+
+// ParseArtifactDataRevision parses a revision passed as a CLI flag.
+func ParseArtifactDataRevision(text string) (ArtifactDataRevision, error) {
+	if artifactDataRevisionToken.MatchString(text) {
+		return ArtifactDataRevision{wire: strconv.Quote(text)}, nil
+	}
+	number, err := strconv.ParseInt(text, 0, 64)
+	if err != nil || number < 1 || number > maxArtifactDataRevision {
+		return ArtifactDataRevision{}, errArtifactDataRevision
+	}
+	return ArtifactDataRevision{wire: strconv.FormatInt(number, 10)}, nil
+}
+
+func (r *ArtifactDataRevision) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var token string
+		if json.Unmarshal(data, &token) != nil || !artifactDataRevisionToken.MatchString(token) {
+			return errArtifactDataRevision
+		}
+	} else {
+		var number float64
+		if json.Unmarshal(data, &number) != nil || number < 1 || number > maxArtifactDataRevision || number != math.Trunc(number) {
+			return errArtifactDataRevision
+		}
+	}
+	r.wire = string(data)
+	return nil
+}
+
+func (r ArtifactDataRevision) MarshalJSON() ([]byte, error) {
+	if r.wire == "" {
+		return nil, errArtifactDataRevision
+	}
+	return []byte(r.wire), nil
+}
 
 type ArtifactDataSetInput struct {
-	IfRevision *int64          `json:"ifRevision"`
-	Value      json.RawMessage `json:"value"`
+	IfRevision *ArtifactDataRevision `json:"ifRevision"`
+	Value      json.RawMessage       `json:"value"`
 }
 
 type ArtifactDataDeleteInput struct {
-	IfRevision int64 `json:"ifRevision"`
+	IfRevision ArtifactDataRevision `json:"ifRevision"`
 }
 
 type ArtifactDataListOpts struct {
@@ -70,6 +119,17 @@ func (c *Client) ArtifactDataSet(ctx context.Context, id, collection, key, subje
 }
 
 func (c *Client) ArtifactDataBatch(ctx context.Context, id, collection string, input json.RawMessage) (json.RawMessage, error) {
+	if len(input) <= ArtifactDataBodyLimit {
+		// Validate revisions while keeping the original request body and its size.
+		var batch struct {
+			Records []struct {
+				IfRevision *ArtifactDataRevision `json:"ifRevision"`
+			} `json:"records"`
+		}
+		if err := json.Unmarshal(input, &batch); err != nil {
+			return nil, &APIError{StatusCode: http.StatusBadRequest, Code: "invalid_input", Message: "invalid Design data batch, " + err.Error()}
+		}
+	}
 	return c.doArtifactData(ctx, http.MethodPost, artifactDataPath(id, collection)+"/batch", input)
 }
 

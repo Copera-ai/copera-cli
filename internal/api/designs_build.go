@@ -43,6 +43,26 @@ type ArtifactProjectCapability struct {
 	Collections     []ArtifactDataCollection `json:"collections,omitempty"`
 }
 
+func (capability *ArtifactProjectCapability) UnmarshalJSON(data []byte) error {
+	type capabilityFields ArtifactProjectCapability
+	var decoded capabilityFields
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	switch decoded.Kind {
+	case "ai", "speech", "dictation", "images", "files", "copera", "room":
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			return err
+		}
+		if len(fields) != 2 || fields["kind"] == nil || fields["contractVersion"] == nil || decoded.ContractVersion != 1 {
+			return fmt.Errorf("Design capability %q requires exactly kind and contractVersion 1", decoded.Kind)
+		}
+	}
+	*capability = ArtifactProjectCapability(decoded)
+	return nil
+}
+
 type ArtifactDataCollection struct {
 	Name   string `json:"name"`
 	Scope  string `json:"scope"`
