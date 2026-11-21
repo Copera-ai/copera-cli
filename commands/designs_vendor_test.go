@@ -318,7 +318,7 @@ func TestDesignVendorRetriesDownload(t *testing.T) {
 			assert.Equal(t, lastStatus == http.StatusServiceUnavailable, reported.Transient)
 			if reported.Transient {
 				assert.Equal(t, "Run the same command again.", reported.Suggestion)
-				assert.Contains(t, stdout.String(), "Run: Run the same command again.\n")
+				assert.Contains(t, stdout.String(), "The download failed for a reason that may be temporary.\nRun: copera designs vendor --all")
 			}
 		})
 	}

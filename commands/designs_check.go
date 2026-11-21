@@ -320,7 +320,7 @@ type designBuildReport struct {
 	AppURL      string                `json:"appUrl,omitempty"`
 	DarkScheme  *bool                 `json:"darkScheme,omitempty"`
 	api.ArtifactBuildFindings
-	designServerAddedFiles
+	designServerOnlyFiles
 	Screenshots               []string               `json:"screenshots"`
 	ScreenshotPages           []designScreenshotPage `json:"screenshotPages,omitempty"`
 	ScreenshotsOmittedPageIDs []string               `json:"screenshotsOmittedPageIds,omitempty"`

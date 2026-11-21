@@ -215,15 +215,15 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		result.Changed = true
 	}
 
+	retry := temporaryFailure && len(result.Vendored) == 0
 	result.NextCommand = `copera designs push --wait -m "<what this version is>"`
-	if limitReached {
+	if limitReached || retry {
 		result.NextCommand = "copera designs vendor --all"
 	}
 	if dir != "." {
 		result.NextCommand += " '" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
 	}
 	const retrySuggestion = "Run the same command again."
-	retry := temporaryFailure && len(result.Vendored) == 0
 	if cli.Printer.IsJSON() {
 		if err := cli.Printer.PrintJSON(result); err != nil {
 			return err
@@ -244,10 +244,9 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 				designsTerminalLine(ref.URL), designsTerminalLine(ref.Path), designsTerminalLine(ref.Reason)))
 		}
 		if retry {
-			cli.Printer.PrintLine("Run: " + retrySuggestion)
-		} else {
-			cli.Printer.PrintLine("Run: " + designsTerminalLine(result.NextCommand))
+			cli.Printer.PrintLine("The download failed for a reason that may be temporary.")
 		}
+		cli.Printer.PrintLine("Run: " + designsTerminalLine(result.NextCommand))
 	}
 	if len(sources) > 0 && len(result.Vendored) == 0 {
 		err := errors.New("no vendorable URLs could be downloaded")

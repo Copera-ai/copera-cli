@@ -649,14 +649,14 @@ func TestDesignsFirstPushWithImages(t *testing.T) {
 	assert.Zero(t, followups.Load())
 	var result struct {
 		api.ArtifactPushResult
-		ServerAddedFiles        []string
-		ServerAddedFilesOmitted int
+		ServerOnlyFiles        []string
+		ServerOnlyFilesOmitted int
 	}
 	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &result))
 	assert.Equal(t, 1, result.Version.Version)
 	assert.Len(t, result.Version.AuthoringManifest.Assets, 2)
-	assert.Equal(t, added[:20], result.ServerAddedFiles)
-	assert.Equal(t, 1, result.ServerAddedFilesOmitted)
+	assert.Equal(t, added[:20], result.ServerOnlyFiles)
+	assert.Equal(t, 1, result.ServerOnlyFilesOmitted)
 	var state struct {
 		ID    string            `json:"id"`
 		Base  string            `json:"baseVersionId"`

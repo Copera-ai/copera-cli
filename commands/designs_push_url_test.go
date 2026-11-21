@@ -65,15 +65,17 @@ func TestDesignPushURL(t *testing.T) {
 			require.Equal(t, 0, res.ExitCode, res.Stderr)
 			if mode.format != "json" {
 				assert.Contains(t, res.Stdout, "URL: "+link+"\n")
-				assert.Equal(t, 1, strings.Count(res.Stdout, "Copera added on the server: shared/DESIGN.md. A later push keeps them."))
-				assert.Contains(t, res.Stdout, "Run: copera designs source "+artID+" --path shared/DESIGN.md --output plain\n")
+				assert.Equal(t, 1, strings.Count(res.Stdout, "In the Design, not in this folder: shared/DESIGN.md. A push keeps them."))
+				assert.Contains(t, res.Stdout, "Read one with: copera designs source "+artID+" --path shared/DESIGN.md --output plain\n")
+				assert.NotContains(t, res.Stdout, "Run: copera designs source")
 			} else {
 				var result map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal([]byte(res.Stdout), &result))
 				assert.Equal(t, `"`+link+`"`, string(result["appUrl"]))
 				assert.Empty(t, result["url"])
-				assert.JSONEq(t, `["shared/DESIGN.md"]`, string(result["serverAddedFiles"]))
-				assert.Empty(t, result["serverAddedFilesOmitted"])
+				assert.JSONEq(t, `["shared/DESIGN.md"]`, string(result["serverOnlyFiles"]))
+				assert.Contains(t, string(result["serverOnlyNote"]), "A push keeps them. Read one with: copera designs source "+artID+" --path shared/DESIGN.md --output plain")
+				assert.Empty(t, result["serverOnlyFilesOmitted"])
 			}
 			if mode.name == "wait" {
 				assert.Contains(t, res.Stdout, "Screenshots: .copera/shots/")
