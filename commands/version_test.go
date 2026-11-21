@@ -4,10 +4,17 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/copera/copera-cli/internal/build"
 	"github.com/copera/copera-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRootVersionFlag(t *testing.T) {
+	res := testutil.RunCommand(t, []string{"--version"}, "")
+	require.Equal(t, 0, res.ExitCode, res.Stderr)
+	assert.Equal(t, "copera version "+build.Version+"\n", res.Stdout)
+}
 
 func TestVersionHumanOutput(t *testing.T) {
 	// In tests stdout is not a TTY, so --output table forces the human path.

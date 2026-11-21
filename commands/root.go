@@ -59,8 +59,9 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) (*cobra.Command, *CLI
 	cli := &CLI{Stdin: stdin}
 
 	cmd := &cobra.Command{
-		Use:   "copera",
-		Short: "Copera CLI — manage boards, docs, and messaging",
+		Use:     "copera",
+		Short:   "Copera CLI — manage boards, docs, and messaging",
+		Version: build.Version,
 		Long: `Copera CLI wraps the Copera public API.
 
 Get started:
