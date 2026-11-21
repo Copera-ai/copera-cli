@@ -83,14 +83,11 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string, 
 		return designError(cli, err)
 	}
 
-	displayTitle := state.Title
-	if displayTitle == "" {
-		absDir, err := filepath.Abs(dir)
-		if err != nil {
-			return designError(cli, err)
-		}
-		displayTitle = designCreateTitle(absDir, entry, files)
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return designError(cli, err)
 	}
+	displayTitle := designCreateTitle(absDir, entry, files, state.Title)
 	scopes := designStorageScopes(files)
 	if len(scopes) != 0 {
 		namespace := designStorageNamespace(displayTitle)

@@ -26,13 +26,13 @@ import (
 )
 
 func newDesignPushCmd(cli *CLI) *cobra.Command {
-	var summary string
+	var summary, title string
 	var wait, waitForPreview, noCheck, force bool
 	cmd := &cobra.Command{
 		Use:   "push [dir] -m SUMMARY",
 		Short: "Save local edits as one new Design version",
-		Long: "Save local edits as one new Design version. The first push uses the entry HTML's <title> " +
-			"(index.html by default) or a humanized folder name. Later pushes save versions under the existing Design title.",
+		Long: "Save local edits as one new Design version. The first push uses --title, the saved init title, " +
+			"a common page title, the entry HTML's <title>, or a humanized folder name.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(summary) == "" || utf8.RuneCountInString(summary) > 160 || strings.ContainsAny(summary, "\r\n") {
@@ -45,6 +45,13 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			defer root.Close()
+			requestedTitle := state.Title
+			if cmd.Flags().Changed("title") {
+				if state.ID != "" {
+					return designUsageError(cli, fmt.Errorf("--title is for the first push. Use copera designs rename to change this Design's title"))
+				}
+				requestedTitle = title
+			}
 			if state.ID == "" {
 				if changed := changedInitialSystemFiles(state, files); len(changed) != 0 {
 					return systemConflict(cli, "Installed Design system files changed: "+strings.Join(changed, ", "))
@@ -85,7 +92,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 			var pushed *api.ArtifactPushResult
 			var refreshManifest bool
 			if state.ID == "" {
-				pushed, err = createLocalDesign(ctx, client, root, state, files, summary)
+				pushed, err = createLocalDesign(ctx, client, root, state, files, summary, requestedTitle)
 			} else {
 				pushed, refreshManifest, err = pushDesignFiles(ctx, cli, client, root, state, base, files, summary, force, wait || waitForPreview)
 			}
@@ -140,6 +147,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&summary, "message", "m", "", "Summary of the changes (up to 160 characters)")
+	cmd.Flags().StringVar(&title, "title", "", "Title for the first push")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the writer and the resulting build")
 	cmd.Flags().BoolVar(&waitForPreview, "wait-for-preview", false, "Wait for the writer and a usable preview")
 	cmd.MarkFlagsMutuallyExclusive("wait", "wait-for-preview")
@@ -204,28 +212,15 @@ func changedInitialSystemFiles(state *designState, files map[string]designFile) 
 	return changed
 }
 
-func designCreateTitle(dir, entrypoint string, files map[string]designFile) string {
+func designCreateTitle(dir, entrypoint string, files map[string]designFile, requested string) string {
 	if entrypoint == "" {
 		entrypoint = "index.html"
 	}
-	var title string
-	if entry := files[entrypoint]; entry.MediaType == "text/html" {
-		if doc, err := html.Parse(bytes.NewReader(entry.Data)); err == nil {
-		titles:
-			for node := range doc.Descendants() {
-				if node.DataAtom != atom.Title || node.Namespace != "" || node.FirstChild == nil {
-					continue
-				}
-				for parent := range node.Ancestors() {
-					if parent.DataAtom == atom.Template {
-						continue titles
-					}
-				}
-				title = strings.Join(strings.Fields(node.FirstChild.Data), " ")
-				if title != "" {
-					break
-				}
-			}
+	title := strings.TrimSpace(requested)
+	if title == "" {
+		title = designHTMLTitle(files[entrypoint])
+		if shared := sharedDesignPageTitle(title, entrypoint, files); shared != "" {
+			title = shared
 		}
 	}
 	if title == "" {
@@ -246,13 +241,74 @@ func designCreateTitle(dir, entrypoint string, files map[string]designFile) stri
 	return title
 }
 
-func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile, summary string) (*api.ArtifactPushResult, error) {
+func designHTMLTitle(file designFile) string {
+	if file.MediaType != "text/html" {
+		return ""
+	}
+	doc, err := html.Parse(bytes.NewReader(file.Data))
+	if err != nil {
+		return ""
+	}
+titles:
+	for node := range doc.Descendants() {
+		if node.DataAtom != atom.Title || node.Namespace != "" || node.FirstChild == nil {
+			continue
+		}
+		for parent := range node.Ancestors() {
+			if parent.DataAtom == atom.Template {
+				continue titles
+			}
+		}
+		if title := strings.Join(strings.Fields(node.FirstChild.Data), " "); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
+func sharedDesignPageTitle(entryTitle, entrypoint string, files map[string]designFile) string {
+	separators := []string{" — ", " – ", " - ", " | ", " · ", ": "}
+	var leading, trailing []string
+	for _, separator := range separators {
+		if i := strings.Index(entryTitle, separator); i > 0 {
+			leading = append(leading, entryTitle[:i])
+		}
+		if i := strings.LastIndex(entryTitle, separator); i >= 0 && i+len(separator) < len(entryTitle) {
+			trailing = append(trailing, entryTitle[i+len(separator):])
+		}
+	}
+	if len(leading) == 0 && len(trailing) == 0 {
+		return ""
+	}
+	var shared string
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if name == entrypoint {
+			continue
+		}
+		title := designHTMLTitle(files[name])
+		for _, separator := range separators {
+			for _, part := range leading {
+				if len(part) > len(shared) && strings.HasPrefix(title, part+separator) {
+					shared = part
+				}
+			}
+			for _, part := range trailing {
+				if len(part) > len(shared) && strings.HasSuffix(title, separator+part) {
+					shared = part
+				}
+			}
+		}
+	}
+	return shared
+}
+
+func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile, summary, title string) (*api.ArtifactPushResult, error) {
 	dir, err := filepath.Abs(root.Name())
 	if err != nil {
 		return nil, err
 	}
 	input := api.ArtifactCreateInput{
-		Title: designCreateTitle(dir, state.Entrypoint, files), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID,
+		Title: designCreateTitle(dir, state.Entrypoint, files, title), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID,
 		DesignSystemRevision: state.DesignSystemRevision, DesignSystemKit: state.DesignSystemKit, NoDesignSystem: state.NoDesignSystem,
 	}
 	input.Project.ArtifactProjectSettings = designProject(state)

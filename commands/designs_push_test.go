@@ -419,15 +419,21 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 
 func TestDesignsFirstPushTitle(t *testing.T) {
 	for _, test := range []struct {
-		name, entrypoint, html, title string
+		name, entrypoint, html, title    string
+		otherTitle, savedTitle, override string
 	}{
-		{"manifest entrypoint", "pages/home.html", "<h1>Preview</h1><title>  Design &amp;\n   Review </title>", "Design & Review"},
-		{"default entrypoint and title limit", "", "<title>é" + strings.Repeat("🌿", 120) + "</title>", "é" + strings.Repeat("🌿", 119)},
-		{"folder fallback", "", "<template><title>Ignored</title></template><title> \n &nbsp; </title>", "Design Review"},
+		{name: "manifest entrypoint", entrypoint: "pages/home.html", html: "<h1>Preview</h1><title>  Design &amp;\n   Review </title>", title: "Design & Review"},
+		{name: "one page and title limit", html: "<title>é" + strings.Repeat("🌿", 120) + "</title>", title: "é" + strings.Repeat("🌿", 119)},
+		{name: "folder fallback", html: "<template><title>Ignored</title></template><title> \n &nbsp; </title>", title: "Design Review"},
+		{name: "shared leading title", html: "<title>Ridgeline — Explore</title>", otherTitle: "Ridgeline — Trail", title: "Ridgeline"},
+		{name: "shared trailing title", html: "<title>Explore | Ridgeline</title>", otherTitle: "Log | Ridgeline", title: "Ridgeline"},
+		{name: "no shared title", html: "<title>Ridgeline — Explore</title>", otherTitle: "Other — Trails", title: "Ridgeline — Explore"},
+		{name: "saved init title", html: "<title>Page title</title>", savedTitle: "Selected title", title: "Selected title"},
+		{name: "first push override", html: "<title>Page title</title>", savedTitle: "Saved title", override: "Override", title: "Override"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "design-review")
-			state, err := json.Marshal(map[string]string{"kind": "website", "runtime": "static_web", "entrypoint": test.entrypoint})
+			state, err := json.Marshal(map[string]string{"kind": "website", "runtime": "static_web", "entrypoint": test.entrypoint, "title": test.savedTitle})
 			require.NoError(t, err)
 			writePublishFixture(t, filepath.Join(dir, ".copera", "design.json"), state)
 			entrypoint := test.entrypoint
@@ -438,6 +444,9 @@ func TestDesignsFirstPushTitle(t *testing.T) {
 			}
 			entryFile := filepath.Join(dir, entrypoint)
 			writePublishFixture(t, entryFile, []byte(test.html))
+			if test.otherTitle != "" {
+				writePublishFixture(t, filepath.Join(dir, "other.html"), []byte("<title>"+test.otherTitle+"</title>"))
+			}
 
 			const edited = "<title>Edited page title</title>"
 			var creates, versions atomic.Int32
@@ -472,8 +481,15 @@ func TestDesignsFirstPushTitle(t *testing.T) {
 				},
 			}.Handler())
 			setupHome(t, srv.URL)
-			first := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "First version", "--no-check", "--json"}, "")
+			args := []string{"designs", "push", dir, "-m", "First version", "--no-check", "--json"}
+			if test.override != "" {
+				args = append(args, "--title", test.override)
+			}
+			first := testutil.RunCommand(t, args, "")
 			require.Equal(t, 0, first.ExitCode, first.Stderr)
+			rejected := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit", "--title", "New name", "--no-check"}, "")
+			assert.Equal(t, 2, rejected.ExitCode, rejected.Stderr)
+			assert.Contains(t, rejected.Stderr, "copera designs rename")
 			if test.entrypoint != "" {
 				writePublishFixture(t, entryFile, []byte(edited))
 				later := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit page title", "--no-check", "--json"}, "")
