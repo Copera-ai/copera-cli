@@ -66,7 +66,7 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 			}
 			dir := filepath.Clean(args[0])
 			if adopt {
-				return adoptDesign(cmd.Context(), cli, dir, kind, entry, title, decline)
+				return adoptDesign(cmd.Context(), cli, dir, kind, entry, title)
 			}
 			if entries, err := os.ReadDir(dir); err == nil {
 				if len(entries) != 0 {

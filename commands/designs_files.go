@@ -562,9 +562,6 @@ func scanDesignTreeWithRefusals(root *os.Root, state *designState, collectRefusa
 			}
 			return nil
 		}
-		if strings.Contains(name, " ") {
-			return fmt.Errorf("unsafe design path %q: spaces are refused", name)
-		}
 		if err := validateDesignContentPath(name); err != nil {
 			if entry.IsDir() {
 				var firstFile string
@@ -656,7 +653,25 @@ func scanDesignTreeWithRefusals(root *os.Root, state *designState, collectRefusa
 		return nil
 	}
 	var refusals []error
+	var refusedDir string
 	err := fs.WalkDir(tree, ".", func(name string, entry fs.DirEntry, err error) error {
+		if collectRefusals && err == nil && name != "." && name != ".copera" && name != ".git" {
+			if refusedDir != "" && !strings.HasPrefix(name, refusedDir+"/") {
+				refusedDir = ""
+			}
+			if problem := validateAdoptDesignPath(name); problem != nil {
+				refusals = append(refusals, problem)
+				if entry.IsDir() && refusedDir == "" {
+					refusedDir = name
+				}
+				return nil
+			}
+			// Collect separately refused names under this directory without
+			// reading any source or assets from it.
+			if refusedDir != "" {
+				return nil
+			}
+		}
 		err = scan(name, entry, err)
 		if !collectRefusals || err == nil || err == fs.SkipDir {
 			return err
