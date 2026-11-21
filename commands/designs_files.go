@@ -680,13 +680,16 @@ func scanDesignTreeWithRefusals(root *os.Root, state *designState, collectRefusa
 				return nil
 			}
 		}
-		err = scan(name, entry, err)
-		if !collectRefusals || err == nil || err == fs.SkipDir {
-			return err
+		scanErr := scan(name, entry, err)
+		if !collectRefusals || scanErr == nil || scanErr == fs.SkipDir {
+			return scanErr
 		}
-		refusals = append(refusals, err)
+		refusals = append(refusals, scanErr)
 		if entry != nil && entry.IsDir() {
-			return fs.SkipDir
+			if err != nil {
+				return fs.SkipDir
+			}
+			refusedDir = name
 		}
 		return nil
 	})

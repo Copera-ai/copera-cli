@@ -28,9 +28,10 @@ func TestDesignInitAdoptPublishableFiles(t *testing.T) {
 			"site.p12", "site.pfx", "site.keystore", "src/Package.JSON", "src/tsconfig.json",
 			"src/JSConfig.json", "src/VITE.CONFIG.MTS", "src/tailwind.config.cts", "src/postcss.config.cjs",
 			"src/.postcssrc.yml", "src/.NPMRC", "src/.git/config", ".hg/hgrc", ".svn/entries",
-			"with space.html", "ação.html", "src/@app.js", ".hidden/keep.txt",
+			"with space.html", "ação.html", "src/@app.js", ".hidden/keep.txt", "node_modules/pkg/.env",
 		}
 		writePublishFixture(t, filepath.Join(dir, "index.html"), nil)
+		writePublishFixture(t, filepath.Join(dir, "node_modules", "first.txt"), nil)
 		for _, name := range offenders {
 			writePublishFixture(t, filepath.Join(dir, name), nil)
 		}
@@ -134,6 +135,8 @@ func TestDesignInitAdoptStorageReferences(t *testing.T) {
 		{"minified", "window.coperaArtifact", "b=a.storage,c=b.local,d=b.session", []string{"local", "session"}, false},
 		{"across scripts", "const sdk = window.coperaArtifact", "sdk.storage.session.get()", []string{"session"}, false},
 		{"fallback", "window.coperaArtifact", "const store = sdk.storage; unrelated.session.get()", []string{"local"}, true},
+		{"storage identifier suffix", "window.coperaArtifact", "sdk.storage$metadata", nil, false},
+		{"scope identifier suffix", "window.coperaArtifact", "sdk.storage.session$metadata", []string{"local"}, true},
 		{"no sdk", "", "const store = other.storage; store.session.get()", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

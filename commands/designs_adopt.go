@@ -300,10 +300,10 @@ func unsupportedDesignGuideTopic(err error) bool {
 }
 
 var (
-	designStorageReference = regexp.MustCompile(`\.\s*storage\b`)
-	designStorageAccess    = regexp.MustCompile(`([\w$]+)\s*(?:(?:\?\.|\.)\s*(local|session)\b|(?:\?\.)?\[\s*["'](local|session)["']\s*\])`)
-	designStorageAlias     = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*=\s*[\w$.?]+\s*\.\s*storage\b`)
-	designStorageBinding   = regexp.MustCompile(`\{([^{}]*)\}\s*=\s*[\w.$?]+\.\s*storage\b`)
+	designStorageReference = regexp.MustCompile(`\.\s*storage(?:[^\w$]|$)`)
+	designStorageAccess    = regexp.MustCompile(`([\w$]+)\s*(?:(?:\?\.|\.)\s*(local|session)(?:[^\w$]|$)|(?:\?\.)?\[\s*["'](local|session)["']\s*\])`)
+	designStorageAlias     = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*=\s*[\w$.?]+\s*\.\s*([\w$]+)`)
+	designStorageBinding   = regexp.MustCompile(`\{([^{}]*)\}\s*=\s*[\w.$?]+\.\s*storage(?:[^\w$]|$)`)
 )
 
 func designStorageScopes(files map[string]designFile) ([]string, bool) {
@@ -317,7 +317,9 @@ func designStorageScopes(files map[string]designFile) ([]string, bool) {
 		storage = storage || designStorageReference.Match(file.Data)
 		aliases := map[string]bool{"storage": true}
 		for _, match := range designStorageAlias.FindAllSubmatch(file.Data, -1) {
-			aliases[string(match[1])] = true
+			if string(match[2]) == "storage" {
+				aliases[string(match[1])] = true
+			}
 		}
 		for _, match := range designStorageAccess.FindAllSubmatch(file.Data, -1) {
 			if !aliases[string(match[1])] {
