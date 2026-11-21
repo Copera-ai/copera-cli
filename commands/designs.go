@@ -224,21 +224,44 @@ func newDesignLogCmd(cli *CLI) *cobra.Command {
 }
 
 func newDesignGuideCmd(cli *CLI) *cobra.Command {
-	var kind string
+	var kind, runtime, topic string
 	cmd := &cobra.Command{
 		Use:   "guide",
 		Short: "Print the Copera Design authoring guide",
-		Args:  cobra.NoArgs,
+		Args:  systemArgs(cli, cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			topicSet := cmd.Flags().Changed("topic")
+			if topicSet && (topic != "design-system-from-codebase" || cmd.Flags().Changed("kind") || cmd.Flags().Changed("runtime")) {
+				return systemUsage(cli, fmt.Errorf("topic must be design-system-from-codebase and cannot be combined with kind or runtime"))
+			}
 			client, _, err := requireAPIClient(cli)
 			if err != nil {
 				return err
 			}
-			guide, err := client.ArtifactGuide(cmd.Context(), kind, "")
+			var guide *api.ArtifactGuide
+			if topicSet {
+				guide, err = client.ArtifactGuideTopic(cmd.Context(), topic)
+			} else {
+				guide, err = client.ArtifactGuide(cmd.Context(), kind, runtime)
+			}
 			if err != nil {
+				if topicSet {
+					return systemAPIError(cli, err)
+				}
 				return designError(cli, err)
 			}
+			if topicSet && (guide.Kind != "" || guide.Runtime != "" || guide.Template != nil ||
+				!strings.HasPrefix(guide.Markdown, "# Derive a Design system from a codebase")) {
+				return designError(cli, fmt.Errorf("the server needs Phase 3 Design systems support for the codebase guide"))
+			}
 			if cli.Printer.IsJSON() {
+				if topicSet {
+					return cli.Printer.PrintJSON(struct {
+						*api.ArtifactGuide
+						Kind    *string `json:"kind"`
+						Runtime *string `json:"runtime"`
+					}{ArtifactGuide: guide})
+				}
 				return cli.Printer.PrintJSON(guide)
 			}
 			if _, err := io.WriteString(cli.Printer.Out, guide.Markdown); err != nil {
@@ -248,5 +271,8 @@ func newDesignGuideCmd(cli *CLI) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "Design kind")
+	cmd.Flags().StringVar(&runtime, "runtime", "", "Design runtime")
+	cmd.Flags().StringVar(&topic, "topic", "", "design-system-from-codebase")
+	cmd.SetFlagErrorFunc(systemFlags(cli))
 	return cmd
 }

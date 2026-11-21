@@ -32,24 +32,42 @@ func designGuideResponse(w http.ResponseWriter, r *http.Request) {
 func TestDesignInit(t *testing.T) {
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{
 		"GET /artifacts/guide": designGuideResponse,
+		"GET /artifacts/design-systems/defaults": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactSystemDefaults{})
+		},
 		"GET /artifacts/design-systems": func(w http.ResponseWriter, _ *http.Request) {
 			testutil.RespondJSON(w, http.StatusOK, map[string]any{
 				"designSystems": []map[string]any{
-					{"id": verID, "name": "Acme", "kind": "shadcn", "available": true, "spec": map[string]string{"style": "mira"}},
+					{"id": verID, "name": "Acme", "kind": "shadcn", "available": true, "revision": 2, "packageDigest": digestOf("brand")},
 				},
 			})
+		},
+		"GET /artifacts/design-systems/" + verID + "/installation": func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "static_web", r.URL.Query().Get("runtime"))
+			assert.Equal(t, "none", r.URL.Query().Get("kit"))
+			assert.Equal(t, "2", r.URL.Query().Get("expectedRevision"))
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactSystemProjection{
+				Install: api.ArtifactSystemInstall{SystemID: verID, Revision: 2, PackageDigest: digestOf("brand"), Kit: "none"},
+				Files:   systemTestProjection(),
+			})
+		},
+		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
 		},
 	}.Handler())
 	setupHome(t, srv.URL)
 	dir := filepath.Join(t.TempDir(), "new-design")
-	res := testutil.RunCommand(t, []string{"designs", "init", dir, "--kind", "website", "--runtime", "static", "--system", "Acme", "--json"}, "")
+	res := testutil.RunCommand(t, []string{"designs", "init", dir, "--kind", "website", "--runtime", "static", "--system", "aCmE", "--json"}, "")
 	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
 	state := readFile(t, filepath.Join(dir, ".copera", "design.json"))
 	assert.Contains(t, state, "static_web")
 	assert.Contains(t, state, verID)
+	assert.Contains(t, state, `"designSystemRevision": 2`)
+	assert.Contains(t, state, `"designSystemKit": "none"`)
+	assert.Equal(t, "# Brand\n", readFile(t, filepath.Join(dir, "shared", "brand", "DESIGN.md")))
 	assert.Contains(t, readFile(t, filepath.Join(dir, "AGENTS.md")), designRulesSentence)
 	assert.Contains(t, readFile(t, filepath.Join(dir, "CLAUDE.md")), designRulesSentence)
-	assert.Equal(t, "# Authoring guide\n", readFile(t, filepath.Join(dir, ".copera", "guide", "README.md")))
+	assert.Contains(t, readFile(t, filepath.Join(dir, ".copera", "guide", "README.md")), "# Authoring guide\n")
 }
 
 func TestDesignInitWritesGuideTemplate(t *testing.T) {

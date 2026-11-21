@@ -37,6 +37,11 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			defer root.Close()
+			if state.ID == "" {
+				if changed := changedInitialSystemFiles(state, files); len(changed) != 0 {
+					return systemConflict(cli, "Installed Design system files changed: "+strings.Join(changed, ", "))
+				}
+			}
 			client, cfg, err := requireAPIClient(cli)
 			if err != nil {
 				return err
@@ -76,6 +81,9 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				pushed, refreshManifest, err = pushDesignFiles(ctx, cli, client, root, state, base, files, summary, force, wait || waitForPreview)
 			}
 			if err != nil {
+				if state.ID == "" && (state.DesignSystemRevision > 0 || state.NoDesignSystem) {
+					return systemAPIError(cli, err)
+				}
 				return designPushError(cli, err, designPushProgress(state))
 			}
 			committedCtx := ctx
@@ -176,15 +184,29 @@ func designHeadFiles(version *api.ArtifactVersion, aliases map[string]string) ma
 	return base
 }
 
+func changedInitialSystemFiles(state *designState, files map[string]designFile) []string {
+	var changed []string
+	for _, name := range slices.Sorted(maps.Keys(state.DesignSystemFiles)) {
+		file, exists := files[name]
+		if !exists || file.checksum() != state.DesignSystemFiles[name] {
+			changed = append(changed, name)
+		}
+	}
+	return changed
+}
+
 func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile, summary string) (*api.ArtifactPushResult, error) {
 	dir, err := filepath.Abs(root.Name())
 	if err != nil {
 		return nil, err
 	}
-	input := api.ArtifactCreateInput{Title: filepath.Base(dir), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID}
+	input := api.ArtifactCreateInput{
+		Title: filepath.Base(dir), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID,
+		DesignSystemRevision: state.DesignSystemRevision, DesignSystemKit: state.DesignSystemKit, NoDesignSystem: state.NoDesignSystem,
+	}
 	input.Project.ArtifactProjectSettings = designProject(state)
 	input.Project.SchemaVersion = 1
-	input.Project.Files = designTextFiles(files, nil)
+	input.Project.Files = designTextFiles(files, state.DesignSystemFiles)
 	if len(input.Project.Files) == 0 {
 		return nil, fmt.Errorf("add source files before pushing the Design")
 	}
@@ -192,7 +214,7 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 	keyParts := []string{dir, summary}
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		file := files[name]
-		if file.Binary {
+		if file.Binary && state.DesignSystemFiles[name] == "" {
 			binaries = append(binaries, file.uploadPart(name))
 			keyParts = append(keyParts, name, file.checksum())
 		}
@@ -205,6 +227,14 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 	if err != nil {
 		return nil, err
 	}
+	if state.DesignSystemRevision != 0 && state.Workspace != "" && state.Workspace != workspace.ID {
+		return nil, &api.APIError{StatusCode: http.StatusConflict, Message: "This project was initialized with a Design system in another workspace."}
+	}
+	if state.DesignSystemRevision > 0 || state.NoDesignSystem {
+		if _, err := client.ArtifactDesignSystemDefaults(ctx); err != nil {
+			return nil, err
+		}
+	}
 	created, err := client.ArtifactCreate(ctx, input, binaries...)
 	if err != nil {
 		var apiErr *api.APIError
@@ -214,6 +244,18 @@ func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, s
 			return nil, &rejected
 		}
 		return nil, fmt.Errorf("could not confirm Design creation. Retry with the same files and message: %w", err)
+	}
+	if state.DesignSystemRevision > 0 {
+		expected := api.ArtifactSystemInstall{
+			SystemID: state.DesignSystemID, Revision: state.DesignSystemRevision,
+			Kit: state.DesignSystemKit, PackageDigest: state.DesignSystemDigest,
+		}
+		if pin := created.DesignSystemInstallation; pin == nil || *pin != expected {
+			return nil, fmt.Errorf("Design %s was created but the server did not confirm the requested Design system installation", created.ID)
+		}
+	}
+	if state.NoDesignSystem && created.DesignSystemInstallation != nil {
+		return nil, fmt.Errorf("Design %s was created but the server applied a Design system despite the decline", created.ID)
 	}
 	state.Workspace = workspace.ID
 	state.Manifest = created.CurrentVersion.AuthoringManifest

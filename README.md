@@ -310,8 +310,9 @@ copera designs get <id>
 copera designs open <id|url>
 copera designs versions <id>
 copera designs log <id|url> [--json]
-copera designs guide [--kind K]
-copera designs init <dir> --kind K [--runtime static|react] [--system NAME_OR_ID]
+copera designs guide [--kind K] [--runtime static|react]
+copera designs guide --topic design-system-from-codebase
+copera designs init <dir> --kind K [--runtime static|react] [--system NAME_OR_ID | --no-system] [--kit none|shadcn]
 copera designs vendor <url> [--dir DIR] [--path P]
 copera designs pull <id|url> [dir] [--version N]
 copera designs status [dir]
@@ -325,7 +326,9 @@ copera designs import FILE.zip [--workspace W]
 copera designs rename <id> <title>
 copera designs trash <id>
 copera designs restore <id> --version N
-copera designs fork <id>
+copera designs fork <id> [--plain] [--version VERSION_ID] [--title TITLE] [--out DIR]
+copera designs shadcn setup <id> --setup TEXT
+copera designs shadcn setup <id> --setup-file FILE
 copera designs source <id> --path src/App.tsx --output plain > App.tsx
 copera designs design <id> --version <version-id> --json
 copera designs starters
@@ -340,6 +343,37 @@ the named workspace. Select a workspace's token with `--profile`.
 `report`, `dashboard`) and API kinds such as `website` and `presentation`.
 When the guide offers a template for the selected kind and runtime, `init`
 writes the template files and uses its project settings.
+
+A new Design uses your personal Design system default, then the workspace
+default. Use `--system` to select a system by ID or name, or `--no-system` to
+start without a saved system. A workspace lock requires the workspace default.
+New installs are brand-only unless you select `--kit shadcn` for a React
+Design with an available kit. To change a pinned brand, edit its system folder
+and push a new revision. Existing Designs can apply it with explicit refresh.
+
+```bash
+copera designs systems list
+copera designs systems get <id>
+copera designs systems pull <id> <dir> [--expected-revision N]
+copera designs systems push <dir> --name NAME
+copera designs systems push <dir>
+copera designs systems push <dir> --system ID --expected-revision N [--name NAME]
+copera designs systems save-from <design> --name NAME [--version VERSION_ID]
+copera designs systems defaults
+copera designs systems set-default <id-or-none> [--scope personal|workspace] [--lock | --unlock]
+copera designs systems export <id> -o FILE [--format package|shadcn|tokens|guidance] [--expected-revision N]
+copera designs systems import FILE --name NAME [--format package|shadcn|tokens|guidance]
+copera designs systems refresh <design> --expected-system-revision N
+```
+
+A folder starts with `DESIGN.md`, `tokens.json` and `tokens.css`. A pull adds a
+file manifest with content digests and tracks the remote revision separately
+in `.copera/design-system.json`. Push uses the tracked revision and leaves the
+folder intact on a conflict. Exported packages are ZIP files with the complete
+brand and optional kit. You can import one using another account's profile.
+Use `systems refresh` from a Design's local folder to merge an updated install
+with its local edits. `fork --plain` creates an editable private React copy
+without managed shadcn ownership.
 
 `vendor` saves exact-version cdnjs or jsDelivr npm JavaScript, CSS and JSON,
 or a Google Fonts stylesheet and its WOFF2 files, in an initialized Design.
