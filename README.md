@@ -75,7 +75,7 @@ terminal. The noninteractive error gives the exact command when elevation is nee
 
 ### What's new in 0.19.0
 
-- Publish an existing static app with `designs init --adopt`, `designs vendor --all`, and `designs push --wait`. Adoption lists the files to publish, skips hidden paths, and refuses credential files. Bulk vendoring keeps successful downloads and reports skips.
+- Publish an existing static app with `designs init --adopt` and `designs push --wait`. Adoption lists the files to publish, skips hidden paths, refuses credential files, and recommends `designs vendor --all` when it finds supported outside links. Bulk vendoring keeps successful downloads and reports skips.
 - Set the Design title on init or first push, or let Copera CLI infer it from the entry page and matching page titles.
 - Every push mode prints the Design link. Check and push with `--wait` save screenshots for every page returned by the API.
 - Request an authoring guide with `designs guide --topic`. Adoption uses the kind guide if the topic request fails.
@@ -372,8 +372,9 @@ With `import --workspace`, the CLI verifies that the active token belongs to
 the named workspace. Select a workspace's token with `--profile`.
 `screenshot --viewport` selects a width already rendered by the build.
 
-`init --kind` accepts product kinds (`landing_page`, `web_app`, `deck`,
-`report`, `dashboard`) and API kinds such as `website` and `presentation`.
+`init --help` lists the kinds `website`, `web_app`, `report`, `dashboard`,
+`tool`, `visualization`, `document`, `presentation`, and the aliases
+`landing_page` and `deck`.
 When the guide offers a template for the selected kind and runtime, `init`
 writes the template files and uses its project settings.
 
@@ -427,8 +428,9 @@ files managed by a Design system as skipped. When at least one URL succeeds,
 it saves and rewrites the successful downloads.
 
 `check` uses multipart for local binaries that still need uploading and
-JSON otherwise. It saves returned screenshots under `.copera/shots/` and
-lists them by page, with the route when available. The first `push` creates
+JSON otherwise. It saves returned screenshots under `.copera/shots/` as
+`<page>-<width>-<scheme>.webp`, using `light` when the server omits the scheme.
+It lists them by page, with the route when available. The first `push` creates
 the Design and saves text and binaries together in version 1. The title
 comes from `push --title`, then `init --title`, then a leading or trailing part
 of the entry page's title. The part must occur on the same side of another
@@ -442,7 +444,7 @@ Use `designs rename` to change a saved Design's title.
 Every push mode prints the Design's app URL, returned as `appUrl` in JSON.
 With `--wait-for-preview`, JSON also returns the preview link as `url`.
 With `--wait`, push also reports the build and the paths to its screenshots
-under `.copera/shots/`.
+under `.copera/shots/`, using the same filenames as `check`.
 If Copera rejects the create, the CLI reports that no Design was created.
 On later pushes, editing an image in place uploads the new bytes at the same
 project-relative path. Earlier versions keep the previous image. Separate
@@ -483,12 +485,14 @@ command prints a summary: `dir`, `filesWritten`, `fetched`, `skipped`
 
 ```bash
 copera designs init ./app --adopt --kind web_app
+# Run this step when adoption reports vendorable outside links.
 copera designs vendor --all ./app
-copera designs push ./app -m "Publish existing app" --wait
+copera designs push --wait -m "Publish existing app" ./app
 ```
 
-Adoption takes a static project, writes its state and guide under `.copera/`,
-and declines the workspace's default Design system. It requires `.copera/`
+Adoption uses an existing static project without changing any existing files.
+It writes its state and guide under `.copera/` and declines the workspace's
+default Design system. It requires `.copera/`
 to be absent or empty. Adoption and subsequent status, diff, check, and push
 skip hidden project files and directories at every depth. Adoption reports up
 to 20 hidden paths and the count of any others, excluding top-level metadata
@@ -499,9 +503,12 @@ credential-shaped names.
 It uses `index.html` or the only top-level HTML page. Set `--entry` to choose a
 different page. It groups publishable paths by file type and outside links by
 URL. Plain output shows up to 40 publishable paths, and JSON lists them all.
-It declares Copera SDK storage scopes it finds and reports when it defaults to
-`local`. If there are no vendorable links, use `designs check` as shown by
-init, or let push run the check.
+Adoption reports the declared Copera SDK storage scopes, namespace, and files
+where it found a storage reference under `storage` in JSON. It also reports
+when it defaults to `local`.
+The plain `Next:` list and JSON `nextSteps` show the commands in order. JSON
+also returns the first command as `nextCommand`. A separate `check` is optional
+because `push` runs it.
 
 ### Channels
 

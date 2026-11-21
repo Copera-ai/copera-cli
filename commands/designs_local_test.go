@@ -78,6 +78,13 @@ func TestDesignInitUnknownFlag(t *testing.T) {
 	assert.NoDirExists(t, dir)
 }
 
+func TestDesignInitHelp(t *testing.T) {
+	res := testutil.RunCommand(t, []string{"designs", "init", "--help"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	assert.Contains(t, res.Stdout, "Design kind (website, web_app, report, dashboard, tool, visualization, document, presentation, landing_page, deck)")
+	assert.Contains(t, res.Stdout, "Use an existing static project without changing any existing files.")
+}
+
 func TestDesignInitWritesGuideTemplate(t *testing.T) {
 	const presentation = `{"aspectRatio":"16:9","slideCount":3}`
 	const capabilities = `[{"kind":"fullscreen"}]`

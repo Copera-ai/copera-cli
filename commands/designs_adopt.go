@@ -169,11 +169,12 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 		return designError(cli, err)
 	}
 	displayTitle := designCreateTitle(absDir, entry, files, state.Title)
-	scopes, storageDefaulted := designStorageScopes(files)
-	if len(scopes) != 0 {
-		namespace := designStorageNamespace(displayTitle)
+	scopes, foundIn, storageDefaulted := designStorageScopes(files)
+	storage := designAdoptStorage{Declared: len(scopes) != 0, Scopes: scopes, FoundIn: foundIn}
+	if storage.Declared {
+		storage.Namespace = designStorageNamespace(displayTitle)
 		state.Capabilities = []api.ArtifactProjectCapability{{
-			Kind: "storage", Scopes: &scopes, Namespace: &namespace, SchemaVersion: 1,
+			Kind: "storage", Scopes: &storage.Scopes, Namespace: &storage.Namespace, SchemaVersion: 1,
 			Migration: &struct {
 				Strategy string `json:"strategy"`
 			}{Strategy: "reset"},
@@ -193,13 +194,25 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 	if err := writeDesignStateLocked(root, state); err != nil {
 		return designError(cli, err)
 	}
-	next := "copera designs check"
-	if slices.ContainsFunc(links, func(link designOutsideReference) bool { return link.Reason == "" }) {
-		next = "copera designs vendor --all"
-	}
+	dirArg := ""
 	if dir != "." {
-		next += " '" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
+		dirArg = " '" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
+		if strings.HasPrefix(dir, "-") {
+			dirArg = " --" + dirArg
+		}
 	}
+	type nextStep struct {
+		Command     string `json:"command"`
+		Description string `json:"description"`
+	}
+	var nextSteps []nextStep
+	if slices.ContainsFunc(links, func(link designOutsideReference) bool { return link.Reason == "" }) {
+		nextSteps = append(nextSteps, nextStep{"copera designs vendor --all" + dirArg, "downloads the fonts and libraries your pages link to"})
+	}
+	nextSteps = append(nextSteps, nextStep{
+		`copera designs push --wait -m "<what this version is>"` + dirArg,
+		"checks every page, saves the version, waits for the build and prints the link; screenshots are saved under .copera/shots/. A separate check is optional because push runs it.",
+	})
 	outside := groupAdoptOutsideLinks(links)
 	if cli.Printer.IsJSON() {
 		return cli.Printer.PrintJSON(struct {
@@ -213,16 +226,17 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 			HiddenOmitted    int                      `json:"hiddenOmitted,omitempty"`
 			FileCounts       map[string]int           `json:"fileCounts"`
 			OutsideLinks     []designAdoptOutsideLink `json:"outsideLinks"`
-			StorageDeclared  bool                     `json:"storageDeclared"`
+			Storage          designAdoptStorage       `json:"storage"`
 			StorageDefaulted bool                     `json:"storageDefaulted,omitempty"`
 			Title            string                   `json:"title"`
 			NextCommand      string                   `json:"nextCommand"`
+			NextSteps        []nextStep               `json:"nextSteps"`
 		}{
 			Entrypoint: entry, Pages: published["pages"], Scripts: published["scripts"],
 			Styles: published["styles"], OtherText: published["otherText"], Assets: published["assets"],
 			Hidden: hidden.paths, HiddenOmitted: hidden.omitted,
-			FileCounts: counts, OutsideLinks: outside, StorageDeclared: len(scopes) != 0,
-			StorageDefaulted: storageDefaulted, Title: displayTitle, NextCommand: next,
+			FileCounts: counts, OutsideLinks: outside, Storage: storage,
+			StorageDefaulted: storageDefaulted, Title: displayTitle, NextCommand: nextSteps[0].Command, NextSteps: nextSteps,
 		})
 	}
 	cli.Printer.PrintLine("Design adopted in " + designsTerminalLine(dir))
@@ -259,18 +273,28 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 		}
 		cli.Printer.PrintLine(designsTerminalLine(line))
 	}
-	if len(scopes) == 0 {
+	if !storage.Declared {
 		cli.Printer.PrintLine("Storage: none")
 	} else {
-		line := "Storage: declared (" + strings.Join(scopes, ", ") + ")"
+		line := fmt.Sprintf("Storage: declared (%s), namespace %q, found in %s", strings.Join(storage.Scopes, ", "), storage.Namespace, strings.Join(storage.FoundIn, ", "))
 		if storageDefaulted {
 			line += " — no scope detected, defaulted to local"
 		}
-		cli.Printer.PrintLine(line)
+		cli.Printer.PrintLine(designsTerminalLine(line))
 	}
 	cli.Printer.PrintLine("Title: " + designsTerminalLine(displayTitle))
-	cli.Printer.PrintLine("Run: " + designsTerminalLine(next))
+	cli.Printer.PrintLine("Next:")
+	for _, step := range nextSteps {
+		cli.Printer.PrintLine("  " + designsTerminalLine(step.Command) + " — " + step.Description)
+	}
 	return nil
+}
+
+type designAdoptStorage struct {
+	Declared  bool     `json:"declared"`
+	Scopes    []string `json:"scopes"`
+	Namespace string   `json:"namespace"`
+	FoundIn   []string `json:"foundIn"`
 }
 
 type designAdoptOutsideLink struct {
@@ -330,15 +354,17 @@ var (
 	designStorageBinding   = regexp.MustCompile(`\{([^{}]*)\}\s*=\s*[\w.$?]+\.\s*storage(?:[^\w$]|$)`)
 )
 
-func designStorageScopes(files map[string]designFile) ([]string, bool) {
-	var sdk, storage bool
+func designStorageScopes(files map[string]designFile) (scopes, foundIn []string, defaulted bool) {
+	var sdk bool
 	used := make(map[string]bool, 2)
-	for _, file := range files {
+	for name, file := range files {
 		if file.MediaType != "text/html" && !isDesignScript(file.MediaType) {
 			continue
 		}
 		sdk = sdk || bytes.Contains(file.Data, []byte("coperaArtifact"))
-		storage = storage || designStorageReference.Match(file.Data)
+		if designStorageReference.Match(file.Data) {
+			foundIn = append(foundIn, name)
+		}
 		aliases := map[string]bool{"storage": true}
 		for _, match := range designStorageAlias.FindAllSubmatch(file.Data, -1) {
 			if string(match[2]) == "storage" {
@@ -365,13 +391,14 @@ func designStorageScopes(files map[string]designFile) ([]string, bool) {
 			}
 		}
 	}
-	if !sdk || !storage {
-		return nil, false
+	if !sdk || len(foundIn) == 0 {
+		return []string{}, []string{}, false
 	}
+	slices.Sort(foundIn)
 	if len(used) == 0 {
-		return []string{"local"}, true
+		return []string{"local"}, foundIn, true
 	}
-	return slices.Sorted(maps.Keys(used)), false
+	return slices.Sorted(maps.Keys(used)), foundIn, false
 }
 
 func designStorageNamespace(title string) string {

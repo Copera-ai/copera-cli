@@ -313,7 +313,7 @@ func TestDesignInitAdoptStorageReferences(t *testing.T) {
 			writePublishFixture(t, filepath.Join(dir, "index.html"), nil)
 			writePublishFixture(t, filepath.Join(dir, "sdk.js"), []byte(tc.sdk))
 			writePublishFixture(t, filepath.Join(dir, "app.js"), []byte(tc.script))
-			res := testutil.RunCommand(t, []string{"designs", "init", dir, "--adopt", "--kind", "web_app", "--output", "plain"}, "")
+			res := testutil.RunCommand(t, []string{"designs", "init", dir, "--adopt", "--kind", "web_app", "--title", "Ridgeline", "--output", "plain"}, "")
 			require.Zero(t, res.ExitCode, res.Stderr)
 			var state struct {
 				Capabilities []api.ArtifactProjectCapability `json:"capabilities"`
@@ -328,6 +328,8 @@ func TestDesignInitAdoptStorageReferences(t *testing.T) {
 			require.NotNil(t, state.Capabilities[0].Scopes)
 			assert.Equal(t, tc.scopes, *state.Capabilities[0].Scopes)
 			assert.Contains(t, res.Stdout, "Storage: declared ("+strings.Join(tc.scopes, ", ")+")")
+			assert.Contains(t, res.Stdout, `namespace "ridgeline"`)
+			assert.Contains(t, res.Stdout, "found in app.js")
 			assert.Equal(t, tc.fallback, strings.Contains(res.Stdout, "defaulted to local"))
 		})
 	}
@@ -426,7 +428,7 @@ func TestDesignInitAdoptKeepsSource(t *testing.T) {
 	setupHome(t, srv.URL)
 	dir := t.TempDir()
 	source := map[string]string{
-		"index.html": "<title>Site</title><link rel=stylesheet href=" + font + ">",
+		"index.html": "<title>Site</title><link rel=stylesheet href=" + font + "><script>coperaArtifact.storage.local.get('a')</script>",
 		"other.html": "<title>Another page</title>",
 		"site.js":    "const sdk = window.coperaArtifact; sdk.storage.local.get('a');",
 		"AGENTS.md":  "Existing agent notes\n",
@@ -443,9 +445,9 @@ func TestDesignInitAdoptKeepsSource(t *testing.T) {
 			URL  string `json:"url"`
 			Host string `json:"host"`
 		} `json:"outsideLinks"`
-		Storage bool   `json:"storageDeclared"`
-		Title   string `json:"title"`
-		Next    string `json:"nextCommand"`
+		Storage json.RawMessage `json:"storage"`
+		Title   string          `json:"title"`
+		Next    string          `json:"nextCommand"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &report))
 	assert.Equal(t, "index.html", report.Entrypoint)
@@ -453,7 +455,7 @@ func TestDesignInitAdoptKeepsSource(t *testing.T) {
 	require.Len(t, report.Links, 1)
 	assert.Equal(t, font, report.Links[0].URL)
 	assert.Equal(t, "fonts.googleapis.com", report.Links[0].Host)
-	assert.True(t, report.Storage)
+	assert.JSONEq(t, `{"declared":true,"scopes":["local"],"namespace":"a-new-site","foundIn":["index.html","site.js"]}`, string(report.Storage))
 	assert.Equal(t, "A New Site", report.Title)
 	assert.Contains(t, report.Next, "copera designs vendor --all")
 	entries, err := os.ReadDir(dir)
@@ -518,13 +520,62 @@ func TestDesignInitAdoptEntryStorageAndLegacyGuide(t *testing.T) {
 			res := testutil.RunCommand(t, args, "")
 			require.Equal(t, 0, res.ExitCode, res.Stderr)
 			assert.Contains(t, res.Stdout, "Entry: "+want)
-			assert.Contains(t, res.Stdout, "copera designs check")
+			assert.Contains(t, res.Stdout, "A separate check is optional because push runs it.")
 			if tc.scope == "" {
 				assert.Contains(t, res.Stdout, "Storage: none")
 			} else {
 				assert.Contains(t, res.Stdout, "Storage: declared ("+tc.scope+")")
 			}
 			assert.Equal(t, "# Authoring guide\n", readFile(t, filepath.Join(dir, ".copera", "guide", "README.md")))
+		})
+	}
+}
+
+func TestDesignInitAdoptNextSteps(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{"GET /artifacts/guide": designGuideResponse}.Handler())
+	setupHome(t, srv.URL)
+	for _, tc := range []struct {
+		name, link string
+		vendor     bool
+	}{
+		{"supported", "https://fonts.googleapis.com/css2?family=Inter", true},
+		{"unsupported", "https://example.test/site.css", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			type step struct{ Command, Description string }
+			for _, format := range []string{"json", "plain"} {
+				dir := "-app's " + format
+				writePublishFixture(t, filepath.Join(dir, "index.html"), []byte(`<link rel="stylesheet" href="`+tc.link+`">`))
+				res := testutil.RunCommand(t, []string{"designs", "init", "--adopt", "--kind", "web_app", "--output", format, "--", dir}, "")
+				require.Zero(t, res.ExitCode, res.Stderr)
+				suffix := " -- '-app'\\''s " + format + "'"
+				vendor := step{"copera designs vendor --all" + suffix, "downloads the fonts and libraries your pages link to"}
+				push := step{`copera designs push --wait -m "<what this version is>"` + suffix, "checks every page, saves the version, waits for the build and prints the link; screenshots are saved under .copera/shots/. A separate check is optional because push runs it."}
+				want := []step{push}
+				if tc.vendor {
+					want = []step{vendor, push}
+				}
+				if format == "json" {
+					var report struct {
+						NextSteps   []step
+						NextCommand string
+						Storage     json.RawMessage
+					}
+					require.NoError(t, json.Unmarshal([]byte(res.Stdout), &report))
+					assert.Equal(t, want, report.NextSteps)
+					assert.Equal(t, want[0].Command, report.NextCommand)
+					assert.JSONEq(t, `{"declared":false,"scopes":[],"namespace":"","foundIn":[]}`, string(report.Storage))
+					continue
+				}
+				_, next, found := strings.Cut(res.Stdout, "Next:\n")
+				require.True(t, found, res.Stdout)
+				var lines []string
+				for _, item := range want {
+					lines = append(lines, "  "+item.Command+" — "+item.Description)
+				}
+				assert.Equal(t, strings.Join(lines, "\n"), strings.TrimRight(next, "\n"))
+			}
 		})
 	}
 }

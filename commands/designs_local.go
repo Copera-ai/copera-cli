@@ -185,13 +185,13 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&kind, "kind", "", "Design kind")
+	cmd.Flags().StringVar(&kind, "kind", "", "Design kind ("+api.ArtifactGuideKinds+")")
 	cmd.Flags().StringVar(&runtime, "runtime", "static", "Design runtime (static or react)")
 	cmd.Flags().StringVar(&system, "system", "", "Saved design system name or ID")
 	cmd.Flags().BoolVar(&decline, "no-system", false, "Start without a saved Design system")
 	cmd.Flags().StringVar(&kit, "kit", "none", "Optional kit (none or shadcn)")
 	cmd.Flags().StringVar(&template, "template", "", "Starter template (review)")
-	cmd.Flags().BoolVar(&adopt, "adopt", false, "Use the existing static files in this folder")
+	cmd.Flags().BoolVar(&adopt, "adopt", false, "Use an existing static project without changing any existing files.")
 	cmd.Flags().StringVar(&entry, "entry", "", "Entry HTML file when adopting a folder")
 	cmd.Flags().StringVar(&title, "title", "", "Title for the first push")
 	cmd.SetFlagErrorFunc(systemFlags(cli))

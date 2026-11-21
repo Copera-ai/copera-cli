@@ -152,6 +152,9 @@ schema.go     — schema <command>
 - `designs init <dir> --adopt --kind K [--title T] [--entry FILE]` scans an existing
   static project and writes only local metadata and guide files in `.copera/`.
   It declines the default Design system and reports the files it will publish.
+  Adoption reports the storage scopes, namespace, and files with storage
+  references, followed by the commands to vendor supported outside links and
+  push. A separate check is optional because push checks the project.
   The saved adoption flag skips hidden paths and rejects new credential-shaped
   files on subsequent status, diff, check, and push scans.
   It uses the kind guide if the `existing-app` topic request fails.
@@ -163,9 +166,10 @@ schema.go     — schema <command>
 - `designs check [dir]` renders a dry run. `designs push [dir] -m SUMMARY`
   saves a version and returns the Design app URL as `appUrl` in JSON.
   Preview mode also returns its preview link as `url`. Check and push with `--wait`
-  report screenshots by page under `.copera/shots/`, including the route
-  and omitted page IDs when the API supplies them. Only the first push accepts
-  `--title`.
+  report screenshots by page under `.copera/shots/`, using
+  `<page>-<width>-<scheme>.webp` with `light` as the default scheme. The report
+  includes the route and omitted page IDs when the API supplies them. Only
+  the first push accepts `--title`.
 - `designs guide --topic TOPIC` forwards the topic to the API. Known topics
   include `existing-app`, `narration`, `live-runtime`, and
   `design-system-from-codebase`.

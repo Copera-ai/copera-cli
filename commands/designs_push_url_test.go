@@ -70,7 +70,7 @@ func TestDesignPushURL(t *testing.T) {
 			}
 			if mode.name == "wait" {
 				assert.Contains(t, res.Stdout, "Screenshots: .copera/shots/")
-				assert.Equal(t, "shot", readFile(t, filepath.Join(dir, ".copera/shots/home-390.webp")))
+				assert.Equal(t, "shot", readFile(t, filepath.Join(dir, ".copera/shots/home-390-light.webp")))
 			}
 			if mode.name == "preview" {
 				assert.Contains(t, res.Stdout, previewLink+"\n")

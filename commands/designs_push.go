@@ -742,13 +742,6 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 			report.ScreenshotPages = check.ScreenshotPages
 			report.ScreenshotsOmittedPageIDs = check.ScreenshotsOmittedPageIDs
 		}
-		defaultPage := state.Manifest.DefaultPageID
-		if defaultPage == "" {
-			defaultPage = version.AuthoringManifest.DefaultPageID
-		}
-		if defaultPage == "" && len(build.Screenshots) > 0 {
-			defaultPage = build.Screenshots[0].PageID
-		}
 		for _, shot := range build.Screenshots {
 			data, err := downloadHandoffAsset(ctx, client, shot.URL)
 			if err != nil {
@@ -758,16 +751,12 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 				cli.Printer.Info("Warning: download Design screenshot: %s", err)
 				continue
 			}
-			scheme := ""
-			if shot.PageID != defaultPage {
-				scheme = "light"
-			}
-			name, err := saveDesignShot(root, shot.PageID, shot.Width, scheme, data)
+			name, err := saveDesignShot(root, shot.PageID, shot.Width, shot.Scheme, data)
 			if err != nil {
-				if build.State != "ready" {
+				if build.State != "ready" && !errors.Is(err, errInvalidDesignShotPageID) {
 					return designPushError(cli, err, progress)
 				}
-				cli.Printer.Info("Warning: save Design screenshot: %s", err)
+				cli.Printer.Info("Warning: save Design screenshot: %s", designsTerminalLine(err.Error()))
 				continue
 			}
 			report.addScreenshot(shot.PageID, shot.Route, name)

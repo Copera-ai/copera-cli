@@ -8,6 +8,9 @@ import (
 	"net/url"
 )
 
+// ArtifactGuideKinds lists the kind values in the authoring guide API contract.
+const ArtifactGuideKinds = "website, web_app, report, dashboard, tool, visualization, document, presentation, landing_page, deck"
+
 // ArtifactGuide is Copera's authoring guide and its machine-readable facts.
 type ArtifactGuide struct {
 	Version  int                    `json:"version"`

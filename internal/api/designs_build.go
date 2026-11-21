@@ -186,6 +186,7 @@ type ArtifactBuildResult struct {
 	Screenshots []struct {
 		PageID string `json:"pageId"`
 		Width  int    `json:"width"`
+		Scheme string `json:"scheme,omitempty"`
 		Route  string `json:"route,omitempty"`
 		URL    string `json:"url"`
 	} `json:"screenshots"`

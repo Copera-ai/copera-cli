@@ -1,12 +1,14 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -297,16 +299,12 @@ func checkDesign(ctx context.Context, cli *CLI, client *api.Client, root *os.Roo
 		report.State = "failed"
 	}
 	for _, shot := range result.Screenshots {
-		scheme := shot.Scheme
-		if scheme == "" {
-			scheme = "light"
-		}
-		name, err := saveDesignShot(root, shot.PageID, shot.Width, scheme, shot.Data)
+		name, err := saveDesignShot(root, shot.PageID, shot.Width, shot.Scheme, shot.Data)
 		if err != nil {
-			if !result.OK {
+			if !result.OK && !errors.Is(err, errInvalidDesignShotPageID) {
 				return nil, err
 			}
-			cli.Printer.Info("Warning: save Design screenshot: %s", err)
+			cli.Printer.Info("Warning: save Design screenshot: %s", designsTerminalLine(err.Error()))
 			continue
 		}
 		report.addScreenshot(shot.PageID, shot.Route, name)
@@ -355,21 +353,34 @@ func (report *designBuildReport) addScreenshot(pageID, route, name string) {
 	})
 }
 
+var (
+	designShotPageIDPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+	errInvalidDesignShotPageID = errors.New("invalid screenshot page ID")
+)
+
 func saveDesignShot(root *os.Root, page string, width int, scheme string, data []byte) (string, error) {
-	if page == "" || page == "." || page == ".." || strings.ContainsAny(page, "/\\") || width <= 0 {
-		return "", fmt.Errorf("invalid screenshot page or width")
+	if !designShotPageIDPattern.MatchString(page) {
+		return "", fmt.Errorf("%w %q", errInvalidDesignShotPageID, page)
 	}
-	name := fmt.Sprintf(".copera/shots/%s-%d", page, width)
-	switch scheme {
-	case "light", "dark":
-		name += "-" + scheme
-	case "":
-	default:
+	if width <= 0 {
+		return "", fmt.Errorf("invalid screenshot width")
+	}
+	if scheme == "" {
+		scheme = "light"
+	}
+	if scheme != "light" && scheme != "dark" {
 		return "", fmt.Errorf("invalid screenshot scheme %q", scheme)
 	}
-	name += ".webp"
+	base := fmt.Sprintf(".copera/shots/%s-%d", page, width)
+	name := base + "-" + scheme + ".webp"
 	if err := writeDesignFile(root, name, data); err != nil {
 		return "", err
+	}
+	legacy := base + ".webp"
+	if info, err := root.Lstat(legacy); err == nil && info.Mode().IsRegular() && info.Size() == int64(len(data)) {
+		if old, err := readDesignFile(root, legacy); err == nil && bytes.Equal(old, data) {
+			_ = root.Remove(legacy)
+		}
 	}
 	return name, nil
 }
