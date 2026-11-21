@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -253,9 +254,11 @@ func TestDesignsPush(t *testing.T) {
 		Revision   int               `json:"headRevision"`
 		Files      map[string]string `json:"files"`
 		AssetPaths map[string]string `json:"assetPaths"`
+		BuildState string            `json:"buildState"`
 	}
 	require.NoError(t, json.Unmarshal(state, &updated))
 	assert.Equal(t, 5, updated.Revision)
+	assert.Equal(t, "ready", updated.BuildState)
 	digest := sha256.Sum256([]byte("new"))
 	assert.Equal(t, hex.EncodeToString(digest[:]), updated.Files[designEntrypoint])
 	assert.Empty(t, updated.AssetPaths)
@@ -558,6 +561,10 @@ func TestDesignsFirstPushWithImages(t *testing.T) {
 		summary = "Add first screen"
 	)
 	dir := filepath.Join(t.TempDir(), "draft")
+	added := []string{"SPEC.md", "shared/DESIGN.md", "shared/assets.json", "shared/components.json"}
+	for i := range 17 {
+		added = append(added, fmt.Sprintf("shared/generated-%02d.md", i))
+	}
 	var creates, followups atomic.Int32
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{
 		"GET /artifacts/guide": designGuideResponse,
@@ -591,6 +598,10 @@ func TestDesignsFirstPushWithImages(t *testing.T) {
 				{Path: "style.css", MediaType: "text/css", Content: "img { width: 100%; }"},
 			}, input.Project.Files)
 			created := designPullFixture("index.html", html, 1)
+			created.CurrentVersion.Files = append(created.CurrentVersion.Files, api.ArtifactFileRef{Path: "style.css"})
+			for i := len(added) - 1; i >= 0; i-- {
+				created.CurrentVersion.Files = append(created.CurrentVersion.Files, api.ArtifactFileRef{Path: added[i]})
+			}
 			for name, content := range map[string]string{hero: png + "hero", logo: png + "logo"} {
 				created.CurrentVersion.AuthoringManifest.Assets = append(created.CurrentVersion.AuthoringManifest.Assets,
 					api.ArtifactAsset{ID: digestOf(name)[:24], Path: name, MediaType: "image/png", ContentDigest: digestOf(content)})
@@ -636,10 +647,16 @@ func TestDesignsFirstPushWithImages(t *testing.T) {
 	require.Equal(t, 0, res.ExitCode, res.Stderr)
 	assert.EqualValues(t, 1, creates.Load())
 	assert.Zero(t, followups.Load())
-	var result api.ArtifactPushResult
+	var result struct {
+		api.ArtifactPushResult
+		ServerAddedFiles        []string
+		ServerAddedFilesOmitted int
+	}
 	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &result))
 	assert.Equal(t, 1, result.Version.Version)
 	assert.Len(t, result.Version.AuthoringManifest.Assets, 2)
+	assert.Equal(t, added[:20], result.ServerAddedFiles)
+	assert.Equal(t, 1, result.ServerAddedFilesOmitted)
 	var state struct {
 		ID    string            `json:"id"`
 		Base  string            `json:"baseVersionId"`

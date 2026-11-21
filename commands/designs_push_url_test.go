@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/copera/copera-cli/internal/api"
@@ -19,6 +20,8 @@ func TestDesignPushURL(t *testing.T) {
 	const versionsPath = "/artifacts/" + artID + "/versions"
 	saved := designPullFixture(designEntrypoint, "new", 5).CurrentVersion
 	saved.ID = ver2ID
+	saved.ArtifactID = ""
+	saved.Files = append(saved.Files, api.ArtifactFileRef{Path: "shared/DESIGN.md"})
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{
 		"POST " + versionsPath: func(w http.ResponseWriter, _ *http.Request) {
 			testutil.RespondJSON(w, http.StatusCreated, api.ArtifactPushResult{
@@ -62,11 +65,15 @@ func TestDesignPushURL(t *testing.T) {
 			require.Equal(t, 0, res.ExitCode, res.Stderr)
 			if mode.format != "json" {
 				assert.Contains(t, res.Stdout, "URL: "+link+"\n")
+				assert.Equal(t, 1, strings.Count(res.Stdout, "Copera added on the server: shared/DESIGN.md. A later push keeps them."))
+				assert.Contains(t, res.Stdout, "Run: copera designs source "+artID+" --path shared/DESIGN.md --output plain\n")
 			} else {
 				var result map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal([]byte(res.Stdout), &result))
 				assert.Equal(t, `"`+link+`"`, string(result["appUrl"]))
 				assert.Empty(t, result["url"])
+				assert.JSONEq(t, `["shared/DESIGN.md"]`, string(result["serverAddedFiles"]))
+				assert.Empty(t, result["serverAddedFilesOmitted"])
 			}
 			if mode.name == "wait" {
 				assert.Contains(t, res.Stdout, "Screenshots: .copera/shots/")

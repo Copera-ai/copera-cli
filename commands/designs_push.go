@@ -119,6 +119,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				defer cancel()
 			}
 			defaultPageID := pushed.Version.AuthoringManifest.DefaultPageID
+			versionFiles := pushed.Version.Files
 			if refreshManifest {
 				version, err := client.ArtifactVersionGet(committedCtx, pushed.ArtifactID, pushed.Version.ID)
 				if err != nil {
@@ -126,6 +127,9 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				} else {
 					state.Manifest = version.AuthoringManifest
 					defaultPageID = version.AuthoringManifest.DefaultPageID
+					if version.Files != nil {
+						versionFiles = version.Files
+					}
 				}
 			}
 			if state.BaseVersionID != pushed.Version.ID {
@@ -142,8 +146,9 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				}
 				return designError(cli, err)
 			}
+			added := designFilesAddedOnServer(versionFiles, files)
 			if waitForPreview {
-				return waitForDesignPreview(committedCtx, cli, client, pushed, defaultPageID, progress)
+				return waitForDesignPreview(committedCtx, cli, client, pushed, defaultPageID, progress, added)
 			}
 			appURL, err := designAppURL(ctx, client, state.ID)
 			if err != nil {
@@ -151,19 +156,21 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 					designsTerminalLine(pushed.Version.ID), designsTerminalLine(state.ID), designsTerminalLine(err.Error()))
 			}
 			if wait {
-				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, vendorHint, progress, appURL)
+				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, vendorHint, progress, appURL, added)
 			}
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(struct {
 					*api.ArtifactPushResult
+					designServerAddedFiles
 					AppURL string `json:"appUrl,omitempty"`
-				}{pushed, appURL})
+				}{pushed, added, appURL})
 			}
-			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", pushed.Version.Version, pushed.Version.ID))
-			cli.Printer.PrintLine("Build: " + pushed.BuildState)
+			cli.Printer.PrintLine(designsTerminalLine(fmt.Sprintf("Version: %d (%s)", pushed.Version.Version, pushed.Version.ID)))
+			cli.Printer.PrintLine("Build: " + designsTerminalLine(pushed.BuildState))
 			if appURL != "" {
 				cli.Printer.PrintLine("URL: " + designsTerminalLine(appURL))
 			}
+			added.print(cli, pushed.ArtifactID)
 			return nil
 		},
 	}
@@ -176,6 +183,45 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Push this folder over the current remote head")
 	_ = cmd.MarkFlagRequired("message")
 	return cmd
+}
+
+type designServerAddedFiles struct {
+	ServerAddedFiles        []string `json:"serverAddedFiles,omitempty"`
+	ServerAddedFilesOmitted int      `json:"serverAddedFilesOmitted,omitempty"`
+}
+
+func designFilesAddedOnServer(version []api.ArtifactFileRef, local map[string]designFile) designServerAddedFiles {
+	var paths []string
+	for _, file := range version {
+		if _, exists := local[file.Path]; !exists {
+			paths = append(paths, file.Path)
+		}
+	}
+	slices.Sort(paths)
+	paths = slices.Compact(paths)
+	const limit = 20
+	return designServerAddedFiles{paths[:min(len(paths), limit)], max(0, len(paths)-limit)}
+}
+
+func (added designServerAddedFiles) print(cli *CLI, id string) {
+	if len(added.ServerAddedFiles) == 0 {
+		return
+	}
+	files := strings.Join(added.ServerAddedFiles, ", ")
+	if added.ServerAddedFilesOmitted > 0 {
+		files += fmt.Sprintf(", and %d more", added.ServerAddedFilesOmitted)
+	}
+	cli.Printer.PrintLine(designsTerminalLine("Copera added on the server: " + files + ". A later push keeps them."))
+	id, err := designID(id)
+	if err != nil {
+		return
+	}
+	const guidance = "shared/DESIGN.md"
+	source := guidance
+	if !slices.Contains(added.ServerAddedFiles, guidance) {
+		source = "'" + strings.ReplaceAll(added.ServerAddedFiles[0], "'", "'\\''") + "'"
+	}
+	cli.Printer.PrintLine(designsTerminalLine("Run: copera designs source " + id + " --path " + source + " --output plain"))
 }
 
 func designPushProgress(state *designState) string {
@@ -632,7 +678,7 @@ func sendDesignPush(ctx context.Context, cli *CLI, client *api.Client, id string
 	}
 }
 
-func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pushed *api.ArtifactPushResult, page, progress string) error {
+func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pushed *api.ArtifactPushResult, page, progress string, added designServerAddedFiles) error {
 	id, version := pushed.ArtifactID, pushed.Version.ID
 	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
 	unsupported := errors.New("the API does not support waiting for a Design preview. Use --wait to wait for build evidence")
@@ -684,12 +730,14 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 						EvidenceStatus string     `json:"evidenceStatus"`
 						URL            string     `json:"url"`
 						AppURL         string     `json:"appUrl,omitempty"`
-					}{id, version, build.State, build.PreviewReadyAt, build.EvidenceStatus, preview.URL, appURL})
+						designServerAddedFiles
+					}{id, version, build.State, build.PreviewReadyAt, build.EvidenceStatus, preview.URL, appURL, added})
 				}
 				cli.Printer.PrintLine(designsTerminalLine(preview.URL))
 				if appURL != "" {
 					cli.Printer.PrintLine("URL: " + designsTerminalLine(appURL))
 				}
+				added.print(cli, id)
 				return nil
 			}
 		} else if build.Done {
@@ -709,7 +757,7 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 	}
 }
 
-func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, check *designBuildReport, vendorHint func(*designBuildReport), progress, appURL string) error {
+func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, check *designBuildReport, vendorHint func(*designBuildReport), progress, appURL string, added designServerAddedFiles) error {
 	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
 	for {
 		build, err := client.ArtifactBuild(ctx, state.ID, state.BaseVersionID, wait)
@@ -732,9 +780,12 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 			continue
 		}
 
+		if err := recordDesignBuildState(root, state, build.State); err != nil {
+			return designPushError(cli, fmt.Errorf("version %s was saved in Copera, but final build state could not be saved: %w", version.ID, err), progress)
+		}
 		report := &designBuildReport{
 			State: build.State, FailureCode: build.FailureCode, ArtifactBuildFindings: build.ArtifactBuildFindings,
-			Version: version, AppURL: appURL,
+			Version: version, AppURL: appURL, designServerAddedFiles: added,
 		}
 		vendorHint(report)
 		if check != nil {
@@ -761,6 +812,27 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 			}
 			report.addScreenshot(shot.PageID, shot.Route, name)
 		}
-		return printDesignBuild(cli, report, progress)
+		err = printDesignBuild(cli, report, progress)
+		if !cli.Printer.IsJSON() {
+			added.print(cli, state.ID)
+		}
+		return err
 	}
+}
+
+func recordDesignBuildState(root *os.Root, pushed *designState, buildState string) error {
+	release, err := lockDesignState(root, true)
+	if err != nil {
+		return err
+	}
+	defer release()
+	current, err := loadDesignState(root)
+	if err != nil {
+		return err
+	}
+	if current.ID != pushed.ID || current.BaseVersionID != pushed.BaseVersionID || current.BuildState == buildState {
+		return nil
+	}
+	current.BuildState = buildState
+	return writeDesignStateLocked(root, current)
 }
