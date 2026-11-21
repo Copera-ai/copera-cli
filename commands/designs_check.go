@@ -44,6 +44,7 @@ func newDesignCheckCmd(cli *CLI) *cobra.Command {
 			if err := recordDesignCheck(root, cfg, files, digest, report.State == "ready"); err != nil {
 				cli.Printer.Info("Warning: save Design check result: %s", err)
 			}
+			designVendorHint(cli, files)(report)
 			return printDesignBuild(cli, report, "")
 		},
 	}

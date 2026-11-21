@@ -62,6 +62,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+			vendorHint := designVendorHint(cli, files)
 			base := state.Files
 			if force && state.ID != "" {
 				head, err := client.ArtifactGet(ctx, state.ID)
@@ -85,6 +86,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				if err != nil {
 					return designPushError(cli, err, designPushProgress(state))
 				}
+				vendorHint(check)
 				if check.State != "ready" {
 					return printDesignBuild(cli, check, designPushProgress(state))
 				}
@@ -102,6 +104,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				}
 				return designPushError(cli, err, designPushProgress(state))
 			}
+			vendorHint(&designBuildReport{Warnings: pushed.Warnings})
 			committedCtx := ctx
 			if waitForPreview {
 				var cancel context.CancelFunc
@@ -136,7 +139,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return waitForDesignPreview(committedCtx, cli, client, pushed, defaultPageID, progress)
 			}
 			if wait {
-				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, progress)
+				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, vendorHint, progress)
 			}
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(pushed)
@@ -646,7 +649,7 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 	}
 }
 
-func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, check *designBuildReport, progress string) error {
+func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, check *designBuildReport, vendorHint func(*designBuildReport), progress string) error {
 	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
 	for {
 		build, err := client.ArtifactBuild(ctx, state.ID, state.BaseVersionID, wait)
@@ -673,6 +676,7 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 			State: build.State, FailureCode: build.FailureCode, ArtifactBuildFindings: build.ArtifactBuildFindings,
 			Version: version,
 		}
+		vendorHint(report)
 		if check != nil {
 			report.Screenshots = check.Screenshots
 			report.ScreenshotPages = check.ScreenshotPages

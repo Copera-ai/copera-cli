@@ -61,43 +61,59 @@ type designVendorFile struct {
 
 func newDesignVendorCmd(cli *CLI) *cobra.Command {
 	var dir, destination string
+	var all bool
 	cmd := &cobra.Command{
-		Use:   "vendor <url>",
-		Short: "Save a pinned CDN file or Google font to the local Design",
+		Use:   "vendor <url> | vendor --all [dir]",
+		Short: "Save pinned CDN files and Google fonts to the local Design",
 		Long: "Save a pinned CDN file or Google font to the local Design. " +
-			"Paste a Google Fonts stylesheet URL directly, including semicolon-separated axis values and multiple families.",
-		Args: cobra.ExactArgs(1),
+			"Paste a Google Fonts stylesheet URL directly, including semicolon-separated axis values and multiple families. " +
+			"Use --all to vendor and rewrite outside stylesheet and script references.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if all {
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all {
+				for _, arg := range args {
+					lower := strings.ToLower(arg)
+					if strings.HasPrefix(lower, "https:") || strings.HasPrefix(lower, "http:") ||
+						strings.HasPrefix(arg, "//") || strings.Contains(arg, "://") {
+						return designUsageError(cli, fmt.Errorf("--all cannot be used with a URL"))
+					}
+				}
+				if cmd.Flags().Changed("path") {
+					return designUsageError(cli, fmt.Errorf("--all cannot be used with --path"))
+				}
+				if len(args) > 1 || len(args) == 1 && cmd.Flags().Changed("dir") {
+					return designUsageError(cli, fmt.Errorf("--all accepts at most one Design folder"))
+				}
+				if len(args) == 1 {
+					dir = args[0]
+				}
+			}
 			root, err := openDesignDir(dir, false)
 			if err != nil {
 				return designError(cli, err)
 			}
 			defer func() { _ = root.Close() }()
-			if _, err := loadDesignState(root); err != nil {
+			state, err := loadDesignState(root)
+			if err != nil {
 				return designError(cli, err)
+			}
+			if all {
+				return runDesignVendorAll(cmd.Context(), cli, root, state, dir)
 			}
 			source, err := parseDesignVendorSource(args[0], destination)
 			if err != nil {
 				return designError(cli, err)
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-			defer cancel()
-			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			}}
-			var files []designVendorFile
-			if source.url.Host == "fonts.googleapis.com" {
-				files, err = vendorGoogleFonts(ctx, client, source)
-			} else {
-				files, err = vendorCDNFile(ctx, client, source)
-			}
+			files, err := downloadDesignVendorSource(cmd.Context(), source)
 			if err != nil {
 				return designError(cli, err)
 			}
-			if err := ctx.Err(); err != nil {
-				return designError(cli, err)
-			}
-			if err := writeDesignVendorFiles(root, files); err != nil {
+			if _, err := writeDesignVendorFiles(root, files); err != nil {
 				return designError(cli, err)
 			}
 			if cli.Printer.IsJSON() {
@@ -111,9 +127,29 @@ func newDesignVendorCmd(cli *CLI) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "Vendor and rewrite outside resources in the Design")
 	cmd.Flags().StringVar(&dir, "dir", ".", "Initialized Design folder")
 	cmd.Flags().StringVar(&destination, "path", "", "Output path under vendor/")
 	return cmd
+}
+
+func downloadDesignVendorSource(ctx context.Context, source designVendorSource) ([]designVendorFile, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	var files []designVendorFile
+	var err error
+	if source.url.Host == "fonts.googleapis.com" {
+		files, err = vendorGoogleFonts(ctx, client, source)
+	} else {
+		files, err = vendorCDNFile(ctx, client, source)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return files, ctx.Err()
 }
 
 func parseDesignVendorURL(raw string) (*url.URL, error) {
@@ -523,12 +559,12 @@ func validDesignVendorWOFF2(data []byte, mediaType string) bool {
 		binary.BigEndian.Uint32(data[20:24]) > 0 && binary.BigEndian.Uint32(data[20:24]) < uint32(len(data)-headerSize)
 }
 
-func writeDesignVendorFiles(root *os.Root, files []designVendorFile) error {
+func writeDesignVendorFiles(root *os.Root, files []designVendorFile) ([]string, error) {
 	var newFiles []designVendorFile
 	for _, file := range files {
 		exists, err := designVendorDestinationExists(root, file)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !exists {
 			newFiles = append(newFiles, file)
@@ -548,10 +584,11 @@ func writeDesignVendorFiles(root *os.Root, files []designVendorFile) error {
 		local := filepath.FromSlash(file.Path)
 		temp := filepath.Join(filepath.Dir(local), ".copera-vendor-"+rand.Text())
 		if err := writeDesignFile(root, filepath.ToSlash(temp), file.data); err != nil {
-			return err
+			return nil, err
 		}
 		staged = append(staged, stagedLink{temp, local})
 	}
+	written := make([]string, 0, len(staged))
 	for i, link := range staged {
 		if err := root.Link(link.temp, link.local); err != nil {
 			for _, previous := range staged[:i] {
@@ -561,10 +598,11 @@ func writeDesignVendorFiles(root *os.Root, files []designVendorFile) error {
 					_ = root.Remove(previous.local)
 				}
 			}
-			return err
+			return nil, err
 		}
+		written = append(written, filepath.ToSlash(link.local))
 	}
-	return nil
+	return written, nil
 }
 
 func designVendorDestinationExists(root *os.Root, file designVendorFile) (bool, error) {
