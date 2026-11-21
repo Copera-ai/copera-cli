@@ -1,13 +1,16 @@
 package api
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"time"
 )
@@ -51,7 +54,36 @@ type ArtifactCheckInput struct {
 type ArtifactCheckFile struct {
 	Path      string
 	MediaType string
-	Data      []byte
+	ArtifactUpload
+}
+
+// ArtifactUpload describes exact bytes that can be reopened on a retry.
+type ArtifactUpload struct {
+	ByteLength    int64
+	ContentDigest string
+	Open          func() (io.ReadCloser, error)
+}
+
+// CopyTo streams the pinned bytes and fails if the input changed after scanning.
+func (file ArtifactUpload) CopyTo(dst io.Writer) error {
+	src, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	digest := sha256.New()
+	n, err := io.Copy(io.MultiWriter(dst, digest), io.LimitReader(src, file.ByteLength))
+	if err != nil {
+		return err
+	}
+	if n != file.ByteLength || hex.EncodeToString(digest.Sum(nil)) != file.ContentDigest {
+		return fmt.Errorf("file differs from its scanned size or SHA-256")
+	}
+	var next [1]byte
+	if n, err := io.ReadFull(src, next[:]); n != 0 || err != io.EOF {
+		return fmt.Errorf("file changed after scanning")
+	}
+	return nil
 }
 
 type ArtifactWarning struct {
@@ -109,9 +141,11 @@ type ArtifactCheckResult struct {
 }
 
 type ArtifactBuildResult struct {
-	State       string `json:"state"`
-	Done        bool   `json:"done"`
-	FailureCode string `json:"failureCode"`
+	State          string     `json:"state"`
+	Done           bool       `json:"done"`
+	FailureCode    string     `json:"failureCode"`
+	PreviewReadyAt *time.Time `json:"previewReadyAt"`
+	EvidenceStatus string     `json:"evidenceStatus"`
 	ArtifactBuildFindings
 	Screenshots []struct {
 		PageID string `json:"pageId"`
@@ -175,51 +209,63 @@ func (c *Client) ArtifactCheck(ctx context.Context, input ArtifactCheckInput, fi
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal Design check: %w", err)
 	}
-	payload, err := artifactProjectForm(project, files)
-	if err != nil {
-		return nil, fmt.Errorf("api: build multipart Design check: %w", err)
-	}
-	err = client.do(ctx, http.MethodPost, path, payload, &result)
+	err = client.do(ctx, http.MethodPost, path, artifactMultipart("project", project, files), &result)
 	return &result, err
 }
 
-func artifactProjectForm(project []byte, files []ArtifactCheckFile) (multipartRequest, error) {
-	var payload bytes.Buffer
-	writer := multipart.NewWriter(&payload)
-	part, err := writer.CreatePart(textproto.MIMEHeader{
-		"Content-Disposition": {`form-data; name="project"`},
-		"Content-Type":        {"application/json"},
-	})
-	if err != nil {
-		return multipartRequest{}, err
-	}
-	if _, err := part.Write(project); err != nil {
-		return multipartRequest{}, err
-	}
-	for _, file := range files {
+func artifactMultipart(field string, metadata []byte, files []ArtifactCheckFile) multipartRequest {
+	return newMultipartRequest(func(writer *multipart.Writer) error {
 		part, err := writer.CreatePart(textproto.MIMEHeader{
-			"Content-Disposition": {multipart.FileContentDisposition("file", file.Path)},
-			"Content-Type":        {file.MediaType},
+			"Content-Disposition": {`form-data; name="` + field + `"`},
+			"Content-Type":        {"application/json"},
 		})
 		if err != nil {
-			return multipartRequest{}, err
+			return err
 		}
-		if _, err := part.Write(file.Data); err != nil {
-			return multipartRequest{}, err
+		if _, err := part.Write(metadata); err != nil {
+			return err
 		}
-	}
-	if err := writer.Close(); err != nil {
-		return multipartRequest{}, err
-	}
-	return multipartRequest{data: payload.Bytes(), contentType: writer.FormDataContentType()}, nil
+		for _, file := range files {
+			part, err := writer.CreatePart(textproto.MIMEHeader{
+				"Content-Disposition": {multipart.FileContentDisposition("file", file.Path)},
+				"Content-Type":        {file.MediaType},
+			})
+			if err != nil {
+				return err
+			}
+			if err := file.CopyTo(part); err != nil {
+				return fmt.Errorf("stream %q: %w", file.Path, err)
+			}
+		}
+		return nil
+	})
 }
 
 func (c *Client) ArtifactBuild(ctx context.Context, artifactID, versionID string, wait int) (*ArtifactBuildResult, error) {
-	path := artifactVersionPath(artifactID, versionID) + "/build"
+	return c.artifactBuild(ctx, artifactID, versionID, wait, "")
+}
+
+func (c *Client) ArtifactBuildForPreview(ctx context.Context, artifactID, versionID string, wait int) (*ArtifactBuildResult, error) {
+	return c.artifactBuild(ctx, artifactID, versionID, wait, "preview")
+}
+
+func (c *Client) artifactBuild(ctx context.Context, artifactID, versionID string, wait int, waitFor string) (*ArtifactBuildResult, error) {
+	params := url.Values{}
 	if wait > 0 {
-		path += "?wait=" + strconv.Itoa(wait)
+		params.Set("wait", strconv.Itoa(wait))
 	}
+	if waitFor != "" {
+		params.Set("waitFor", waitFor)
+	}
+	path := withQuery(artifactVersionPath(artifactID, versionID)+"/build", params)
 	var result ArtifactBuildResult
+	err := c.do(ctx, http.MethodGet, path, nil, &result)
+	return &result, err
+}
+
+func (c *Client) ArtifactPagePreview(ctx context.Context, artifactID, versionID, pageID string) (*ArtifactPreview, error) {
+	path := artifactVersionPath(artifactID, versionID) + "/pages/" + url.PathEscape(pageID) + "/preview"
+	var result ArtifactPreview
 	err := c.do(ctx, http.MethodGet, path, nil, &result)
 	return &result, err
 }
@@ -235,11 +281,7 @@ func (c *Client) ArtifactCreate(ctx context.Context, input ArtifactCreateInput, 
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal Design create: %w", err)
 	}
-	payload, err := artifactProjectForm(project, files)
-	if err != nil {
-		return nil, fmt.Errorf("api: build multipart Design create: %w", err)
-	}
 	var result ArtifactCreateResult
-	err = c.do(ctx, http.MethodPost, "/artifacts/", payload, &result)
+	err = c.do(ctx, http.MethodPost, "/artifacts/", artifactMultipart("project", project, files), &result)
 	return &result, err
 }

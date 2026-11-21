@@ -81,6 +81,13 @@ func designFileNames(a, b map[string]designFile) []string {
 	return names
 }
 
+func sameDesignContent(a, b designFile) bool {
+	if a.Upload != nil || b.Upload != nil {
+		return a.checksum() == b.checksum()
+	}
+	return bytes.Equal(a.Data, b.Data)
+}
+
 func mergeDesignFiles(base, local, remote map[string]designFile) (map[string]designFile, []string) {
 	merged := maps.Clone(local)
 	conflicts := []string{}
@@ -89,10 +96,10 @@ func mergeDesignFiles(base, local, remote map[string]designFile) (map[string]des
 		ours, hasLocal := local[name]
 		theirs, hasRemote := remote[name]
 		switch {
-		case hadBase == hasRemote && bytes.Equal(prior.Data, theirs.Data),
-			hasLocal == hasRemote && bytes.Equal(ours.Data, theirs.Data):
+		case hadBase == hasRemote && sameDesignContent(prior, theirs),
+			hasLocal == hasRemote && sameDesignContent(ours, theirs):
 			continue
-		case hadBase == hasLocal && bytes.Equal(prior.Data, ours.Data):
+		case hadBase == hasLocal && sameDesignContent(prior, ours):
 			if hasRemote {
 				merged[name] = theirs
 			} else {
@@ -125,7 +132,7 @@ func designChanges(state *designState, local map[string]designFile) []designChan
 		file := local[name]
 		if digest, exists := state.Files[name]; !exists {
 			changes = append(changes, designChange{Path: name, Kind: "added", Binary: file.Binary})
-		} else if sha256Hex(file.Data) != digest {
+		} else if file.checksum() != digest {
 			changes = append(changes, designChange{Path: name, Kind: "modified", Binary: file.Binary})
 		}
 	}
