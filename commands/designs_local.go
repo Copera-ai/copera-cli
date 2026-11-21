@@ -18,6 +18,7 @@ import (
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/exitcodes"
+	"github.com/copera/copera-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -194,7 +195,12 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 	cmd.Flags().BoolVar(&adopt, "adopt", false, "Use the existing static files in this folder")
 	cmd.Flags().StringVar(&entry, "entry", "", "Entry HTML file when adopting a folder")
 	cmd.Flags().StringVar(&title, "title", "", "Title for the first push")
-	cmd.SetFlagErrorFunc(systemFlags(cli))
+	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		// Cobra parses flags before the root initializes cli.Printer.
+		printer := output.New(output.FormatJSON, cmd.OutOrStdout(), cmd.ErrOrStderr(), false)
+		printer.PrintError("invalid_usage", err.Error(), "", false)
+		return exitcodes.New(exitcodes.Usage, err)
+	})
 	return cmd
 }
 

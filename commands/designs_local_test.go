@@ -70,6 +70,14 @@ func TestDesignInit(t *testing.T) {
 	assert.Contains(t, readFile(t, filepath.Join(dir, ".copera", "guide", "README.md")), "# Authoring guide\n")
 }
 
+func TestDesignInitUnknownFlag(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "app")
+	res := testutil.RunCommand(t, []string{"designs", "init", dir, "--unrecognized", "--json"}, "")
+	assert.Equal(t, 2, res.ExitCode, res.Stderr)
+	assert.Contains(t, res.Stderr, "unknown flag: --unrecognized")
+	assert.NoDirExists(t, dir)
+}
+
 func TestDesignInitWritesGuideTemplate(t *testing.T) {
 	const presentation = `{"aspectRatio":"16:9","slideCount":3}`
 	const capabilities = `[{"kind":"fullscreen"}]`
