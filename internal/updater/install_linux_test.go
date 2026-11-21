@@ -3,6 +3,7 @@
 package updater
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -13,34 +14,82 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStagedUpdaterRejectsChangedBinary(t *testing.T) {
-	if os.Getenv("COPERA_TEST_STAGED_UPDATER") == "1" {
+func TestStagedUpdater(t *testing.T) {
+	if wantError, child := os.LookupEnv("COPERA_TEST_STAGED_UPDATER"); child {
 		_, resumed, err := ResumeInstall()
 		require.True(t, resumed)
-		require.ErrorContains(t, err, "checksum mismatch")
+		if wantError == "" {
+			require.NoError(t, err)
+		} else {
+			require.ErrorContains(t, err, wantError)
+		}
 		return
 	}
 
-	tmp := t.TempDir()
-	dir := filepath.Join(tmp, "copera-update-test")
-	require.NoError(t, os.Mkdir(dir, 0700))
 	self, err := os.Executable()
 	require.NoError(t, err)
-	runner := filepath.Join(dir, installRunner)
-	require.NoError(t, copyFile(self, runner, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "copera"), []byte("changed binary\n"), 0700))
-	dest := filepath.Join(t.TempDir(), "copera")
-	oldBinary := []byte("old binary\n")
-	require.NoError(t, os.WriteFile(dest, oldBinary, 0755))
+	newBinary := []byte("verified binary\n")
+	for _, tc := range []struct {
+		name      string
+		wantError string
+	}{
+		{"unrelated", "update target does not match the running binary"},
+		{"symlink", "open current binary for update"},
+		{"hard_link", "exactly one link"},
+		{"relative", "absolute, clean path"},
+		{"changed_staged_binary", "checksum mismatch for staged binary"},
+		{"legitimate", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			dir := filepath.Join(tmp, "copera-update-test")
+			require.NoError(t, os.Mkdir(dir, 0700))
+			runner := filepath.Join(dir, installRunner)
+			require.NoError(t, copyFile(self, runner, 0700))
 
-	cmd := exec.CommandContext(t.Context(), runner, "-test.run=^TestStagedUpdaterRejectsChangedBinary$")
-	cmd.Env = append(os.Environ(), "TMPDIR="+tmp, "COPERA_TEST_STAGED_UPDATER=1", installTarget+"="+dest,
-		fmt.Sprintf("%s=%x", installSHA256, sha256.Sum256([]byte("verified binary\n"))))
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", output)
-	installed, err := os.ReadFile(dest)
-	require.NoError(t, err)
-	require.Equal(t, oldBinary, installed)
+			staged := newBinary
+			if tc.name == "changed_staged_binary" {
+				staged = []byte("changed binary\n")
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "copera"), staged, 0700))
+
+			dest := filepath.Join(tmp, "installed-copera")
+			if tc.name == "unrelated" {
+				dest = filepath.Join(tmp, "authorized_keys")
+				require.NoError(t, os.WriteFile(dest, []byte("fake authorized keys\n"), 0600))
+			} else {
+				require.NoError(t, copyFile(self, dest, 0755))
+			}
+			target := dest
+			switch tc.name {
+			case "symlink":
+				target = filepath.Join(tmp, "symlink")
+				require.NoError(t, os.Symlink(dest, target))
+			case "hard_link":
+				target = filepath.Join(tmp, "hard-link")
+				require.NoError(t, os.Link(dest, target))
+			case "relative":
+				target = filepath.Base(dest)
+			}
+			before, err := os.ReadFile(dest)
+			require.NoError(t, err)
+
+			cmd := exec.CommandContext(t.Context(), runner, "-test.run=^TestStagedUpdater$")
+			cmd.Dir = tmp
+			cmd.Env = append(cmd.Environ(), "TMPDIR="+tmp, "COPERA_TEST_STAGED_UPDATER="+tc.wantError,
+				installTarget+"="+target, fmt.Sprintf("%s=%x", installSHA256, sha256.Sum256(newBinary)))
+			output, runErr := cmd.CombinedOutput()
+			installed, err := os.ReadFile(dest)
+			require.NoError(t, err)
+			if tc.wantError == "" {
+				require.Equal(t, newBinary, installed)
+			} else {
+				require.True(t, bytes.Equal(before, installed), "rejected update changed %s", dest)
+				require.NoFileExists(t, filepath.Join(dir, "copera.backup"))
+			}
+			require.NoError(t, runErr, "%s", output)
+		})
+	}
 }
 
 func TestSudoInstallReplacesRunningBinary(t *testing.T) {

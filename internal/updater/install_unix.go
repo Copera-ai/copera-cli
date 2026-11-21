@@ -85,27 +85,62 @@ func ResumeInstall() (version string, resumed bool, err error) {
 		_ = os.Remove(filepath.Join(dir, "checksums.txt"))
 		_ = os.Remove(dir)
 	}()
-	if err := overwriteBinary(src, dest, os.Getenv(installSHA256)); err != nil {
+	runningBinary := self
+	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
+		// Read the running image even if the runner path has been replaced.
+		runningBinary = "/proc/self/exe"
+	}
+	if err := overwriteBinary(src, dest, runningBinary, os.Getenv(installSHA256)); err != nil {
 		return version, true, err
 	}
 	_ = os.Remove(filepath.Join(cache.SharedDir(), "version-check.json"))
 	return version, true, nil
 }
 
-func overwriteBinary(src, dest, expectedChecksum string) error {
+func overwriteBinary(src, dest, runningBinary, expectedChecksum string) error {
+	if !filepath.IsAbs(dest) || filepath.Clean(dest) != dest {
+		return fmt.Errorf("update target must be an absolute, clean path")
+	}
 	// The kernel can keep the old image busy briefly after exec.
 	deadline := time.Now().Add(time.Second)
-	file, err := os.OpenFile(dest, os.O_RDWR, 0)
+	file, err := os.OpenFile(dest, os.O_RDWR|unix.O_NOFOLLOW, 0)
 	for errors.Is(err, unix.ETXTBSY) && time.Now().Before(deadline) {
 		time.Sleep(25 * time.Millisecond)
-		file, err = os.OpenFile(dest, os.O_RDWR, 0)
+		file, err = os.OpenFile(dest, os.O_RDWR|unix.O_NOFOLLOW, 0)
 	}
 	if err != nil {
 		return fmt.Errorf("open current binary for update: %w", err)
 	}
 	defer file.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
+		return fmt.Errorf("stat update target: %w", err)
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Uid != uint32(os.Getuid()) || stat.Nlink != 1 {
+		return fmt.Errorf("update target must be a regular file owned by the current user with exactly one link")
+	}
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		return fmt.Errorf("lock current binary for update: %w", err)
+	}
+
+	runner, err := os.Open(runningBinary)
+	if err != nil {
+		return fmt.Errorf("open running binary: %w", err)
+	}
+	runnerChecksum, err := stagedBinaryChecksum(runner)
+	_ = runner.Close()
+	if err != nil {
+		return fmt.Errorf("hash running binary: %w", err)
+	}
+	targetChecksum, err := stagedBinaryChecksum(file)
+	if err != nil {
+		return fmt.Errorf("hash update target: %w", err)
+	}
+	if targetChecksum != runnerChecksum {
+		return fmt.Errorf("update target does not match the running binary")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind update target: %w", err)
 	}
 
 	backup := filepath.Join(filepath.Dir(src), "copera.backup")
@@ -130,6 +165,8 @@ func overwriteBinary(src, dest, expectedChecksum string) error {
 		return fmt.Errorf("open staged binary: %w", err)
 	}
 	defer source.Close()
+	// The staged digest checks integrity within the user's own files.
+	// The running binary comparison above authorizes the target.
 	checksum, err := stagedBinaryChecksum(source)
 	if err != nil {
 		return fmt.Errorf("hash staged binary: %w", err)
