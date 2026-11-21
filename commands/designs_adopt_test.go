@@ -3,13 +3,16 @@ package commands_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/copera/copera-cli/internal/api"
+	"github.com/copera/copera-cli/internal/output"
 	"github.com/copera/copera-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,28 +25,41 @@ func TestDesignInitAdoptPublishableFiles(t *testing.T) {
 	setupHome(t, srv.URL)
 	t.Run("refused paths", func(t *testing.T) {
 		dir := t.TempDir()
-		offenders := []string{
-			".env", ".env.local", "id_rsa.pub", "id_ed25519-test", "server.PEM", ".netrc",
-			".aws/credentials", ".htpasswd", "backup.sql", "data.sqlite", "data.db", "site.key",
-			"site.p12", "site.pfx", "site.keystore", "src/Package.JSON", "src/tsconfig.json",
-			"src/JSConfig.json", "src/VITE.CONFIG.MTS", "src/tailwind.config.cts", "src/postcss.config.cjs",
-			"src/.postcssrc.yml", "src/.NPMRC", "src/.git/config", ".hg/hgrc", ".svn/entries",
-			"with space.html", "ação.html", "src/@app.js", ".hidden/keep.txt", "node_modules/pkg/.env",
+		offenders := []struct {
+			reason string
+			paths  []string
+		}{
+			{"the builder owns build configuration", []string{
+				"src/Package.JSON", "src/tsconfig.json", "src/JSConfig.json", "src/VITE.CONFIG.MTS",
+				"src/tailwind.config.cts", "src/postcss.config.cjs",
+			}},
+			{"looks like a secret or a database", []string{
+				"id_rsa.pub", "id_ed25519-test", "server.PEM", "backup.sql", "data.sqlite", "data.db",
+				"site.key", "site.p12", "site.pfx", "site.keystore", "credentials/private.txt",
+			}},
+			{"only letters, digits, dots, underscores and hyphens", []string{"with space.html", "ação.html", "src/@app.js"}},
+			{"packages are not uploaded", []string{"node_modules/first.txt"}},
 		}
 		writePublishFixture(t, filepath.Join(dir, "index.html"), nil)
-		writePublishFixture(t, filepath.Join(dir, "node_modules", "first.txt"), nil)
-		for _, name := range offenders {
-			writePublishFixture(t, filepath.Join(dir, name), nil)
+		for _, group := range offenders {
+			for _, name := range group.paths {
+				writePublishFixture(t, filepath.Join(dir, name), nil)
+			}
 		}
 		res := testutil.RunCommand(t, []string{"designs", "init", dir, "--adopt", "--kind", "web_app"}, "")
 		assert.Equal(t, 2, res.ExitCode, res.Stderr)
-		for _, name := range offenders {
-			if name == "src/.git/config" || name == ".hg/hgrc" || name == ".svn/entries" || name == ".hidden/keep.txt" {
-				name = filepath.ToSlash(filepath.Dir(name))
+		var refusal output.StructuredError
+		require.NoError(t, json.Unmarshal([]byte(res.Stderr), &refusal))
+		for _, group := range offenders {
+			for _, name := range group.paths {
+				if strings.HasPrefix(name, "credentials/") || strings.HasPrefix(name, "node_modules/") {
+					name = filepath.ToSlash(filepath.Dir(name))
+				}
+				assert.Contains(t, refusal.Message, fmt.Sprintf("%q: %s", name, group.reason))
 			}
-			assert.Contains(t, res.Stderr, name)
 		}
-		assert.Contains(t, res.Stderr, "Remove these paths or copy the publishable files into a clean folder")
+		assert.True(t, strings.HasSuffix(refusal.Message, "Copy the files you want published into a clean folder and adopt that folder."))
+		assert.NotContains(t, refusal.Message, "Remove")
 		assert.NoDirExists(t, filepath.Join(dir, ".copera"))
 	})
 	t.Run("populated metadata", func(t *testing.T) {
@@ -105,6 +121,159 @@ func TestDesignInitAdoptPublishableFiles(t *testing.T) {
 		assert.Contains(t, report.OtherText, "copy-38.txt")
 		assert.Equal(t, map[string]int{"pages": 1, "scripts": 1, "styles": 1, "otherText": 39, "assets": 1}, report.FileCounts)
 	})
+}
+
+func TestDesignInitAdoptRefusalLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		paths  int
+		create func(int) string
+	}{
+		{"packages", 300, func(i int) string { return fmt.Sprintf("node_modules/pkg-%03d/package.json", i) }},
+		{"independent refusals", 42, func(i int) string { return fmt.Sprintf("item-%02d.key", i) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writePublishFixture(t, filepath.Join(dir, "index.html"), nil)
+			for i := range tc.paths {
+				writePublishFixture(t, filepath.Join(dir, tc.create(i)), nil)
+			}
+			res := testutil.RunCommand(t, []string{"designs", "init", dir, "--adopt", "--kind", "web_app"}, "")
+			require.Equal(t, 2, res.ExitCode)
+			var refusal output.StructuredError
+			require.NoError(t, json.Unmarshal([]byte(res.Stderr), &refusal))
+			if tc.name == "packages" {
+				assert.Equal(t, 1, strings.Count(refusal.Message, "node_modules"))
+				assert.False(t, strings.Contains(refusal.Message, "pkg-000"))
+				assert.False(t, strings.Contains(refusal.Message, "and 1 more"))
+			} else {
+				assert.Equal(t, 40, strings.Count(refusal.Message, ".key"))
+				assert.True(t, strings.Contains(refusal.Message, "and 2 more"))
+			}
+		})
+	}
+}
+
+func TestDesignInitAdoptHiddenFiles(t *testing.T) {
+	const html = "<title>Site</title>"
+	files := []api.ArtifactContentFile{{Path: "index.html", MediaType: "text/html", Content: html}}
+	var checks, creates atomic.Int32
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": designGuideResponse,
+		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
+		},
+		"GET /artifacts/design-systems/defaults": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactSystemDefaults{})
+		},
+		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+			checks.Add(1)
+			var input api.ArtifactCheckInput
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&input))
+			assert.Equal(t, files, input.Files)
+			testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		},
+		"POST /artifacts/": func(w http.ResponseWriter, r *http.Request) {
+			creates.Add(1)
+			reader, err := r.MultipartReader()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				return
+			}
+			project, err := reader.NextPart()
+			if !assert.NoError(t, err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assert.Equal(t, "project", project.FormName())
+			var input api.ArtifactCreateInput
+			assert.NoError(t, json.NewDecoder(project).Decode(&input))
+			assert.Equal(t, files, input.Project.Files)
+			_, err = reader.NextPart()
+			assert.ErrorIs(t, err, io.EOF)
+			testutil.RespondJSON(w, http.StatusOK, designPullFixture("index.html", html, 1))
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	dir := t.TempDir()
+	writePublishFixture(t, filepath.Join(dir, "index.html"), []byte(html))
+	hidden := []string{".gitignore", ".DS_Store", ".nojekyll", ".htaccess", ".env", ".well-known/hidden.png", "src/.nested"}
+	for _, name := range hidden {
+		writePublishFixture(t, filepath.Join(dir, name), []byte("private"))
+	}
+	for i := range 15 {
+		writePublishFixture(t, filepath.Join(dir, "tmp", fmt.Sprintf(".extra-%02d", i)), []byte("private"))
+	}
+
+	res := testutil.RunCommand(t, []string{"designs", "init", dir, "--adopt", "--kind", "web_app", "--output", "plain"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	assert.Contains(t, res.Stdout, "Not published (hidden)")
+	for _, name := range hidden {
+		if strings.HasPrefix(name, ".well-known/") {
+			name = ".well-known"
+		}
+		assert.Equal(t, 1, strings.Count(res.Stdout, name), name)
+	}
+	assert.NotContains(t, res.Stdout, "hidden.png")
+	assert.Contains(t, res.Stdout, ".extra-12")
+	assert.NotContains(t, res.Stdout, ".extra-13")
+	assert.Contains(t, res.Stdout, "and 2 more")
+
+	writePublishFixture(t, filepath.Join(dir, "src", ".added"), []byte("private"))
+	res = testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	res = testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Publish", "--no-check", "--json"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	assert.EqualValues(t, 1, checks.Load())
+	assert.EqualValues(t, 1, creates.Load())
+}
+
+func TestDesignInitAdoptRejectsNewCredential(t *testing.T) {
+	var checks atomic.Int32
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": designGuideResponse,
+		"POST /artifacts/check": func(w http.ResponseWriter, _ *http.Request) {
+			checks.Add(1)
+			testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	dir := t.TempDir()
+	writePublishFixture(t, filepath.Join(dir, "index.html"), []byte("<title>Site</title>"))
+	res := testutil.RunCommand(t, []string{"designs", "init", dir, "--adopt", "--kind", "web_app"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	writePublishFixture(t, filepath.Join(dir, "id_rsa"), []byte("private"))
+	res = testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
+	assert.NotZero(t, res.ExitCode)
+	assert.Contains(t, res.Stderr, "id_rsa")
+	assert.Contains(t, res.Stderr, "looks like a secret or a database")
+	assert.Zero(t, checks.Load())
+}
+
+func TestDesignPlainInitKeepsDotFile(t *testing.T) {
+	var checks atomic.Int32
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": designGuideResponse,
+		"GET /artifacts/design-systems/defaults": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactSystemDefaults{})
+		},
+		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+			checks.Add(1)
+			var input api.ArtifactCheckInput
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&input))
+			assert.Contains(t, input.Files, api.ArtifactContentFile{Path: ".nojekyll", MediaType: "text/plain"})
+			testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	dir := t.TempDir()
+	res := testutil.RunCommand(t, []string{"designs", "init", dir, "--kind", "web_app", "--no-system"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	writePublishFixture(t, filepath.Join(dir, "index.html"), []byte("<title>Site</title>"))
+	writePublishFixture(t, filepath.Join(dir, ".nojekyll"), nil)
+	res = testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	assert.EqualValues(t, 1, checks.Load())
 }
 
 func TestDesignInitAdoptTerminalLine(t *testing.T) {
@@ -388,9 +557,10 @@ func TestDesignInitAdoptRefusals(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "with space.html"), nil, 0o644))
 	res := testutil.RunCommand(t, append(base, "--adopt", "--entry", "one.html"), "")
 	assert.NotEqual(t, 0, res.ExitCode, res.Stderr)
-	for _, want := range []string{"node_modules", ".vscode", "with space.html", "Remove", "clean folder"} {
+	for _, want := range []string{"node_modules", "with space.html", "clean folder"} {
 		assert.Contains(t, res.Stderr, want)
 	}
+	assert.NotContains(t, res.Stderr, ".vscode")
 	_, err := os.Stat(filepath.Join(dir, ".copera"))
 	assert.True(t, os.IsNotExist(err))
 }

@@ -75,7 +75,7 @@ terminal. The noninteractive error gives the exact command when elevation is nee
 
 ### What's new in 0.19.0
 
-- Publish an existing static app with `designs init --adopt`, `designs vendor --all`, and `designs push --wait`. Adoption lists the files to publish and refuses credential files. Bulk vendoring keeps successful downloads and reports skips.
+- Publish an existing static app with `designs init --adopt`, `designs vendor --all`, and `designs push --wait`. Adoption lists the files to publish, skips hidden paths, and refuses credential files. Bulk vendoring keeps successful downloads and reports skips.
 - Set the Design title on init or first push, or let Copera CLI infer it from distinct page titles.
 - Every push mode prints the Design link. Check and push with `--wait` save screenshots for every page returned by the API.
 - Request an authoring guide with `designs guide --topic`. Adoption uses the kind guide if the topic request fails.
@@ -486,9 +486,13 @@ copera designs push ./app -m "Publish existing app" --wait
 
 Adoption takes a static project, writes its state and guide under `.copera/`,
 and declines the workspace's default Design system. It requires `.copera/`
-to be absent or empty and refuses hidden project files and folders, reserved
-build configurations, credential-shaped names, and paths with unsupported
-characters. It skips the top-level `.git`.
+to be absent or empty. Adoption and subsequent status, diff, check, and push
+skip hidden project files and directories at every depth. Adoption reports up
+to 20 hidden paths and the count of any others, excluding top-level metadata
+directories. It refuses reserved build configuration, `node_modules`,
+credential-shaped names, and paths with unsupported characters, showing up to
+40 refusals and the count of any others. Later scans refuse new files with
+credential-shaped names.
 It uses `index.html` or the only top-level HTML page. Set `--entry` to choose a
 different page. It groups publishable paths by file type and outside links by
 URL. Plain output shows up to 40 publishable paths, and JSON lists them all.

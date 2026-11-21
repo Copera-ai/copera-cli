@@ -152,6 +152,8 @@ schema.go     — schema <command>
 - `designs init <dir> --adopt --kind K [--title T] [--entry FILE]` scans an existing
   static project and writes only local metadata and guide files in `.copera/`.
   It declines the default Design system and reports the files it will publish.
+  The saved adoption flag skips hidden paths and rejects new credential-shaped
+  files on subsequent status, diff, check, and push scans.
   It uses the kind guide if the `existing-app` topic request fails.
 - `designs vendor --all [dir]` shares the single-URL downloader and rewrites
   supported source references to project-relative vendor files. Each run

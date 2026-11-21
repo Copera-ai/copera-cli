@@ -517,6 +517,9 @@ func applyDesignPull(root *os.Root, state *designState, remote map[string]design
 		if previous.ID != "" && previous.ID != state.ID {
 			return nil, fmt.Errorf("the folder belongs to Design %s", previous.ID)
 		}
+		state.Adopted = previous.Adopted
+		// Pull compares local files with the remote copy before writing them.
+		previous.Adopted = false
 		base, err = loadDesignBase(root, previous)
 		if err != nil {
 			return nil, err

@@ -60,6 +60,7 @@ type designState struct {
 	BrandWarning         string                          `json:"brandWarning,omitempty"`
 	BrandStylesheet      string                          `json:"brandStylesheet,omitempty"`
 	NoDesignSystem       bool                            `json:"noDesignSystem,omitempty"`
+	Adopted              bool                            `json:"adopted,omitempty"`
 	LastCheck            *designCheckReceipt             `json:"lastCheck,omitempty"`
 }
 
@@ -539,10 +540,12 @@ func scanDesignFiles(root *os.Root, state *designState) (map[string]designFile, 
 }
 
 func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, designPaths, error) {
-	return scanDesignTreeWithRefusals(root, state, false)
+	return scanDesignTreeWithRefusals(root, state, nil)
 }
 
-func scanDesignTreeWithRefusals(root *os.Root, state *designState, collectRefusals bool) (map[string]designFile, designPaths, error) {
+func scanDesignTreeWithRefusals(root *os.Root, state *designState, hidden *designAdoptHidden) (map[string]designFile, designPaths, error) {
+	collectRefusals := hidden != nil
+	adopted := state != nil && state.Adopted
 	files := make(map[string]designFile)
 	paths := make(designPaths)
 	pinned := designPinnedAssetTypes(state)
@@ -571,7 +574,7 @@ func scanDesignTreeWithRefusals(root *os.Root, state *designState, collectRefusa
 			return nil
 		}
 		if err := validateDesignContentPath(name); err != nil {
-			if entry.IsDir() {
+			if entry.IsDir() && !collectRefusals && !adopted {
 				var firstFile string
 				_ = fs.WalkDir(tree, name, func(child string, member fs.DirEntry, walkErr error) error {
 					if walkErr != nil || member.IsDir() {
@@ -661,38 +664,51 @@ func scanDesignTreeWithRefusals(root *os.Root, state *designState, collectRefusa
 		return nil
 	}
 	var refusals []error
-	var refusedDir string
+	var omitted int
 	err := fs.WalkDir(tree, ".", func(name string, entry fs.DirEntry, err error) error {
-		if collectRefusals && err == nil && name != "." && name != ".copera" && name != ".git" {
-			if refusedDir != "" && !strings.HasPrefix(name, refusedDir+"/") {
-				refusedDir = ""
-			}
-			if problem := validateAdoptDesignPath(name); problem != nil {
-				refusals = append(refusals, problem)
-				if entry.IsDir() && refusedDir == "" {
-					refusedDir = name
+		if err == nil && name != "." && name != ".copera" && name != ".git" {
+			switch {
+			case (collectRefusals || adopted) && strings.HasPrefix(entry.Name(), "."):
+				if collectRefusals {
+					if len(hidden.paths) < 20 {
+						hidden.paths = append(hidden.paths, name)
+					} else {
+						hidden.omitted++
+					}
+				}
+				if entry.IsDir() {
+					return fs.SkipDir
 				}
 				return nil
-			}
-			// Collect separately refused names under this directory without
-			// reading any source or assets from it.
-			if refusedDir != "" {
-				return nil
+			case collectRefusals:
+				err = validateAdoptDesignPath(name)
+			case adopted && !entry.IsDir():
+				if _, tracked := state.Files[name]; !tracked {
+					for part := range strings.SplitSeq(name, "/") {
+						if isDesignCredentialName(part) {
+							return fmt.Errorf("unsafe design path %q: %s", name, designCredentialReason)
+						}
+					}
+				}
 			}
 		}
 		scanErr := scan(name, entry, err)
 		if !collectRefusals || scanErr == nil || scanErr == fs.SkipDir {
 			return scanErr
 		}
-		refusals = append(refusals, scanErr)
+		if len(refusals) < 40 {
+			refusals = append(refusals, scanErr)
+		} else {
+			omitted++
+		}
 		if entry != nil && entry.IsDir() {
-			if err != nil {
-				return fs.SkipDir
-			}
-			refusedDir = name
+			return fs.SkipDir
 		}
 		return nil
 	})
+	if omitted > 0 {
+		refusals = append(refusals, fmt.Errorf("and %d more", omitted))
+	}
 	return files, paths, errors.Join(err, errors.Join(refusals...))
 }
 

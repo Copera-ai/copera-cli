@@ -25,26 +25,39 @@ var (
 	designAdoptBuildConfig = regexp.MustCompile(`^(vite|tailwind|postcss)\.config\.(cjs|cts|js|mjs|mts|ts)$`)
 )
 
+const designCredentialReason = "looks like a secret or a database"
+
+type designAdoptHidden struct {
+	paths   []string
+	omitted int
+}
+
 func validateAdoptDesignPath(name string) error {
 	base := path.Base(name)
-	if !designAdoptPathSegment.MatchString(base) {
-		return fmt.Errorf("unsafe design path %q: use only letters, digits, dots, underscores and hyphens", name)
-	}
 	lower := strings.ToLower(base)
-	refused := func() error { return fmt.Errorf("unsafe design path %q: refused name %q", name, base) }
-	if strings.HasPrefix(lower, ".") || strings.HasPrefix(lower, "id_rsa") ||
-		strings.HasPrefix(lower, "id_ed25519") || designAdoptBuildConfig.MatchString(lower) {
-		return refused()
+	switch {
+	case !designAdoptPathSegment.MatchString(base):
+		return fmt.Errorf("unsafe design path %q: only letters, digits, dots, underscores and hyphens", name)
+	case lower == "package.json", lower == "tsconfig.json", lower == "jsconfig.json", designAdoptBuildConfig.MatchString(lower):
+		return fmt.Errorf("unsafe design path %q: the builder owns build configuration", name)
+	case lower == "node_modules":
+		return fmt.Errorf("unsafe design path %q: packages are not uploaded", name)
+	case isDesignCredentialName(lower):
+		return fmt.Errorf("unsafe design path %q: %s", name, designCredentialReason)
 	}
-	switch lower {
-	case "package.json", "tsconfig.json", "jsconfig.json", "credentials":
-		return refused()
+	return nil
+}
+
+func isDesignCredentialName(name string) bool {
+	lower := strings.ToLower(name)
+	if lower == "credentials" || strings.HasPrefix(lower, "id_rsa") || strings.HasPrefix(lower, "id_ed25519") {
+		return true
 	}
 	switch path.Ext(lower) {
 	case ".pem", ".key", ".p12", ".pfx", ".keystore", ".sql", ".sqlite", ".db":
-		return refused()
+		return true
 	}
-	return nil
+	return false
 }
 
 func checkAdoptMetadata(cli *CLI, root *os.Root, locked bool) error {
@@ -83,9 +96,10 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 	if err := checkAdoptMetadata(cli, root, false); err != nil {
 		return err
 	}
-	files, _, err := scanDesignTreeWithRefusals(root, nil, true)
+	var hidden designAdoptHidden
+	files, _, err := scanDesignTreeWithRefusals(root, nil, &hidden)
 	if err != nil {
-		return designUsageError(cli, fmt.Errorf("%w\nRemove these paths or copy the publishable files into a clean folder.", err))
+		return designUsageError(cli, fmt.Errorf("%w\nCopy the files you want published into a clean folder and adopt that folder.", err))
 	}
 	groups := []struct{ key, label string }{
 		{"pages", "Pages"}, {"scripts", "Scripts"}, {"styles", "Styles"},
@@ -145,7 +159,7 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 	if err != nil {
 		return designError(cli, err)
 	}
-	state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: entry, Title: title, NoDesignSystem: true}
+	state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: entry, Title: title, NoDesignSystem: true, Adopted: true}
 	if topic, err := client.ArtifactGuideTopic(ctx, "existing-app"); err == nil && topic.Markdown != "" {
 		guide = topic
 	}
@@ -195,6 +209,8 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 			Styles           []string                 `json:"styles"`
 			OtherText        []string                 `json:"otherText"`
 			Assets           []string                 `json:"assets"`
+			Hidden           []string                 `json:"hidden,omitempty"`
+			HiddenOmitted    int                      `json:"hiddenOmitted,omitempty"`
 			FileCounts       map[string]int           `json:"fileCounts"`
 			OutsideLinks     []designAdoptOutsideLink `json:"outsideLinks"`
 			StorageDeclared  bool                     `json:"storageDeclared"`
@@ -204,6 +220,7 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 		}{
 			Entrypoint: entry, Pages: published["pages"], Scripts: published["scripts"],
 			Styles: published["styles"], OtherText: published["otherText"], Assets: published["assets"],
+			Hidden: hidden.paths, HiddenOmitted: hidden.omitted,
 			FileCounts: counts, OutsideLinks: outside, StorageDeclared: len(scopes) != 0,
 			StorageDefaulted: storageDefaulted, Title: displayTitle, NextCommand: next,
 		})
@@ -224,6 +241,13 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 	}
 	if omitted > 0 {
 		cli.Printer.PrintLine(fmt.Sprintf("and %d more", omitted))
+	}
+	if len(hidden.paths) > 0 {
+		line := "Not published (hidden): " + designsTerminalLine(strings.Join(hidden.paths, ", "))
+		if hidden.omitted > 0 {
+			line += fmt.Sprintf(" (and %d more)", hidden.omitted)
+		}
+		cli.Printer.PrintLine(line)
 	}
 	if len(outside) == 0 {
 		cli.Printer.PrintLine("Outside links: none")
