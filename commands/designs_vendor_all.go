@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -19,7 +20,7 @@ type designVendoredReference struct {
 	FilesRewritten []string `json:"filesRewritten"`
 }
 
-func designVendorHint(cli *CLI, files map[string]designFile) func(*designBuildReport) {
+func designVendorHint(cli *CLI, files map[string]designFile, managedFiles map[string]string) func(*designBuildReport) {
 	shown := false
 	return func(report *designBuildReport) {
 		if shown {
@@ -37,7 +38,10 @@ func designVendorHint(cli *CLI, files map[string]designFile) func(*designBuildRe
 			return
 		}
 		links, err := scanDesignOutsideReferences(files)
-		shown = err == nil && slices.ContainsFunc(links, func(link designOutsideReference) bool { return link.Reason == "" })
+		shown = err == nil && slices.ContainsFunc(links, func(link designOutsideReference) bool {
+			_, managed := managedFiles[link.Path]
+			return !managed && link.Reason == ""
+		})
 		if shown {
 			cli.Printer.Info("Run: copera designs vendor --all")
 		}
@@ -104,14 +108,17 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 	}
 
 	var bytesLeft int64 = 20 << 20
+	limitReached := false
 	for n, ref := range sources {
 		key := ref.source.url.String()
 		if n >= 32 {
+			limitReached = true
 			failed[key] = "reached the limit of 32 distinct URLs"
 			continue
 		}
 		downloaded, err := downloadDesignVendorSource(ctx, ref.source, &bytesLeft)
 		if err != nil {
+			limitReached = limitReached || errors.Is(err, errDesignVendorDownloadLimit)
 			failed[key] = err.Error()
 			continue
 		}
@@ -206,6 +213,9 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 	}
 
 	result.NextCommand = `copera designs push --wait -m "<what this version is>"`
+	if limitReached {
+		result.NextCommand = "copera designs vendor --all"
+	}
 	if dir != "." {
 		result.NextCommand += " '" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
 	}

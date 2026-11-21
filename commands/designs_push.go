@@ -69,7 +69,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			vendorHint := designVendorHint(cli, files)
+			vendorHint := designVendorHint(cli, files, state.DesignSystemFiles)
 			base := state.Files
 			if force && state.ID != "" {
 				head, err := client.ArtifactGet(ctx, state.ID)

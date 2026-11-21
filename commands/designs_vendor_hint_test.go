@@ -1,6 +1,7 @@
 package commands_test
 
 import (
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -43,4 +44,18 @@ func TestDesignBuildOutsideVendorHint(t *testing.T) {
 	res := testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
 	assert.Equal(t, 1, res.ExitCode, res.Stderr)
 	assert.NotContains(t, res.Stderr, hint)
+
+	const brandCSS = `@import "https://fonts.googleapis.com/css2?family=Inter";`
+	writePublishFixture(t, filepath.Join(dir, ".copera", "design.json"), []byte(fmt.Sprintf(
+		`{"kind":"website","runtime":"static","designSystemFiles":{"design/brand.css":%q}}`, digestOf(brandCSS))))
+	writePublishFixture(t, filepath.Join(dir, "design", "brand.css"), []byte(brandCSS))
+	writePublishFixture(t, file, []byte(`<link rel="stylesheet" href="design/brand.css">`))
+	for _, args := range [][]string{
+		{"designs", "check", dir, "--json"},
+		{"designs", "push", dir, "-m", "Edit", "--wait", "--json"},
+	} {
+		res := testutil.RunCommand(t, args, "")
+		assert.Equal(t, 1, res.ExitCode, res.Stderr)
+		assert.NotContains(t, res.Stderr, hint)
+	}
 }

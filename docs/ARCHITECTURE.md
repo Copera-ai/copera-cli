@@ -158,7 +158,8 @@ schema.go     — schema <command>
 - `designs vendor --all [dir]` shares the single-URL downloader and rewrites
   supported source references to project-relative vendor files. Each run
   processes up to 32 distinct URLs and 20 MiB, and reports failed downloads
-  without discarding successful ones.
+  without discarding successful ones. It recommends another run after either
+  limit stops a download.
 - `designs check [dir]` renders a dry run. `designs push [dir] -m SUMMARY`
   saves a version and returns the Design app URL as `appUrl` in JSON.
   Preview mode also returns its preview link as `url`. Check and push with `--wait`

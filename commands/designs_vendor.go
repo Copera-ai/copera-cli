@@ -37,6 +37,8 @@ const (
 )
 
 var (
+	errDesignVendorDownloadLimit = errors.New("reached the 20 MiB download limit")
+
 	designVendorPathChars = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 	designVendorCDNJSPath = regexp.MustCompile(`^/ajax/libs/([A-Za-z0-9._-]+)/([^/]+)/(.+)$`)
 	designVendorNPMPath   = regexp.MustCompile(`^/npm/(?:@([a-z0-9._-]+)/)?([a-z0-9._-]+)@([^/]+)/(.+)$`)
@@ -267,7 +269,7 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 	readLimit := limit + 1
 	if bytesLeft != nil {
 		if *bytesLeft == 0 {
-			return nil, "", fmt.Errorf("reached the 20 MiB download limit")
+			return nil, "", errDesignVendorDownloadLimit
 		}
 		readLimit = min(readLimit, *bytesLeft)
 	}
@@ -288,7 +290,7 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 	if bytesLeft != nil {
 		*bytesLeft -= int64(len(data))
 		if *bytesLeft == 0 && res.ContentLength != int64(len(data)) {
-			return nil, "", fmt.Errorf("reached the 20 MiB download limit")
+			return nil, "", errDesignVendorDownloadLimit
 		}
 	}
 	if err != nil {

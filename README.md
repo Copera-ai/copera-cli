@@ -421,6 +421,7 @@ and its SHA-256, and refuses to overwrite a file with different bytes.
 and script references and CSS imports, including inline styles, to relative
 paths, and updates matching preloads. It removes connection hints for those
 hosts. Each run handles up to 32 distinct URLs and 20 MiB of downloads.
+If either limit stops a run, the next command it prints is `vendor --all`.
 It lists failed downloads, imports in downloaded CSS, and references in
 files managed by a Design system as skipped. When at least one URL succeeds,
 it saves and rewrites the successful downloads.

@@ -483,6 +483,11 @@ func TestDesignVendorAllDownloadLimits(t *testing.T) {
 			got, err := runVendorTestCommand(t, dir, "--all")
 			require.NoError(t, err)
 			assert.Contains(t, got, tt.reason)
+			var result struct {
+				NextCommand string `json:"nextCommand"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(got), &result))
+			assert.Equal(t, "copera designs vendor --all '"+dir+"'", result.NextCommand)
 			rewritten, err := os.ReadFile(file)
 			require.NoError(t, err)
 			assert.Equal(t, expected.String(), string(rewritten))
