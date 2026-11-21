@@ -66,7 +66,20 @@ copera update
 ```
 
 Use `copera update --version 1.2.0` to install a specific version, or
-`copera update --force` to skip the confirmation prompt.
+`copera update --force` to skip confirmation in a terminal. Noninteractive
+updates run without a prompt. JSON output reports `current`, `target` and
+`action` (`updated` or `up_to_date`). Linux can update a writable executable
+in a protected directory and prints the backup path before replacement.
+On macOS, updating in a protected directory requires running the command in a
+terminal. The noninteractive error gives the exact command when elevation is needed.
+
+### What's new in 0.19.0
+
+- Publish an existing static app with `designs init --adopt` and `designs push --wait`. Adoption lists the files to publish, skips hidden paths, refuses credential files, and recommends `designs vendor --all` when it finds supported outside links. Bulk vendoring keeps successful downloads and reports skips.
+- Set the Design title on init or first push, or let Copera CLI infer it from the entry page and matching page titles.
+- Every push mode prints the Design link. Check and push with `--wait` save screenshots for every page returned by the API.
+- Request an authoring guide with `designs guide --topic`. Adoption uses the kind guide if the topic request fails.
+- Self-update verifies the release checksum and completes in noninteractive and JSON mode.
 
 ### What's new in 0.18.2
 
@@ -329,14 +342,16 @@ copera designs open <id|url>
 copera designs versions <id>
 copera designs log <id|url> [--json]
 copera designs guide [--kind K] [--runtime static|react]
-copera designs guide --topic design-system-from-codebase
-copera designs init <dir> --kind K [--runtime static|react] [--system NAME_OR_ID | --no-system] [--kit none|shadcn]
+copera designs guide --topic TOPIC
+copera designs init <dir> --kind K [--title T] [--runtime static|react] [--system NAME_OR_ID | --no-system] [--kit none|shadcn]
+copera designs init <dir> --adopt --kind K [--title T] [--entry FILE]
 copera designs vendor <url> [--dir DIR] [--path P]
+copera designs vendor --all [dir]
 copera designs pull <id|url> [dir] [--version N]
 copera designs status [dir]
 copera designs diff [dir]
 copera designs check [dir]
-copera designs push [dir] -m SUMMARY [--wait] [--no-check] [--force]
+copera designs push [dir] -m SUMMARY [--title T] [--wait] [--no-check] [--force]
 copera designs screenshot [dir|id] [--page P] [--viewport W] -o FILE
 copera designs assets add <file> [--path P]
 copera designs export <id> -o FILE.zip
@@ -357,10 +372,14 @@ With `import --workspace`, the CLI verifies that the active token belongs to
 the named workspace. Select a workspace's token with `--profile`.
 `screenshot --viewport` selects a width already rendered by the build.
 
-`init --kind` accepts product kinds (`landing_page`, `web_app`, `deck`,
-`report`, `dashboard`) and API kinds such as `website` and `presentation`.
+`init --help` lists the kinds `website`, `web_app`, `report`, `dashboard`,
+`tool`, `visualization`, `document`, `presentation`, and the aliases
+`landing_page` and `deck`.
 When the guide offers a template for the selected kind and runtime, `init`
 writes the template files and uses its project settings.
+
+`guide --topic` asks the server for a standalone guide. Known topics are
+`existing-app`, `narration`, `live-runtime`, and `design-system-from-codebase`.
 
 A new Design uses your personal Design system default, then the workspace
 default. Use `--system` to select a system by ID or name, or `--no-system` to
@@ -399,13 +418,33 @@ Quote a Google Fonts stylesheet URL as copied, including axis values such as
 `Inter:wght@400;600`, repeated `family` parameters, and `display=swap`.
 Use the printed local paths in your HTML or CSS. The command prints each path
 and its SHA-256, and refuses to overwrite a file with different bytes.
+`vendor --all` downloads each supported URL once, rewrites HTML stylesheet
+and script references and CSS imports, including inline styles, to relative
+paths, and updates matching preloads. It removes connection hints for those
+hosts. Each run handles up to 32 distinct URLs and 20 MiB of downloads.
+If either limit stops a run, the next command it prints is `vendor --all`.
+It lists failed downloads, imports in downloaded CSS, and references in
+files managed by a Design system as skipped. When at least one URL succeeds,
+it saves and rewrites the successful downloads.
 
 `check` uses multipart for local binaries that still need uploading and
-JSON otherwise. The first `push` creates the Design and saves text and
-binaries together in version 1. It takes the title from the manifest's entry
-HTML (`index.html` by default), collapses whitespace, and caps it at the API's
-240-character limit. If the page has no usable `<title>`, the CLI uses a
-humanized folder name. Later pushes save versions under the existing title.
+JSON otherwise. It saves returned screenshots under `.copera/shots/` as
+`<page>-<width>-<scheme>.webp`, using `light` when the server omits the scheme.
+It lists them by page, with the route when available. The first `push` creates
+the Design and saves text and binaries together in version 1. The title
+comes from `push --title`, then `init --title`, then a leading or trailing part
+of the entry page's title. The part must occur on the same side of another
+distinct page title whose opposite part differs. More matches win, with ties
+favoring the leading part. Fallbacks are the full entry title and a humanized
+folder name.
+The CLI collapses whitespace in explicit titles and applies the API's
+240-character title limit.
+Use `designs rename` to change a saved Design's title.
+
+Every push mode prints the Design's app URL, returned as `appUrl` in JSON.
+With `--wait-for-preview`, JSON also returns the preview link as `url`.
+With `--wait`, push also reports the build and the paths to its screenshots
+under `.copera/shots/`, using the same filenames as `check`.
 If Copera rejects the create, the CLI reports that no Design was created.
 On later pushes, editing an image in place uploads the new bytes at the same
 project-relative path. Earlier versions keep the previous image. Separate
@@ -441,6 +480,35 @@ unless `--force`. `--version` pins a version; `--max-inline-bytes` (default and
 maximum 1048576) sets how much source the server inlines. With `--json` the
 command prints a summary: `dir`, `filesWritten`, `fetched`, `skipped`
 (`{path, reason}`), `truncated` and `warnings`.
+
+#### Publish a folder you already have
+
+```bash
+copera designs init ./app --adopt --kind web_app
+# Run this step when adoption reports vendorable outside links.
+copera designs vendor --all ./app
+copera designs push --wait -m "Publish existing app" ./app
+```
+
+Adoption uses an existing static project without changing any existing files.
+It writes its state and guide under `.copera/` and declines the workspace's
+default Design system. It requires `.copera/`
+to be absent or empty. Adoption and subsequent status, diff, check, and push
+skip hidden project files and directories at every depth. Adoption reports up
+to 20 hidden paths and the count of any others, excluding top-level metadata
+directories. It refuses reserved build configuration, `node_modules`,
+credential-shaped names, and paths with unsupported characters, showing up to
+40 refusals and the count of any others. Later scans refuse new files with
+credential-shaped names.
+It uses `index.html` or the only top-level HTML page. Set `--entry` to choose a
+different page. It groups publishable paths by file type and outside links by
+URL. Plain output shows up to 40 publishable paths, and JSON lists them all.
+Adoption reports the declared Copera SDK storage scopes, namespace, and files
+where it found a storage reference under `storage` in JSON. It also reports
+when it defaults to `local`.
+The plain `Next:` list and JSON `nextSteps` show the commands in order. JSON
+also returns the first command as `nextCommand`. A separate `check` is optional
+because `push` runs it.
 
 ### Channels
 

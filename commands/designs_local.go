@@ -22,13 +22,29 @@ import (
 )
 
 func newDesignInitCmd(cli *CLI) *cobra.Command {
-	var kind, runtime, system, kit, template string
-	var decline bool
+	var kind, runtime, system, kit, template, title, entry string
+	var decline, adopt bool
 	cmd := &cobra.Command{
 		Use:   "init <dir>",
 		Short: "Set up a local Design project",
 		Args:  systemArgs(cli, cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			title = strings.Join(strings.Fields(title), " ")
+			if cmd.Flags().Changed("title") && title == "" {
+				return designUsageError(cli, fmt.Errorf("--title must not be empty"))
+			}
+			if adopt {
+				if runtime != "static" {
+					return systemUsage(cli, fmt.Errorf("--adopt requires --runtime static"))
+				}
+				for _, flag := range []string{"template", "system", "kit"} {
+					if cmd.Flags().Changed(flag) {
+						return systemUsage(cli, fmt.Errorf("--adopt cannot be combined with --%s", flag))
+					}
+				}
+			} else if cmd.Flags().Changed("entry") {
+				return systemUsage(cli, fmt.Errorf("--entry requires --adopt"))
+			}
 			requestRuntime := runtime
 			if template != "" && !cmd.Flags().Changed("runtime") {
 				requestRuntime = ""
@@ -49,9 +65,12 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 				return systemUsage(cli, fmt.Errorf("kit must be none or shadcn; shadcn requires React and a Design system"))
 			}
 			dir := filepath.Clean(args[0])
+			if adopt {
+				return adoptDesign(cmd.Context(), cli, dir, kind, entry, title)
+			}
 			if entries, err := os.ReadDir(dir); err == nil {
 				if len(entries) != 0 {
-					err := fmt.Errorf("design folder %q is not empty", dir)
+					err := fmt.Errorf("design folder %q is not empty; use --adopt to publish its existing files", dir)
 					cli.Printer.PrintError("out_dir_not_empty", err.Error(), "", false)
 					return exitcodes.New(exitcodes.Conflict, err)
 				}
@@ -68,7 +87,7 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: "index.html", NoDesignSystem: decline}
+			state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: "index.html", Title: title, NoDesignSystem: decline}
 			paths := make(designPaths)
 			templateFiles := make(map[string]api.ArtifactContentFile)
 			if template := guide.Template; template != nil {
@@ -132,7 +151,7 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 				return designError(cli, err)
 			}
 			if len(entries) != 0 {
-				return systemConflict(cli, fmt.Sprintf("design folder %q is not empty", dir))
+				return systemConflict(cli, fmt.Sprintf("design folder %q is not empty; use --adopt to publish its existing files", dir))
 			}
 			for _, file := range templateFiles {
 				if err := writeDesignFile(root, file.Path, []byte(file.Content)); err != nil {
@@ -166,12 +185,15 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&kind, "kind", "", "Design kind")
+	cmd.Flags().StringVar(&kind, "kind", "", "Design kind ("+api.ArtifactGuideKinds+")")
 	cmd.Flags().StringVar(&runtime, "runtime", "static", "Design runtime (static or react)")
 	cmd.Flags().StringVar(&system, "system", "", "Saved design system name or ID")
 	cmd.Flags().BoolVar(&decline, "no-system", false, "Start without a saved Design system")
 	cmd.Flags().StringVar(&kit, "kit", "none", "Optional kit (none or shadcn)")
 	cmd.Flags().StringVar(&template, "template", "", "Starter template (review)")
+	cmd.Flags().BoolVar(&adopt, "adopt", false, "Use an existing static project without changing any existing files.")
+	cmd.Flags().StringVar(&entry, "entry", "", "Entry HTML file when adopting a folder")
+	cmd.Flags().StringVar(&title, "title", "", "Title for the first push")
 	cmd.SetFlagErrorFunc(systemFlags(cli))
 	return cmd
 }
@@ -226,7 +248,7 @@ func checkDesignPullTargets(root *os.Root, remote map[string]designFile) error {
 	return nil
 }
 
-func writeDesignGuide(root *os.Root, guide *api.ArtifactGuide) error {
+func writeDesignGuideFiles(root *os.Root, guide *api.ArtifactGuide) error {
 	if err := writeDesignFile(root, ".copera/guide/README.md", []byte(guide.Markdown)); err != nil {
 		return err
 	}
@@ -234,6 +256,13 @@ func writeDesignGuide(root *os.Root, guide *api.ArtifactGuide) error {
 		if err := writeDesignFile(root, ".copera/guide/facts.json", append(guide.Facts, '\n')); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func writeDesignGuide(root *os.Root, guide *api.ArtifactGuide) error {
+	if err := writeDesignGuideFiles(root, guide); err != nil {
+		return err
 	}
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
 		if err := writeDesignFile(root, name, []byte(designRules)); err != nil {
@@ -488,6 +517,9 @@ func applyDesignPull(root *os.Root, state *designState, remote map[string]design
 		if previous.ID != "" && previous.ID != state.ID {
 			return nil, fmt.Errorf("the folder belongs to Design %s", previous.ID)
 		}
+		state.Adopted = previous.Adopted
+		// Pull compares local files with the remote copy before writing them.
+		previous.Adopted = false
 		base, err = loadDesignBase(root, previous)
 		if err != nil {
 			return nil, err

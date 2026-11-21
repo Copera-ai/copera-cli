@@ -37,6 +37,8 @@ const (
 )
 
 var (
+	errDesignVendorDownloadLimit = errors.New("reached the 20 MiB download limit")
+
 	designVendorPathChars = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 	designVendorCDNJSPath = regexp.MustCompile(`^/ajax/libs/([A-Za-z0-9._-]+)/([^/]+)/(.+)$`)
 	designVendorNPMPath   = regexp.MustCompile(`^/npm/(?:@([a-z0-9._-]+)/)?([a-z0-9._-]+)@([^/]+)/(.+)$`)
@@ -57,47 +59,64 @@ type designVendorFile struct {
 	ContentDigest string `json:"contentDigest"`
 	Verification  string `json:"verification"`
 	data          []byte
+	sourceURLs    []string
 }
 
 func newDesignVendorCmd(cli *CLI) *cobra.Command {
 	var dir, destination string
+	var all bool
 	cmd := &cobra.Command{
-		Use:   "vendor <url>",
-		Short: "Save a pinned CDN file or Google font to the local Design",
+		Use:   "vendor <url> | vendor --all [dir]",
+		Short: "Save pinned CDN files and Google fonts to the local Design",
 		Long: "Save a pinned CDN file or Google font to the local Design. " +
-			"Paste a Google Fonts stylesheet URL directly, including semicolon-separated axis values and multiple families.",
-		Args: cobra.ExactArgs(1),
+			"Paste a Google Fonts stylesheet URL directly, including semicolon-separated axis values and multiple families. " +
+			"Use --all to vendor and rewrite outside stylesheet and script references.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if all {
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all {
+				for _, arg := range args {
+					lower := strings.ToLower(arg)
+					if strings.HasPrefix(lower, "https:") || strings.HasPrefix(lower, "http:") ||
+						strings.HasPrefix(arg, "//") || strings.Contains(arg, "://") {
+						return designUsageError(cli, fmt.Errorf("--all cannot be used with a URL"))
+					}
+				}
+				if cmd.Flags().Changed("path") {
+					return designUsageError(cli, fmt.Errorf("--all cannot be used with --path"))
+				}
+				if len(args) > 1 || len(args) == 1 && cmd.Flags().Changed("dir") {
+					return designUsageError(cli, fmt.Errorf("--all accepts at most one Design folder"))
+				}
+				if len(args) == 1 {
+					dir = args[0]
+				}
+			}
 			root, err := openDesignDir(dir, false)
 			if err != nil {
 				return designError(cli, err)
 			}
 			defer func() { _ = root.Close() }()
-			if _, err := loadDesignState(root); err != nil {
+			state, err := loadDesignState(root)
+			if err != nil {
 				return designError(cli, err)
+			}
+			if all {
+				return runDesignVendorAll(cmd.Context(), cli, root, state, dir)
 			}
 			source, err := parseDesignVendorSource(args[0], destination)
 			if err != nil {
 				return designError(cli, err)
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-			defer cancel()
-			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			}}
-			var files []designVendorFile
-			if source.url.Host == "fonts.googleapis.com" {
-				files, err = vendorGoogleFonts(ctx, client, source)
-			} else {
-				files, err = vendorCDNFile(ctx, client, source)
-			}
+			files, err := downloadDesignVendorSource(cmd.Context(), source, nil)
 			if err != nil {
 				return designError(cli, err)
 			}
-			if err := ctx.Err(); err != nil {
-				return designError(cli, err)
-			}
-			if err := writeDesignVendorFiles(root, files); err != nil {
+			if _, err := writeDesignVendorFiles(root, files); err != nil {
 				return designError(cli, err)
 			}
 			if cli.Printer.IsJSON() {
@@ -111,9 +130,29 @@ func newDesignVendorCmd(cli *CLI) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "Vendor and rewrite outside resources in the Design")
 	cmd.Flags().StringVar(&dir, "dir", ".", "Initialized Design folder")
 	cmd.Flags().StringVar(&destination, "path", "", "Output path under vendor/")
 	return cmd
+}
+
+func downloadDesignVendorSource(ctx context.Context, source designVendorSource, bytesLeft *int64) ([]designVendorFile, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	var files []designVendorFile
+	var err error
+	if source.url.Host == "fonts.googleapis.com" {
+		files, err = vendorGoogleFonts(ctx, client, source, bytesLeft)
+	} else {
+		files, err = vendorCDNFile(ctx, client, source, bytesLeft)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return files, ctx.Err()
 }
 
 func parseDesignVendorURL(raw string) (*url.URL, error) {
@@ -226,7 +265,14 @@ func validateDesignVendorPath(name, ext string) error {
 	return nil
 }
 
-func downloadDesignVendor(ctx context.Context, client *http.Client, remote string, limit int64) ([]byte, string, error) {
+func downloadDesignVendor(ctx context.Context, client *http.Client, remote string, limit int64, bytesLeft *int64) ([]byte, string, error) {
+	readLimit := limit + 1
+	if bytesLeft != nil {
+		if *bytesLeft == 0 {
+			return nil, "", errDesignVendorDownloadLimit
+		}
+		readLimit = min(readLimit, *bytesLeft)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remote, nil)
 	if err != nil {
 		return nil, "", err
@@ -240,7 +286,13 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 	if res.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("vendor download from %s returned HTTP %d", req.URL.Host, res.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
+	data, err := io.ReadAll(io.LimitReader(res.Body, readLimit))
+	if bytesLeft != nil {
+		*bytesLeft -= int64(len(data))
+		if *bytesLeft == 0 && res.ContentLength != int64(len(data)) {
+			return nil, "", errDesignVendorDownloadLimit
+		}
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -257,8 +309,8 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 	return data, mediaType, nil
 }
 
-func vendorCDNFile(ctx context.Context, client *http.Client, source designVendorSource) ([]designVendorFile, error) {
-	metadata, _, err := downloadDesignVendor(ctx, client, source.metadataURL, designVendorMetadataLimit)
+func vendorCDNFile(ctx context.Context, client *http.Client, source designVendorSource, bytesLeft *int64) ([]designVendorFile, error) {
+	metadata, _, err := downloadDesignVendor(ctx, client, source.metadataURL, designVendorMetadataLimit, bytesLeft)
 	if err != nil {
 		return nil, fmt.Errorf("read CDN metadata: %w", err)
 	}
@@ -297,7 +349,7 @@ func vendorCDNFile(ctx context.Context, client *http.Client, source designVendor
 	if !exact {
 		return nil, fmt.Errorf("CDN metadata did not confirm the exact file %q", source.cdnFile)
 	}
-	data, mediaType, err := downloadDesignVendor(ctx, client, source.url.String(), designVendorFileLimit)
+	data, mediaType, err := downloadDesignVendor(ctx, client, source.url.String(), designVendorFileLimit, bytesLeft)
 	if err != nil {
 		return nil, err
 	}
@@ -447,8 +499,8 @@ func parseDesignVendorFontURL(value string) (string, error) {
 	return u.String(), nil
 }
 
-func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVendorSource) ([]designVendorFile, error) {
-	css, mediaType, err := downloadDesignVendor(ctx, client, source.url.String(), designVendorCSSLimit)
+func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVendorSource, bytesLeft *int64) ([]designVendorFile, error) {
+	css, mediaType, err := downloadDesignVendor(ctx, client, source.url.String(), designVendorCSSLimit, bytesLeft)
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +524,7 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 	}
 	files := make([]designVendorFile, 1, len(urls)+1)
 	var localCSS strings.Builder
-	written := make(map[string]bool)
+	written := make(map[string]int)
 	for _, rule := range rules {
 		localCSS.WriteString("@font-face {\n")
 		for _, declaration := range rule {
@@ -481,7 +533,7 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 				remote := value
 				name := urls[remote]
 				if name == "" {
-					font, mediaType, err := downloadDesignVendor(ctx, client, remote, designVendorFileLimit)
+					font, mediaType, err := downloadDesignVendor(ctx, client, remote, designVendorFileLimit, bytesLeft)
 					if err != nil {
 						return nil, err
 					}
@@ -495,8 +547,11 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 						return nil, err
 					}
 					urls[remote] = name
-					if !written[name] {
-						written[name] = true
+					if i, exists := written[name]; exists {
+						files[i].sourceURLs = append(files[i].sourceURLs, remote)
+					} else {
+						file.sourceURLs = []string{remote}
+						written[name] = len(files)
 						files = append(files, file)
 					}
 				}
@@ -523,12 +578,12 @@ func validDesignVendorWOFF2(data []byte, mediaType string) bool {
 		binary.BigEndian.Uint32(data[20:24]) > 0 && binary.BigEndian.Uint32(data[20:24]) < uint32(len(data)-headerSize)
 }
 
-func writeDesignVendorFiles(root *os.Root, files []designVendorFile) error {
+func writeDesignVendorFiles(root *os.Root, files []designVendorFile) ([]string, error) {
 	var newFiles []designVendorFile
 	for _, file := range files {
 		exists, err := designVendorDestinationExists(root, file)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !exists {
 			newFiles = append(newFiles, file)
@@ -548,10 +603,11 @@ func writeDesignVendorFiles(root *os.Root, files []designVendorFile) error {
 		local := filepath.FromSlash(file.Path)
 		temp := filepath.Join(filepath.Dir(local), ".copera-vendor-"+rand.Text())
 		if err := writeDesignFile(root, filepath.ToSlash(temp), file.data); err != nil {
-			return err
+			return nil, err
 		}
 		staged = append(staged, stagedLink{temp, local})
 	}
+	written := make([]string, 0, len(staged))
 	for i, link := range staged {
 		if err := root.Link(link.temp, link.local); err != nil {
 			for _, previous := range staged[:i] {
@@ -561,10 +617,11 @@ func writeDesignVendorFiles(root *os.Root, files []designVendorFile) error {
 					_ = root.Remove(previous.local)
 				}
 			}
-			return err
+			return nil, err
 		}
+		written = append(written, filepath.ToSlash(link.local))
 	}
-	return nil
+	return written, nil
 }
 
 func designVendorDestinationExists(root *os.Root, file designVendorFile) (bool, error) {

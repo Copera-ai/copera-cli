@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestDesignsTerminalLine(t *testing.T) {
+	for _, tc := range []struct{ text, want string }{
+		{"Café — Menü", "Café — Menü"},
+		{"日本語", "日本語"},
+		{"می\u200cروم", "می\u200cروم"},
+		{"👩\u200d💻", "👩\u200d💻"},
+		{"❤️", "❤️"},
+		{"a\u00a0b\u3000c", "a b c"},
+		{"\x1b\a\r\n\u202e\u2066\u2069", `\x1b\a\r\n\u202e\u2066\u2069`},
+	} {
+		if got := designsTerminalLine(tc.text); got != tc.want {
+			t.Errorf("designsTerminalLine(%q) = %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
 func TestDesignTool(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

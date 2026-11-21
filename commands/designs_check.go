@@ -1,12 +1,14 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -44,6 +46,7 @@ func newDesignCheckCmd(cli *CLI) *cobra.Command {
 			if err := recordDesignCheck(root, cfg, files, digest, report.State == "ready"); err != nil {
 				cli.Printer.Info("Warning: save Design check result: %s", err)
 			}
+			designVendorHint(cli, files, state.DesignSystemFiles)(report)
 			return printDesignBuild(cli, report, "")
 		},
 	}
@@ -290,25 +293,21 @@ func checkDesign(ctx context.Context, cli *CLI, client *api.Client, root *os.Roo
 	}
 	report := &designBuildReport{
 		State: "ready", ArtifactBuildFindings: result.ArtifactBuildFindings, Warnings: result.Warnings,
-		DarkScheme: result.DarkScheme,
+		DarkScheme: result.DarkScheme, ScreenshotsOmittedPageIDs: result.ScreenshotsOmittedPageIDs,
 	}
 	if !result.OK {
 		report.State = "failed"
 	}
 	for _, shot := range result.Screenshots {
-		scheme := shot.Scheme
-		if scheme == "" {
-			scheme = "light"
-		}
-		name, err := saveDesignShot(root, shot.PageID, shot.Width, scheme, shot.Data)
+		name, err := saveDesignShot(root, shot.PageID, shot.Width, shot.Scheme, shot.Data)
 		if err != nil {
-			if !result.OK {
+			if !result.OK && !errors.Is(err, errInvalidDesignShotPageID) {
 				return nil, err
 			}
-			cli.Printer.Info("Warning: save Design screenshot: %s", err)
+			cli.Printer.Info("Warning: save Design screenshot: %s", designsTerminalLine(err.Error()))
 			continue
 		}
-		report.Screenshots = append(report.Screenshots, name)
+		report.addScreenshot(shot.PageID, shot.Route, name)
 	}
 	return report, nil
 }
@@ -318,26 +317,70 @@ type designBuildReport struct {
 	FailureCode string                `json:"failureCode,omitempty"`
 	Warnings    []api.ArtifactWarning `json:"warnings,omitempty"`
 	Version     *api.ArtifactVersion  `json:"version,omitempty"`
+	AppURL      string                `json:"appUrl,omitempty"`
 	DarkScheme  *bool                 `json:"darkScheme,omitempty"`
 	api.ArtifactBuildFindings
-	Screenshots []string `json:"screenshots"`
+	Screenshots               []string               `json:"screenshots"`
+	ScreenshotPages           []designScreenshotPage `json:"screenshotPages,omitempty"`
+	ScreenshotsOmittedPageIDs []string               `json:"screenshotsOmittedPageIds,omitempty"`
 }
 
-func saveDesignShot(root *os.Root, page string, width int, scheme string, data []byte) (string, error) {
-	if page == "" || page == "." || page == ".." || strings.ContainsAny(page, "/\\") || width <= 0 {
-		return "", fmt.Errorf("invalid screenshot page or width")
+type designScreenshotPage struct {
+	PageID string   `json:"pageId"`
+	Route  string   `json:"route,omitempty"`
+	Paths  []string `json:"paths"`
+}
+
+func (report *designBuildReport) addScreenshot(pageID, route, name string) {
+	if !slices.Contains(report.Screenshots, name) {
+		report.Screenshots = append(report.Screenshots, name)
 	}
-	name := fmt.Sprintf(".copera/shots/%s-%d", page, width)
-	switch scheme {
-	case "light", "dark":
-		name += "-" + scheme
-	case "":
-	default:
+	for i := range report.ScreenshotPages {
+		page := &report.ScreenshotPages[i]
+		if page.PageID != pageID {
+			continue
+		}
+		if route != "" {
+			page.Route = route
+		}
+		if !slices.Contains(page.Paths, name) {
+			page.Paths = append(page.Paths, name)
+		}
+		return
+	}
+	report.ScreenshotPages = append(report.ScreenshotPages, designScreenshotPage{
+		PageID: pageID, Route: route, Paths: []string{name},
+	})
+}
+
+var (
+	designShotPageIDPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+	errInvalidDesignShotPageID = errors.New("invalid screenshot page ID")
+)
+
+func saveDesignShot(root *os.Root, page string, width int, scheme string, data []byte) (string, error) {
+	if !designShotPageIDPattern.MatchString(page) {
+		return "", fmt.Errorf("%w %q", errInvalidDesignShotPageID, page)
+	}
+	if width <= 0 {
+		return "", fmt.Errorf("invalid screenshot width")
+	}
+	if scheme == "" {
+		scheme = "light"
+	}
+	if scheme != "light" && scheme != "dark" {
 		return "", fmt.Errorf("invalid screenshot scheme %q", scheme)
 	}
-	name += ".webp"
+	base := fmt.Sprintf(".copera/shots/%s-%d", page, width)
+	name := base + "-" + scheme + ".webp"
 	if err := writeDesignFile(root, name, data); err != nil {
 		return "", err
+	}
+	legacy := base + ".webp"
+	if info, err := root.Lstat(legacy); err == nil && info.Mode().IsRegular() && info.Size() == int64(len(data)) {
+		if old, err := readDesignFile(root, legacy); err == nil && bytes.Equal(old, data) {
+			_ = root.Remove(legacy)
+		}
 	}
 	return name, nil
 }
@@ -349,9 +392,12 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 		}
 	} else {
 		if report.Version != nil {
-			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", report.Version.Version, report.Version.ID))
+			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", report.Version.Version, designsTerminalLine(report.Version.ID)))
 		}
-		cli.Printer.PrintLine("Build: " + report.State)
+		cli.Printer.PrintLine("Build: " + designsTerminalLine(report.State))
+		if report.AppURL != "" {
+			cli.Printer.PrintLine("URL: " + designsTerminalLine(report.AppURL))
+		}
 		if report.DarkScheme != nil && !*report.DarkScheme {
 			cli.Printer.PrintLine("darkScheme: false")
 		}
@@ -360,17 +406,29 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 			if diagnostic.FilePath != "" {
 				message = designSourceLocation(diagnostic.FilePath, diagnostic.Line, diagnostic.Column) + ": " + message
 			}
-			cli.Printer.PrintLine(message)
+			cli.Printer.PrintLine(designsTerminalLine(message))
 		}
 		for _, entry := range report.RuntimeConsole.Entries {
 			message := fmt.Sprintf("Runtime %s: %s", entry.Level, entry.Text)
 			if entry.Source != nil {
 				message = designSourceLocation(entry.Source.File, entry.Source.Line, entry.Source.Column) + ": " + message
 			}
-			cli.Printer.PrintLine(message)
+			cli.Printer.PrintLine(designsTerminalLine(message))
 		}
-		for _, name := range report.Screenshots {
-			cli.Printer.PrintLine(name)
+		if report.Version != nil && len(report.Screenshots) > 0 {
+			cli.Printer.PrintLine("Screenshots: .copera/shots/")
+		}
+		for _, page := range report.ScreenshotPages {
+			label := "Page " + page.PageID
+			if page.Route != "" {
+				label += " (" + page.Route + ")"
+			}
+			cli.Printer.PrintLine(designsTerminalLine(label + ": " + strings.Join(page.Paths, ", ")))
+		}
+		for _, pageID := range report.ScreenshotsOmittedPageIDs {
+			if !slices.ContainsFunc(report.ScreenshotPages, func(page designScreenshotPage) bool { return page.PageID == pageID }) {
+				cli.Printer.PrintLine("Page " + designsTerminalLine(pageID) + ": screenshots omitted")
+			}
 		}
 	}
 	if report.State != "ready" {
@@ -378,7 +436,8 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 		if report.FailureCode != "" {
 			message += " (" + report.FailureCode + ")"
 		}
-		cli.Printer.PrintError("build_failed", message, failureSuggestion, false)
+		message = designsTerminalLine(message)
+		cli.Printer.PrintError("build_failed", message, designsTerminalLine(failureSuggestion), false)
 		return exitcodes.New(exitcodes.Error, errors.New(message))
 	}
 	return nil

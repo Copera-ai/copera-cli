@@ -170,8 +170,10 @@ type ArtifactCheckResult struct {
 		PageID string `json:"pageId"`
 		Width  int    `json:"width"`
 		Scheme string `json:"scheme"`
+		Route  string `json:"route,omitempty"`
 		Data   []byte `json:"data"`
 	} `json:"screenshots"`
+	ScreenshotsOmittedPageIDs []string `json:"screenshotsOmittedPageIds,omitempty"`
 }
 
 type ArtifactBuildResult struct {
@@ -184,6 +186,8 @@ type ArtifactBuildResult struct {
 	Screenshots []struct {
 		PageID string `json:"pageId"`
 		Width  int    `json:"width"`
+		Scheme string `json:"scheme,omitempty"`
+		Route  string `json:"route,omitempty"`
 		URL    string `json:"url"`
 	} `json:"screenshots"`
 }

@@ -426,10 +426,13 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 					}
 					if parameter.Name == "kind" {
 						require.NotNil(t, parameter.Schema)
-						for _, kind := range []string{"landing_page", "web_app", "deck", "report", "dashboard",
-							"website", "presentation", "tool", "visualization", "document"} {
-							assert.True(t, parameter.Schema.allows(kind), "guide kind %q is missing", kind)
+						var kinds []string
+						for _, raw := range parameter.Schema.Enum {
+							var kind string
+							require.NoError(t, json.Unmarshal(raw, &kind))
+							kinds = append(kinds, kind)
 						}
+						assert.ElementsMatch(t, kinds, strings.Split(ArtifactGuideKinds, ", "))
 					}
 				}
 			}
@@ -602,6 +605,11 @@ func assertDesignContractFields(t *testing.T, schema *designContractSchema, mode
 		child := schema.field(name)
 		// Plain-page templates use the project settings without dependencies.
 		if child == nil && path == "response.template.project" && name == "dependencies" {
+			continue
+		}
+		// The production snapshot predates the optional per-page evidence.
+		if child == nil && ((path == "response.screenshots[]" && (name == "route" || name == "scheme" && schema.field("url") != nil)) ||
+			(path == "response" && model == reflect.TypeFor[ArtifactCheckResult]() && name == "screenshotsOmittedPageIds")) {
 			continue
 		}
 		// Older previews exposed visualReviewStatus. The compact version DTO

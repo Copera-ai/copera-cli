@@ -8,6 +8,9 @@ import (
 	"net/url"
 )
 
+// ArtifactGuideKinds lists the kind values in the authoring guide API contract.
+const ArtifactGuideKinds = "website, web_app, report, dashboard, tool, visualization, document, presentation, landing_page, deck"
+
 // ArtifactGuide is Copera's authoring guide and its machine-readable facts.
 type ArtifactGuide struct {
 	Version  int                    `json:"version"`
@@ -27,17 +30,17 @@ type ArtifactGuideTemplate struct {
 }
 
 func (c *Client) ArtifactGuide(ctx context.Context, kind, runtime, template string) (*ArtifactGuide, error) {
-	return c.artifactGuide(ctx, kind, runtime, "", template)
+	return c.artifactGuide(ctx, kind, runtime, nil, template)
 }
 
 func (c *Client) ArtifactGuideTopic(ctx context.Context, topic string) (*ArtifactGuide, error) {
-	return c.artifactGuide(ctx, "", "", topic, "")
+	return c.artifactGuide(ctx, "", "", &topic, "")
 }
 
-func (c *Client) artifactGuide(ctx context.Context, kind, runtime, topic, template string) (*ArtifactGuide, error) {
+func (c *Client) artifactGuide(ctx context.Context, kind, runtime string, topic *string, template string) (*ArtifactGuide, error) {
 	params := url.Values{}
-	if topic != "" {
-		params.Set("topic", topic)
+	if topic != nil {
+		params.Set("topic", *topic)
 	}
 	if kind != "" {
 		params.Set("kind", kind)

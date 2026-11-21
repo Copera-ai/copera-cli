@@ -147,6 +147,42 @@ version.go    — version (--json)
 schema.go     — schema <command>
 ```
 
+### Design authoring
+
+- `designs init <dir> --adopt --kind K [--title T] [--entry FILE]` scans an existing
+  static project and writes only local metadata and guide files in `.copera/`.
+  It declines the default Design system and reports the files it will publish.
+  Adoption reports the storage scopes, namespace, and files with storage
+  references, followed by the commands to vendor supported outside links and
+  push. A separate check is optional because push checks the project.
+  The saved adoption flag skips hidden paths and rejects new credential-shaped
+  files on subsequent status, diff, check, and push scans.
+  It uses the kind guide if the `existing-app` topic request fails.
+- `designs vendor --all [dir]` shares the single-URL downloader and rewrites
+  supported source references to project-relative vendor files. Each run
+  processes up to 32 distinct URLs and 20 MiB, and reports failed downloads
+  without discarding successful ones. It recommends another run after either
+  limit stops a download.
+- `designs check [dir]` renders a dry run. `designs push [dir] -m SUMMARY`
+  saves a version and returns the Design app URL as `appUrl` in JSON.
+  Preview mode also returns its preview link as `url`. Check and push with `--wait`
+  report screenshots by page under `.copera/shots/`, using
+  `<page>-<width>-<scheme>.webp` with `light` as the default scheme. The report
+  includes the route and omitted page IDs when the API supplies them. Only
+  the first push accepts `--title`.
+- `designs guide --topic TOPIC` forwards the topic to the API. Known topics
+  include `existing-app`, `narration`, `live-runtime`, and
+  `design-system-from-codebase`.
+
+### Self-update
+
+`copera update` verifies the downloaded release archive against its published
+checksum. Linux can replace a writable executable in a protected parent
+directory. The staged runner rechecks the executable's SHA-256, reports the
+backup path, and ignores interrupt signals during replacement and recovery.
+On macOS, a protected parent directory requires a terminal for elevation.
+JSON reports the completed result.
+
 ---
 
 ## Auth Flow

@@ -106,3 +106,37 @@ func TestDesignsGuide(t *testing.T) {
 	require.Equal(t, 0, res.ExitCode, res.Stderr)
 	assert.Equal(t, "# Author a Design\n", res.Stdout)
 }
+
+func TestDesignsGuideUnknownFlag(t *testing.T) {
+	res := testutil.RunCommand(t, []string{"designs", "guide", "--bogus"}, "")
+	assert.Equal(t, 2, res.ExitCode, res.Stderr)
+	assert.Empty(t, res.Stdout)
+	assert.JSONEq(t, `{"error":"invalid_usage","message":"unknown flag: --bogus","transient":false}`, res.Stderr)
+}
+
+func TestDesignGuideTopicPassThrough(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Query().Get("topic") {
+			case "future-topic":
+				testutil.RespondJSON(w, http.StatusOK, api.ArtifactGuide{Markdown: "# Future guide\n"})
+			case "unsupported":
+				testutil.RespondJSON(w, http.StatusBadRequest, map[string]string{
+					"error": "Unknown topic", "code": "INVALID_TOPIC",
+				})
+			default:
+				t.Errorf("unexpected guide query %s", r.URL.RawQuery)
+			}
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	res := testutil.RunCommand(t, []string{"designs", "guide", "--topic", "future-topic", "--output", "plain"}, "")
+	require.Equal(t, 0, res.ExitCode, res.Stderr)
+	assert.Equal(t, "# Future guide\n", res.Stdout)
+
+	res = testutil.RunCommand(t, []string{"designs", "guide", "--topic", "unsupported", "--json"}, "")
+	assert.NotEqual(t, 0, res.ExitCode)
+	for _, known := range []string{"unsupported", "existing-app", "narration", "live-runtime", "design-system-from-codebase"} {
+		assert.Contains(t, res.Stderr, known)
+	}
+}

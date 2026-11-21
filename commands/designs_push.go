@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -26,13 +27,13 @@ import (
 )
 
 func newDesignPushCmd(cli *CLI) *cobra.Command {
-	var summary string
+	var summary, title string
 	var wait, waitForPreview, noCheck, force bool
 	cmd := &cobra.Command{
 		Use:   "push [dir] -m SUMMARY",
 		Short: "Save local edits as one new Design version",
-		Long: "Save local edits as one new Design version. The first push uses the entry HTML's <title> " +
-			"(index.html by default) or a humanized folder name. Later pushes save versions under the existing Design title.",
+		Long: "Save local edits as one new Design version. The first push uses --title, the saved init title, " +
+			"a common page title, the entry HTML's <title>, or a humanized folder name.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(summary) == "" || utf8.RuneCountInString(summary) > 160 || strings.ContainsAny(summary, "\r\n") {
@@ -40,11 +41,24 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				cli.Printer.PrintError("invalid_flag", msg, "", false)
 				return exitcodes.Newf(exitcodes.Usage, "%s", msg)
 			}
+			if cmd.Flags().Changed("title") {
+				title = strings.Join(strings.Fields(title), " ")
+				if title == "" {
+					return designUsageError(cli, fmt.Errorf("--title must not be empty"))
+				}
+			}
 			root, state, files, err := openDesignForBuild(cli, args)
 			if err != nil {
 				return designError(cli, err)
 			}
 			defer root.Close()
+			requestedTitle := state.Title
+			if cmd.Flags().Changed("title") {
+				if state.ID != "" {
+					return designUsageError(cli, fmt.Errorf("--title is for the first push. Use copera designs rename to change this Design's title"))
+				}
+				requestedTitle = title
+			}
 			if state.ID == "" {
 				if changed := changedInitialSystemFiles(state, files); len(changed) != 0 {
 					return systemConflict(cli, "Installed Design system files changed: "+strings.Join(changed, ", "))
@@ -55,6 +69,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+			vendorHint := designVendorHint(cli, files, state.DesignSystemFiles)
 			base := state.Files
 			if force && state.ID != "" {
 				head, err := client.ArtifactGet(ctx, state.ID)
@@ -72,19 +87,21 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				}
 				checked = digest == state.LastCheck.Digest
 			}
+			var check *designBuildReport
 			if !noCheck && !checked {
-				report, err := checkDesign(ctx, cli, client, root, state, files, force)
+				check, err = checkDesign(ctx, cli, client, root, state, files, force)
 				if err != nil {
 					return designPushError(cli, err, designPushProgress(state))
 				}
-				if report.State != "ready" {
-					return printDesignBuild(cli, report, designPushProgress(state))
+				vendorHint(check)
+				if check.State != "ready" {
+					return printDesignBuild(cli, check, designPushProgress(state))
 				}
 			}
 			var pushed *api.ArtifactPushResult
 			var refreshManifest bool
 			if state.ID == "" {
-				pushed, err = createLocalDesign(ctx, client, root, state, files, summary)
+				pushed, err = createLocalDesign(ctx, client, root, state, files, summary, requestedTitle)
 			} else {
 				pushed, refreshManifest, err = pushDesignFiles(ctx, cli, client, root, state, base, files, summary, force, wait || waitForPreview)
 			}
@@ -94,6 +111,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				}
 				return designPushError(cli, err, designPushProgress(state))
 			}
+			vendorHint(&designBuildReport{Warnings: pushed.Warnings})
 			committedCtx := ctx
 			if waitForPreview {
 				var cancel context.CancelFunc
@@ -127,18 +145,30 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 			if waitForPreview {
 				return waitForDesignPreview(committedCtx, cli, client, pushed, defaultPageID, progress)
 			}
+			appURL, err := designAppURL(ctx, client, state.ID)
+			if err != nil {
+				cli.Printer.Info("Version %s was saved. Run copera designs open %s for its URL: %s",
+					designsTerminalLine(pushed.Version.ID), designsTerminalLine(state.ID), designsTerminalLine(err.Error()))
+			}
 			if wait {
-				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, progress)
+				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, vendorHint, progress, appURL)
 			}
 			if cli.Printer.IsJSON() {
-				return cli.Printer.PrintJSON(pushed)
+				return cli.Printer.PrintJSON(struct {
+					*api.ArtifactPushResult
+					AppURL string `json:"appUrl,omitempty"`
+				}{pushed, appURL})
 			}
 			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", pushed.Version.Version, pushed.Version.ID))
 			cli.Printer.PrintLine("Build: " + pushed.BuildState)
+			if appURL != "" {
+				cli.Printer.PrintLine("URL: " + designsTerminalLine(appURL))
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVarP(&summary, "message", "m", "", "Summary of the changes (up to 160 characters)")
+	cmd.Flags().StringVar(&title, "title", "", "Title for the first push")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the writer and the resulting build")
 	cmd.Flags().BoolVar(&waitForPreview, "wait-for-preview", false, "Wait for the writer and a usable preview")
 	cmd.MarkFlagsMutuallyExclusive("wait", "wait-for-preview")
@@ -203,28 +233,15 @@ func changedInitialSystemFiles(state *designState, files map[string]designFile) 
 	return changed
 }
 
-func designCreateTitle(dir, entrypoint string, files map[string]designFile) string {
+func designCreateTitle(dir, entrypoint string, files map[string]designFile, requested string) string {
 	if entrypoint == "" {
 		entrypoint = "index.html"
 	}
-	var title string
-	if entry := files[entrypoint]; entry.MediaType == "text/html" {
-		if doc, err := html.Parse(bytes.NewReader(entry.Data)); err == nil {
-		titles:
-			for node := range doc.Descendants() {
-				if node.DataAtom != atom.Title || node.Namespace != "" || node.FirstChild == nil {
-					continue
-				}
-				for parent := range node.Ancestors() {
-					if parent.DataAtom == atom.Template {
-						continue titles
-					}
-				}
-				title = strings.Join(strings.Fields(node.FirstChild.Data), " ")
-				if title != "" {
-					break
-				}
-			}
+	title := strings.TrimSpace(requested)
+	if title == "" {
+		title = designHTMLTitle(files[entrypoint])
+		if shared := sharedDesignPageTitle(title, entrypoint, files); shared != "" {
+			title = shared
 		}
 	}
 	if title == "" {
@@ -245,13 +262,107 @@ func designCreateTitle(dir, entrypoint string, files map[string]designFile) stri
 	return title
 }
 
-func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile, summary string) (*api.ArtifactPushResult, error) {
+func designHTMLTitle(file designFile) string {
+	if file.MediaType != "text/html" {
+		return ""
+	}
+	doc, err := html.Parse(bytes.NewReader(file.Data))
+	if err != nil {
+		return ""
+	}
+titles:
+	for node := range doc.Descendants() {
+		if node.DataAtom != atom.Title || node.Namespace != "" || node.FirstChild == nil {
+			continue
+		}
+		for parent := range node.Ancestors() {
+			if parent.DataAtom == atom.Template {
+				continue titles
+			}
+		}
+		if title := strings.Join(strings.Fields(node.FirstChild.Data), " "); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
+func sharedDesignPageTitle(entryTitle, entrypoint string, files map[string]designFile) string {
+	separators := []string{" — ", " – ", " - ", " | ", " · ", ": "}
+	type part struct {
+		text     string
+		trailing bool
+	}
+	type matches struct {
+		entryOther string
+		count      int
+		varies     bool
+	}
+	parts := make(map[part]matches)
+	record := func(key part, other string, entry bool) {
+		if other == "" {
+			return
+		}
+		if entry {
+			if strings.ContainsFunc(key.text, func(r rune) bool {
+				return unicode.IsLetter(r) || unicode.IsDigit(r)
+			}) {
+				parts[key] = matches{entryOther: other}
+			}
+		} else if match, ok := parts[key]; ok {
+			match.varies = match.varies || other != match.entryOther
+			match.count++
+			parts[key] = match
+		}
+	}
+	addTitle := func(title string, entry bool) {
+		for _, separator := range separators {
+			if i := strings.Index(title, separator); i >= 0 {
+				record(part{text: title[:i]}, title[i+len(separator):], entry)
+			}
+			if i := strings.LastIndex(title, separator); i >= 0 {
+				record(part{text: title[i+len(separator):], trailing: true}, title[:i], entry)
+			}
+		}
+	}
+	addTitle(entryTitle, true)
+	seen := map[string]bool{"": true, entryTitle: true}
+	for name, file := range files {
+		if name == entrypoint {
+			continue
+		}
+		title := designHTMLTitle(file)
+		if !seen[title] {
+			seen[title] = true
+			addTitle(title, false)
+		}
+	}
+	var shared part
+	var bestCount int
+	for key, match := range parts {
+		if !match.varies || match.count < bestCount {
+			continue
+		}
+		if match.count == bestCount {
+			if key.trailing && !shared.trailing {
+				continue
+			}
+			if key.trailing == shared.trailing && len(key.text) <= len(shared.text) {
+				continue
+			}
+		}
+		shared, bestCount = key, match.count
+	}
+	return shared.text
+}
+
+func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile, summary, title string) (*api.ArtifactPushResult, error) {
 	dir, err := filepath.Abs(root.Name())
 	if err != nil {
 		return nil, err
 	}
 	input := api.ArtifactCreateInput{
-		Title: designCreateTitle(dir, state.Entrypoint, files), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID,
+		Title: designCreateTitle(dir, state.Entrypoint, files, title), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID,
 		DesignSystemRevision: state.DesignSystemRevision, DesignSystemKit: state.DesignSystemKit, NoDesignSystem: state.NoDesignSystem,
 	}
 	input.Project.ArtifactProjectSettings = designProject(state)
@@ -559,6 +670,11 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 				return designPushError(cli, err, progress)
 			}
 			if preview.Status == "ready" && preview.URL != "" {
+				appURL, err := designAppURL(ctx, client, id)
+				if err != nil {
+					cli.Printer.Info("Version %s was saved. Run copera designs open %s for its URL: %s",
+						designsTerminalLine(version), designsTerminalLine(id), designsTerminalLine(err.Error()))
+				}
 				if cli.Printer.IsJSON() {
 					return cli.Printer.PrintJSON(struct {
 						ArtifactID     string     `json:"artifactId"`
@@ -567,9 +683,13 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 						PreviewReadyAt *time.Time `json:"previewReadyAt"`
 						EvidenceStatus string     `json:"evidenceStatus"`
 						URL            string     `json:"url"`
-					}{id, version, build.State, build.PreviewReadyAt, build.EvidenceStatus, preview.URL})
+						AppURL         string     `json:"appUrl,omitempty"`
+					}{id, version, build.State, build.PreviewReadyAt, build.EvidenceStatus, preview.URL, appURL})
 				}
-				cli.Printer.PrintLine(preview.URL)
+				cli.Printer.PrintLine(designsTerminalLine(preview.URL))
+				if appURL != "" {
+					cli.Printer.PrintLine("URL: " + designsTerminalLine(appURL))
+				}
 				return nil
 			}
 		} else if build.Done {
@@ -589,7 +709,7 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 	}
 }
 
-func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, progress string) error {
+func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, check *designBuildReport, vendorHint func(*designBuildReport), progress, appURL string) error {
 	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
 	for {
 		build, err := client.ArtifactBuild(ctx, state.ID, state.BaseVersionID, wait)
@@ -614,7 +734,13 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 
 		report := &designBuildReport{
 			State: build.State, FailureCode: build.FailureCode, ArtifactBuildFindings: build.ArtifactBuildFindings,
-			Version: version,
+			Version: version, AppURL: appURL,
+		}
+		vendorHint(report)
+		if check != nil {
+			report.Screenshots = check.Screenshots
+			report.ScreenshotPages = check.ScreenshotPages
+			report.ScreenshotsOmittedPageIDs = check.ScreenshotsOmittedPageIDs
 		}
 		for _, shot := range build.Screenshots {
 			data, err := downloadHandoffAsset(ctx, client, shot.URL)
@@ -622,18 +748,18 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 				if build.State != "ready" {
 					return designPushError(cli, fmt.Errorf("download Design screenshot: %w", err), progress)
 				}
-				cli.Printer.Info("Warning: download Design screenshot: %s", err)
+				cli.Printer.Info("Warning: download Design screenshot: %s", designsTerminalLine(err.Error()))
 				continue
 			}
-			name, err := saveDesignShot(root, shot.PageID, shot.Width, "", data)
+			name, err := saveDesignShot(root, shot.PageID, shot.Width, shot.Scheme, data)
 			if err != nil {
-				if build.State != "ready" {
+				if build.State != "ready" && !errors.Is(err, errInvalidDesignShotPageID) {
 					return designPushError(cli, err, progress)
 				}
-				cli.Printer.Info("Warning: save Design screenshot: %s", err)
+				cli.Printer.Info("Warning: save Design screenshot: %s", designsTerminalLine(err.Error()))
 				continue
 			}
-			report.Screenshots = append(report.Screenshots, name)
+			report.addScreenshot(shot.PageID, shot.Route, name)
 		}
 		return printDesignBuild(cli, report, progress)
 	}

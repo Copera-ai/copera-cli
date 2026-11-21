@@ -3,6 +3,7 @@ package updater
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,7 +58,7 @@ func CheckVersion(ctx context.Context, cacheDir string, noCache bool) *CheckResu
 		}
 	}
 
-	latest, err := fetchLatestVersion(ctx)
+	latest, err := LatestVersion(ctx)
 	if err != nil {
 		return nil
 	}
@@ -92,7 +93,8 @@ func compareVersions(latest string) *CheckResult {
 	return nil
 }
 
-func fetchLatestVersion(ctx context.Context) (string, error) {
+// LatestVersion fetches the latest release directly from the CDN.
+func LatestVersion(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
@@ -117,18 +119,22 @@ func fetchLatestVersion(ctx context.Context) (string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return "", err
 	}
-	return info.Latest, nil
+	latest := strings.TrimPrefix(strings.TrimSpace(info.Latest), "v")
+	if latest == "" {
+		return "", fmt.Errorf("version check did not return a release")
+	}
+	return latest, nil
 }
 
 // Update downloads and replaces the current binary with the specified version.
 // If version is empty, it uses the latest release.
-func Update(ctx context.Context, version string) error {
+func Update(ctx context.Context, version string, interactive bool) error {
 	if version == "" {
-		latest, err := fetchLatestVersion(ctx)
+		latest, err := LatestVersion(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to fetch latest version: %w", err)
 		}
-		version = strings.TrimPrefix(latest, "v")
+		version = latest
 	}
 	version = strings.TrimPrefix(version, "v")
 
@@ -153,6 +159,13 @@ func Update(ctx context.Context, version string) error {
 	if err := downloadFile(ctx, assetURL, archivePath); err != nil {
 		return fmt.Errorf("download v%s: %w", version, err)
 	}
+	checksumPath := filepath.Join(tmpDir, "checksums.txt")
+	if err := downloadFile(ctx, fmt.Sprintf("%s/v%s/checksums.txt", CDNBaseURL, version), checksumPath); err != nil {
+		return fmt.Errorf("download checksums for v%s: %w", version, err)
+	}
+	if err := verifyChecksum(archivePath, checksumPath, assetName); err != nil {
+		return fmt.Errorf("verify v%s: %w", version, err)
+	}
 
 	// Extract binary
 	binaryName := "copera"
@@ -174,15 +187,40 @@ func Update(ctx context.Context, version string) error {
 		return fmt.Errorf("resolve symlink: %w", err)
 	}
 
-	if err := installBinary(extractedPath, currentBin); err != nil {
+	if err := installBinary(extractedPath, currentBin, version, interactive); err != nil {
 		return err
 	}
 
-	// Invalidate version check cache
-	cacheDir := cache.SharedDir()
-	_ = os.Remove(filepath.Join(cacheDir, "version-check.json"))
+	_ = os.Remove(filepath.Join(cache.SharedDir(), "version-check.json"))
 
 	return nil
+}
+
+func verifyChecksum(archivePath, checksumPath, assetName string) error {
+	manifest, err := os.ReadFile(checksumPath)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(manifest), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || strings.TrimPrefix(fields[1], "*") != assetName {
+			continue
+		}
+		archive, err := os.Open(archivePath)
+		if err != nil {
+			return err
+		}
+		defer archive.Close()
+		hash := sha256.New()
+		if _, err := io.Copy(hash, archive); err != nil {
+			return err
+		}
+		if !strings.EqualFold(fmt.Sprintf("%x", hash.Sum(nil)), fields[0]) {
+			return fmt.Errorf("checksum mismatch for %s", assetName)
+		}
+		return nil
+	}
+	return fmt.Errorf("no checksum for %s", assetName)
 }
 
 func downloadFile(ctx context.Context, url, dest string) error {
@@ -205,10 +243,12 @@ func downloadFile(ctx context.Context, url, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-
 	_, err = io.Copy(f, resp.Body)
-	return err
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }
 
 func copyFile(src, dst string, perm os.FileMode) error {
@@ -222,8 +262,10 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
 	_, err = io.Copy(out, in)
-	return err
+	closeErr := out.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }

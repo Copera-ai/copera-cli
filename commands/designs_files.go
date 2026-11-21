@@ -43,6 +43,7 @@ type designState struct {
 	Kind                 string                          `json:"kind"`
 	Runtime              string                          `json:"runtime"`
 	Entrypoint           string                          `json:"entrypoint,omitempty"`
+	Title                string                          `json:"title,omitempty"`
 	Presentation         *api.ArtifactPresentation       `json:"presentation,omitempty"`
 	Capabilities         []api.ArtifactProjectCapability `json:"capabilities,omitzero"`
 	Manifest             api.ArtifactManifest            `json:"manifest"`
@@ -59,6 +60,7 @@ type designState struct {
 	BrandWarning         string                          `json:"brandWarning,omitempty"`
 	BrandStylesheet      string                          `json:"brandStylesheet,omitempty"`
 	NoDesignSystem       bool                            `json:"noDesignSystem,omitempty"`
+	Adopted              bool                            `json:"adopted,omitempty"`
 	LastCheck            *designCheckReceipt             `json:"lastCheck,omitempty"`
 }
 
@@ -154,7 +156,7 @@ func validateDesignContentPath(name string) error {
 	for _, part := range strings.Split(name, "/") {
 		switch strings.ToLower(part) {
 		case ".copera", ".git", ".ssh", ".claude", ".codex", ".cursor", ".vscode", ".idea", ".husky", ".github", ".envrc",
-			".mcp.json", ".npmrc", ".gitattributes", "claude.md", "agents.md", "gemini.md":
+			".mcp.json", ".npmrc", ".gitattributes", "claude.md", "agents.md", "gemini.md", "node_modules":
 			return fmt.Errorf("unsafe design path %q: refused name %q", name, part)
 		}
 	}
@@ -231,6 +233,10 @@ func writeDesignFile(root *os.Root, name string, data []byte) error {
 }
 
 func writeDesignContent(root *os.Root, name string, file designFile) error {
+	return writeDesignContentWithMode(root, name, file, nil)
+}
+
+func writeDesignContentWithMode(root *os.Root, name string, file designFile, mode *fs.FileMode) error {
 	local, err := designRelativePath(name)
 	if err != nil {
 		return err
@@ -249,7 +255,11 @@ func writeDesignContent(root *os.Root, name string, file designFile) error {
 		return err
 	}
 	defer func() { _ = root.Remove(temp) }()
-	if err := errors.Join(file.write(f), f.Close()); err != nil {
+	writeErr := file.write(f)
+	if writeErr == nil && mode != nil {
+		writeErr = f.Chmod(*mode)
+	}
+	if err := errors.Join(writeErr, f.Close()); err != nil {
 		return err
 	}
 	return root.Rename(temp, local)
@@ -530,13 +540,20 @@ func scanDesignFiles(root *os.Root, state *designState) (map[string]designFile, 
 }
 
 func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, designPaths, error) {
+	return scanDesignTreeWithRefusals(root, state, nil)
+}
+
+func scanDesignTreeWithRefusals(root *os.Root, state *designState, hidden *designAdoptHidden) (map[string]designFile, designPaths, error) {
+	collectRefusals := hidden != nil
+	adopted := state != nil && state.Adopted
 	files := make(map[string]designFile)
 	paths := make(designPaths)
 	pinned := designPinnedAssetTypes(state)
 	tree := root.FS()
 	var assetBytes int64
 	var assetCount int
-	err := fs.WalkDir(tree, ".", func(name string, entry fs.DirEntry, err error) error {
+	var assetLimitExceeded bool
+	scan := func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || name == "." {
 			return err
 		}
@@ -557,7 +574,7 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 			return nil
 		}
 		if err := validateDesignContentPath(name); err != nil {
-			if entry.IsDir() {
+			if entry.IsDir() && !collectRefusals && !adopted {
 				var firstFile string
 				_ = fs.WalkDir(tree, name, func(child string, member fs.DirEntry, walkErr error) error {
 					if walkErr != nil || member.IsDir() {
@@ -608,7 +625,23 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 			if utf8.RuneCountInString(name) > 240 {
 				return fmt.Errorf("asset path %q exceeds 240 characters", name)
 			}
-			upload, err := captureDesignUpload(name, designAssetLimit(mediaType), func() (*os.File, error) {
+			limit := designAssetLimit(mediaType)
+			if assetLimitExceeded {
+				// Adoption still reports invalid paths and individual files
+				// without hashing more data from an oversized project.
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("%q must be a regular file", name)
+				}
+				if info.Size() > limit {
+					return fmt.Errorf("%q exceeds the %s upload limit", name, humanSize(limit))
+				}
+				return nil
+			}
+			upload, err := captureDesignUpload(name, limit, func() (*os.File, error) {
 				return openDesignFile(root, name)
 			})
 			if err != nil {
@@ -617,6 +650,7 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 			assetBytes += upload.ByteLength
 			assetCount++
 			if assetCount > 128 || assetBytes > 256<<20 {
+				assetLimitExceeded = true
 				return fmt.Errorf("Design exceeds 128 assets or 256 MiB of asset data")
 			}
 			files[name] = designFile{MediaType: mediaType, Binary: true, Upload: &upload}
@@ -628,8 +662,54 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 		}
 		files[name] = newLocalDesignFile(name, data)
 		return nil
+	}
+	var refusals []error
+	var omitted int
+	err := fs.WalkDir(tree, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err == nil && name != "." && name != ".copera" && name != ".git" {
+			switch {
+			case (collectRefusals || adopted) && strings.HasPrefix(entry.Name(), "."):
+				if collectRefusals {
+					if len(hidden.paths) < 20 {
+						hidden.paths = append(hidden.paths, name)
+					} else {
+						hidden.omitted++
+					}
+				}
+				if entry.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			case collectRefusals:
+				err = validateAdoptDesignPath(name)
+			case adopted && !entry.IsDir():
+				if _, tracked := state.Files[name]; !tracked {
+					for part := range strings.SplitSeq(name, "/") {
+						if isDesignCredentialName(part) {
+							return fmt.Errorf("unsafe design path %q: %s", name, designCredentialReason)
+						}
+					}
+				}
+			}
+		}
+		scanErr := scan(name, entry, err)
+		if !collectRefusals || scanErr == nil || scanErr == fs.SkipDir {
+			return scanErr
+		}
+		if len(refusals) < 40 {
+			refusals = append(refusals, scanErr)
+		} else {
+			omitted++
+		}
+		if entry != nil && entry.IsDir() {
+			return fs.SkipDir
+		}
+		return nil
 	})
-	return files, paths, err
+	if omitted > 0 {
+		refusals = append(refusals, fmt.Errorf("and %d more", omitted))
+	}
+	return files, paths, errors.Join(err, errors.Join(refusals...))
 }
 
 func vendorDesignAssetMediaType(mediaType string) bool {

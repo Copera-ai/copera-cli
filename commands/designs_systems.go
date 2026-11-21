@@ -16,6 +16,7 @@ import (
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/exitcodes"
+	"github.com/copera/copera-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +49,11 @@ func systemArgs(cli *CLI, validate cobra.PositionalArgs) cobra.PositionalArgs {
 }
 
 func systemFlags(cli *CLI) func(*cobra.Command, error) error {
-	return func(_ *cobra.Command, err error) error {
+	return func(cmd *cobra.Command, err error) error {
+		// Cobra parses flags before the root initializes cli.Printer.
+		if cli.Printer == nil {
+			cli.Printer = output.New(output.FormatJSON, cmd.OutOrStdout(), cmd.ErrOrStderr(), false)
+		}
 		return systemUsage(cli, err)
 	}
 }

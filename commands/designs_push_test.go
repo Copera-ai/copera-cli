@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -352,6 +353,7 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 		prefix   = "/artifacts/" + artID + "/versions"
 		readyAt  = "2026-11-18T15:00:00Z"
 		shellURL = "https://preview.example/exact-version"
+		appURL   = "https://app.copera.ai/acme/ai/artifacts/" + artID
 	)
 	for _, test := range []struct {
 		name          string
@@ -396,6 +398,9 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 					}
 					testutil.RespondJSON(w, http.StatusOK, response)
 				},
+				"GET /artifacts/" + artID + "/handoff": func(w http.ResponseWriter, _ *http.Request) {
+					testutil.RespondJSON(w, http.StatusOK, api.ArtifactHandoff{Artifact: api.ArtifactHandoffArtifact{URL: appURL}})
+				},
 			}.Handler())
 			setupHome(t, srv.URL)
 
@@ -410,7 +415,7 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 				return
 			}
 			require.Equal(t, 0, push.ExitCode, push.Stderr)
-			assert.JSONEq(t, `{"artifactId":"`+artID+`","versionId":"`+ver2ID+`","state":"building","previewReadyAt":"`+readyAt+`","evidenceStatus":"pending","url":"`+shellURL+`"}`, push.Stdout)
+			assert.JSONEq(t, `{"artifactId":"`+artID+`","versionId":"`+ver2ID+`","state":"building","previewReadyAt":"`+readyAt+`","evidenceStatus":"pending","url":"`+shellURL+`","appUrl":"`+appURL+`"}`, push.Stdout)
 			assert.EqualValues(t, 2, previews.Load())
 			assert.EqualValues(t, 1, versionReads.Load())
 		})
@@ -418,16 +423,39 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 }
 
 func TestDesignsFirstPushTitle(t *testing.T) {
+	t.Run("blank override before opening project", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "missing")
+		res := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Publish", "--title", " \t\n "}, "")
+		assert.Equal(t, 2, res.ExitCode, res.Stderr)
+		assert.Contains(t, res.Stderr, "--title")
+	})
 	for _, test := range []struct {
 		name, entrypoint, html, title string
+		otherTitles                   []string
+		savedTitle, override          string
+		rejectOverride                bool
 	}{
-		{"manifest entrypoint", "pages/home.html", "<h1>Preview</h1><title>  Design &amp;\n   Review </title>", "Design & Review"},
-		{"default entrypoint and title limit", "", "<title>é" + strings.Repeat("🌿", 120) + "</title>", "é" + strings.Repeat("🌿", 119)},
-		{"folder fallback", "", "<template><title>Ignored</title></template><title> \n &nbsp; </title>", "Design Review"},
+		{name: "manifest entrypoint", entrypoint: "pages/home.html", html: "<h1>Preview</h1><title>  Design &amp;\n   Review </title>", title: "Design & Review"},
+		{name: "one page and title limit", html: "<title>é" + strings.Repeat("🌿", 120) + "</title>", title: "é" + strings.Repeat("🌿", 119)},
+		{name: "folder fallback", html: "<template><title>Ignored</title></template><title> \n &nbsp; </title>", title: "Design Review"},
+		{name: "shared leading title", html: "<title>Ridgeline — Explore</title>", otherTitles: []string{"Ridgeline — Trail"}, title: "Ridgeline"},
+		{name: "shared trailing title", html: "<title>Explore | Ridgeline</title>", otherTitles: []string{"Log | Ridgeline"}, title: "Ridgeline"},
+		{name: "no shared title", html: "<title>Ridgeline — Explore</title>", otherTitles: []string{"Other — Trails"}, title: "Ridgeline — Explore"},
+		{name: "identical titles", html: "<title>Acme — Dashboard</title>", otherTitles: []string{"Acme — Dashboard"}, title: "Acme — Dashboard"},
+		{name: "duplicate entry with related title", html: "<title>Acme — Dashboard</title>", otherTitles: []string{"Acme — Dashboard", "Acme — Settings"}, title: "Acme"},
+		{name: "separator alone differs", html: "<title>Acme — Dashboard</title>", otherTitles: []string{"Acme | Dashboard"}, title: "Acme — Dashboard"},
+		{name: "punctuation alone", html: "<title>✦ — Dashboard</title>", otherTitles: []string{"✦ — Settings"}, title: "✦ — Dashboard"},
+		{name: "ignore unrelated title family", html: "<title>Acme | Home</title>", otherTitles: []string{"Acme | Blog", "Docs: Home", "Docs: Guide", "Docs: API"}, title: "Acme"},
+		{name: "leading part wins tie", html: "<title>Acme | Home | 2026</title>", otherTitles: []string{"Acme | Blog | 2026"}, title: "Acme"},
+		{name: "trailing part wins with more distinct titles", html: "<title>Acme | Home | 2026</title>", otherTitles: []string{"Acme | Blog | 2026", "Acme | Blog | 2026", "Docs | Guide | 2026"}, title: "2026"},
+		{name: "entry part breaks tie", html: "<title>Front — Acme</title>", otherTitles: []string{"Docs — Acme", "Reports | Home", "Reports | Charts"}, title: "Acme"},
+		{name: "saved init title", html: "<title>Page title</title>", savedTitle: "Selected title", title: "Selected title"},
+		{name: "first push override", html: "<title>Page title</title>", savedTitle: "Saved title", override: " \t Override\nTitle  ", title: "Override Title"},
+		{name: "blank push override", html: "<title>Page title</title>", override: " \t\n ", title: "Page title", rejectOverride: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "design-review")
-			state, err := json.Marshal(map[string]string{"kind": "website", "runtime": "static_web", "entrypoint": test.entrypoint})
+			state, err := json.Marshal(map[string]string{"kind": "website", "runtime": "static_web", "entrypoint": test.entrypoint, "title": test.savedTitle})
 			require.NoError(t, err)
 			writePublishFixture(t, filepath.Join(dir, ".copera", "design.json"), state)
 			entrypoint := test.entrypoint
@@ -438,6 +466,9 @@ func TestDesignsFirstPushTitle(t *testing.T) {
 			}
 			entryFile := filepath.Join(dir, entrypoint)
 			writePublishFixture(t, entryFile, []byte(test.html))
+			for i, title := range test.otherTitles {
+				writePublishFixture(t, filepath.Join(dir, "other-"+strconv.Itoa(i)+".html"), []byte("<title>"+title+"</title>"))
+			}
 
 			const edited = "<title>Edited page title</title>"
 			var creates, versions atomic.Int32
@@ -472,8 +503,21 @@ func TestDesignsFirstPushTitle(t *testing.T) {
 				},
 			}.Handler())
 			setupHome(t, srv.URL)
-			first := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "First version", "--no-check", "--json"}, "")
+			args := []string{"designs", "push", dir, "-m", "First version", "--no-check", "--json"}
+			if test.override != "" {
+				args = append(args, "--title", test.override)
+			}
+			first := testutil.RunCommand(t, args, "")
+			if test.rejectOverride {
+				require.Equal(t, 2, first.ExitCode, first.Stderr)
+				assert.Contains(t, first.Stderr, "--title")
+				assert.Zero(t, creates.Load())
+				return
+			}
 			require.Equal(t, 0, first.ExitCode, first.Stderr)
+			rejected := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit", "--title", "New name", "--no-check"}, "")
+			assert.Equal(t, 2, rejected.ExitCode, rejected.Stderr)
+			assert.Contains(t, rejected.Stderr, "copera designs rename")
 			if test.entrypoint != "" {
 				writePublishFixture(t, entryFile, []byte(edited))
 				later := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit page title", "--no-check", "--json"}, "")
@@ -483,6 +527,26 @@ func TestDesignsFirstPushTitle(t *testing.T) {
 			assert.EqualValues(t, 1, creates.Load())
 		})
 	}
+}
+
+func TestDesignsInitTitleWhitespace(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": designGuideResponse,
+		"GET /artifacts/design-systems/defaults": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactSystemDefaults{})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	dir := t.TempDir()
+	args := []string{"designs", "init", "--kind", "landing_page", "--no-system", "--json", "--title"}
+	blank := testutil.RunCommand(t, append(args, " \t\n ", dir), "")
+	assert.Equal(t, 2, blank.ExitCode, blank.Stderr)
+	assert.Contains(t, blank.Stderr, "--title")
+	assert.NoFileExists(t, filepath.Join(dir, ".copera", "design.json"))
+
+	valid := testutil.RunCommand(t, append(args, " \t  A title\n with spaces \u00a0 ", t.TempDir()), "")
+	require.Equal(t, 0, valid.ExitCode, valid.Stderr)
+	assert.Contains(t, valid.Stdout, `"title": "A title with spaces"`)
 }
 
 func TestDesignsFirstPushWithImages(t *testing.T) {

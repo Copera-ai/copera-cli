@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -226,4 +229,369 @@ func TestDesignVendorGoogleFontsSnapshotsLocalCSS(t *testing.T) {
 	_, err = runVendorTestCommand(t, dir, remote, "--path", "vendor/new/fonts.css")
 	require.ErrorContains(t, err, "font-face")
 	require.NoDirExists(t, filepath.Join(dir, "vendor", "new"))
+}
+
+func TestDesignVendorAllRewritesReferences(t *testing.T) {
+	const fonts = "https://fonts.googleapis.com/css2?family=Inter&display=swap"
+	const canonicalFonts = "https://fonts.googleapis.com/css2?display=swap&family=Inter"
+	const font = "https://fonts.gstatic.com/inter.woff2"
+	const script = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/main.js"
+	const scriptPath = "vendor/cdnjs/lib/1.2.3/main.js"
+	const stylesheet = "https://cdn.jsdelivr.net/npm/lib@1.2.3/main.css"
+	const stylesheetPath = "vendor/npm/lib/1.2.3/main.css"
+	const unpinned = "https://cdn.jsdelivr.net/npm/lib@latest/main.css"
+	const image = "https://images.example.net/logo.png"
+	const otherHost = "https://assets.example.net/styles.css"
+	const scriptBytes = "window.lib = true;\n"
+	const stylesheetBytes = "@import url(" + fonts + ");\nbody { color: blue }\n"
+
+	fontBytes := make([]byte, 64)
+	copy(fontBytes, "wOF2")
+	binary.BigEndian.PutUint32(fontBytes[8:12], uint32(len(fontBytes)))
+	binary.BigEndian.PutUint16(fontBytes[12:14], 1)
+	binary.BigEndian.PutUint32(fontBytes[20:24], 10)
+	fontCSS := "@font-face { font-family: 'Inter'; src: url(" + font + ") format('woff2'); }"
+	scriptDigest := sha256.Sum256([]byte(scriptBytes))
+	styleDigest := sha256.Sum256([]byte(stylesheetBytes))
+	fontURLDigest := sha256.Sum256([]byte(canonicalFonts))
+	fontsPath := fmt.Sprintf("vendor/fonts/%x/fonts.css", fontURLDigest[:8])
+	responses := map[string]vendorTestResponse{
+		canonicalFonts: {status: 200, body: fontCSS},
+		font:           {status: 200, body: string(fontBytes)},
+		script:         {status: 200, body: scriptBytes},
+		stylesheet:     {status: 200, body: stylesheetBytes},
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri": {status: 200,
+			body: fmt.Sprintf(`{"files":["main.js"],"sri":{"main.js":"sha256-%s"}}`, base64.StdEncoding.EncodeToString(scriptDigest[:]))},
+		"https://data.jsdelivr.com/v1/packages/npm/lib@1.2.3?structure=flat": {status: 200,
+			body: fmt.Sprintf(`{"files":[{"name":"/main.css","hash":%q}]}`, base64.StdEncoding.EncodeToString(styleDigest[:]))},
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, ".copera"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".copera", "design.json"),
+		[]byte(`{"kind":"website","runtime":"static"}`), 0o600))
+	requests := make(map[string]*atomic.Int32, len(responses))
+	for remote := range responses {
+		requests[remote] = &atomic.Int32{}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remote := "https://" + r.Host + r.URL.RequestURI()
+		response, ok := responses[remote]
+		if !ok {
+			t.Errorf("unexpected vendor request %s", remote)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		requests[remote].Add(1)
+		w.WriteHeader(response.status)
+		_, _ = io.WriteString(w, response.body)
+	}))
+	t.Cleanup(server.Close)
+	serverURL, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	oldTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = oldTransport })
+	http.DefaultTransport = vendorTestTransport(func(req *http.Request) (*http.Response, error) {
+		local := req.Clone(req.Context())
+		local.Host = req.URL.Host
+		local.URL.Scheme, local.URL.Host = serverURL.Scheme, serverURL.Host
+		return server.Client().Transport.RoundTrip(local)
+	})
+	stdout := func(args ...string) (string, error) {
+		var out, stderr bytes.Buffer
+		cmd, _ := newRootCmd(strings.NewReader(""), &out, &stderr)
+		cmd.SetArgs(append([]string{"designs", "vendor"}, args...))
+		err := cmd.Execute()
+		return out.String(), err
+	}
+	for _, remote := range []string{script, "https://cdnjs.cloudflare.com/%ZZ", strings.TrimPrefix(script, "https:")} {
+		_, err := stdout("--all", remote)
+		require.ErrorContains(t, err, "--all cannot be used with a URL")
+	}
+
+	fontsHTML := strings.ReplaceAll(fonts, "&", "&amp;")
+	html := "<!doctype html>\r\n" +
+		"  <link href = '" + fontsHTML + "' REL=\"StyleSheet\" data-before='>'>\r\n" +
+		"  <link rel=preconnect href=https://fonts.googleapis.com>\r\n" +
+		"  <link href='//fonts.gstatic.com' rel='dns-prefetch'>\r\n" +
+		"  <link href='//retained.example.net' rel='preconnect'>\r\n" +
+		"  <script async src=" + script + "></script>\r\n" +
+		"  <link rel=stylesheet href='" + unpinned + "'>\r\n" +
+		"  <link rel=stylesheet href='" + otherHost + "'>\r\n" +
+		"  <img src='" + image + "'>\r\n" +
+		"  <!-- <script src='" + script + "'></script> -->\r\n"
+	css := "/* @import url(" + stylesheet + "); */\n" +
+		"@import URL( \"" + stylesheet + "\" ) screen;\n" +
+		"body::before { content: \"url(" + stylesheet + ")\"; }\n" +
+		"/* @import url(" + stylesheet + ");"
+	pages := []string{"index.html", "trail.html", "pages/plan.htm", "pages/log.html"}
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "pages"), 0o755))
+	for _, page := range pages {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, page), []byte(html), 0o644))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pages", "styles.css"), []byte(css), 0o644))
+
+	got, err := stdout("--all", dir, "--json")
+	require.NoError(t, err)
+	assert.Contains(t, got, strings.ReplaceAll(fonts, "&", "\\u0026"))
+	assert.Contains(t, got, stylesheet)
+	assert.Contains(t, got, script)
+	assert.Contains(t, got, scriptPath)
+	assert.Contains(t, got, stylesheetPath)
+	assert.Contains(t, got, fontsPath)
+	assert.Contains(t, got, "pages/styles.css")
+	assert.Contains(t, got, "pages/log.html")
+	assert.Contains(t, got, unpinned)
+	assert.Contains(t, got, "exact npm version")
+	assert.Contains(t, got, otherHost)
+	assert.Contains(t, got, image)
+	assert.Contains(t, got, "image")
+	for remote, count := range requests {
+		assert.EqualValues(t, 1, count.Load(), remote)
+	}
+
+	for _, page := range pages {
+		prefix := ""
+		if strings.HasPrefix(page, "pages/") {
+			prefix = "../"
+		}
+		want := strings.Replace(html, fontsHTML, prefix+fontsPath, 1)
+		want = strings.Replace(want, script, prefix+scriptPath, 1)
+		want = strings.Replace(want, "<link rel=preconnect href=https://fonts.googleapis.com>", "", 1)
+		want = strings.Replace(want, "<link href='//fonts.gstatic.com' rel='dns-prefetch'>", "", 1)
+		got, err := os.ReadFile(filepath.Join(dir, page))
+		require.NoError(t, err)
+		assert.Equal(t, want, string(got), page)
+	}
+	actualCSS, err := os.ReadFile(filepath.Join(dir, "pages", "styles.css"))
+	require.NoError(t, err)
+	assert.Equal(t, strings.Replace(css, "\""+stylesheet, "\"../"+stylesheetPath, 1), string(actualCSS))
+	for _, name := range []string{fontsPath, scriptPath, stylesheetPath} {
+		require.FileExists(t, filepath.Join(dir, name))
+	}
+
+	got, err = stdout("--all", dir, "--output", "plain")
+	require.NoError(t, err)
+	assert.Contains(t, got, "No changes")
+	assert.Contains(t, got, image)
+	for remote, count := range requests {
+		assert.EqualValues(t, 1, count.Load(), remote)
+	}
+	downloaded, err := os.ReadFile(filepath.Join(dir, stylesheetPath))
+	require.NoError(t, err)
+	assert.Equal(t, stylesheetBytes, string(downloaded))
+	afterCSS, err := os.ReadFile(filepath.Join(dir, "pages", "styles.css"))
+	require.NoError(t, err)
+	assert.Equal(t, actualCSS, afterCSS)
+}
+
+func TestDesignVendorAllContinuesAfterDownloadFailure(t *testing.T) {
+	const base = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/"
+	responses := map[string]vendorTestResponse{
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri": {status: 200, body: `{"files":["first.js","second.js","missing.js"]}`},
+		base + "first.js":   {status: 200, body: "/* first */"},
+		base + "second.js":  {status: 200, body: "/* second */"},
+		base + "missing.js": {status: 404},
+	}
+	dir := vendorTestFolder(t, responses)
+	source := filepath.Join(dir, "index.html")
+	original := `<script src="` + base + `first.js"></script>` +
+		`<script src="` + base + `second.js"></script>` +
+		`<script src="` + base + `missing.js"></script>` +
+		`<link rel="preconnect" href="https://cdnjs.cloudflare.com">`
+	require.NoError(t, os.WriteFile(source, []byte(original), 0o644))
+
+	got, err := runVendorTestCommand(t, dir, "--all")
+	assert.NoError(t, err)
+	assert.Contains(t, got, `"url": "`+base+`missing.js"`)
+	assert.Contains(t, got, "returned HTTP 404")
+	rewritten, err := os.ReadFile(source)
+	require.NoError(t, err)
+	assert.Equal(t, `<script src="vendor/cdnjs/lib/1.2.3/first.js"></script>`+
+		`<script src="vendor/cdnjs/lib/1.2.3/second.js"></script>`+
+		`<script src="`+base+`missing.js"></script>`, string(rewritten))
+
+	got, err = runVendorTestCommand(t, dir, "--all")
+	assert.Error(t, err)
+	assert.Contains(t, got, `"url": "`+base+`missing.js"`)
+	assert.Contains(t, got, "returned HTTP 404")
+	assert.Contains(t, got, `"changed": false`)
+	after, err := os.ReadFile(source)
+	require.NoError(t, err)
+	assert.Equal(t, rewritten, after)
+}
+
+func TestDesignVendorAllPreservesDesignSystemFiles(t *testing.T) {
+	const script = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/main.js"
+	original := `<script src="` + script + `"></script>`
+	dir := vendorTestFolder(t, map[string]vendorTestResponse{
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri": {status: 200, body: `{"files":["main.js"]}`},
+		script: {status: 200, body: "/* script */"},
+	})
+	state := fmt.Sprintf(`{"kind":"website","runtime":"static","designSystemFiles":{"managed.html":"%x"}}`, sha256.Sum256([]byte(original)))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".copera", "design.json"), []byte(state), 0o600))
+	managed := filepath.Join(dir, "managed.html")
+	unmanaged := filepath.Join(dir, "index.html")
+	for _, file := range []string{managed, unmanaged} {
+		require.NoError(t, os.WriteFile(file, []byte(original), 0o644))
+	}
+
+	got, err := runVendorTestCommand(t, dir, "--all")
+	require.NoError(t, err)
+	assert.Contains(t, got, "managed by the Design system")
+	managedBytes, err := os.ReadFile(managed)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(managedBytes))
+	unmanagedBytes, err := os.ReadFile(unmanaged)
+	require.NoError(t, err)
+	assert.Equal(t, `<script src="vendor/cdnjs/lib/1.2.3/main.js"></script>`, string(unmanagedBytes))
+}
+
+func TestDesignVendorAllDownloadLimits(t *testing.T) {
+	const base = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/"
+	for _, tt := range []struct {
+		name    string
+		count   int
+		body    string
+		handled int
+		reason  string
+	}{
+		{"distinct URLs", 33, "/* script */", 32, "32 distinct URLs"},
+		{"total bytes", 5, strings.Repeat(" ", 5<<20), 3, "20 MiB download limit"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var files []string
+			var original, expected strings.Builder
+			responses := map[string]vendorTestResponse{}
+			for i := 1; i <= tt.count; i++ {
+				name := fmt.Sprintf("resource%02d.js", i)
+				files = append(files, name)
+				remote := base + name
+				responses[remote] = vendorTestResponse{status: 200, body: tt.body}
+				fmt.Fprintf(&original, `<script src="%s"></script>`, remote)
+				if i <= tt.handled {
+					remote = "vendor/cdnjs/lib/1.2.3/" + name
+				}
+				fmt.Fprintf(&expected, `<script src="%s"></script>`, remote)
+			}
+			metadata, err := json.Marshal(map[string][]string{"files": files})
+			require.NoError(t, err)
+			responses["https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri"] = vendorTestResponse{status: 200, body: string(metadata)}
+			dir := vendorTestFolder(t, responses)
+			file := filepath.Join(dir, "index.html")
+			require.NoError(t, os.WriteFile(file, []byte(original.String()), 0o644))
+
+			got, err := runVendorTestCommand(t, dir, "--all")
+			require.NoError(t, err)
+			assert.Contains(t, got, tt.reason)
+			var result struct {
+				NextCommand string `json:"nextCommand"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(got), &result))
+			assert.Equal(t, "copera designs vendor --all '"+dir+"'", result.NextCommand)
+			rewritten, err := os.ReadFile(file)
+			require.NoError(t, err)
+			assert.Equal(t, expected.String(), string(rewritten))
+		})
+	}
+}
+
+func TestDesignVendorAllSuggestsPushWithMessagePlaceholder(t *testing.T) {
+	dir := vendorTestFolder(t, nil)
+	got, err := runVendorTestCommand(t, dir, "--all")
+	require.NoError(t, err)
+	var result struct {
+		NextCommand string `json:"nextCommand"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got), &result))
+	assert.Equal(t, `copera designs push --wait -m "<what this version is>" '`+dir+`'`, result.NextCommand)
+}
+
+func TestDesignVendorAllStyleImportsNoscriptAndPreloads(t *testing.T) {
+	const styles = "cdn.jsdelivr.net/npm/lib@1.2.3/main.css"
+	const script = "cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/main.js"
+	const googleCSS = "https://fonts.googleapis.com/css2?family=Test"
+	const font = "https://fonts.gstatic.com/test.woff2"
+	const nested = "https://cdn.jsdelivr.net/npm/other@1.2.3/nested.css"
+	const nonResource = "https://example.net/reference"
+	const stylesheet = `@import "` + nested + `";`
+	fontBytes := make([]byte, 64)
+	copy(fontBytes, "wOF2")
+	binary.BigEndian.PutUint32(fontBytes[8:12], uint32(len(fontBytes)))
+	binary.BigEndian.PutUint16(fontBytes[12:14], 1)
+	binary.BigEndian.PutUint32(fontBytes[20:24], 10)
+	fontCSS := "@font-face { font-family: 'Test'; src: url(" + font + ") format('woff2'); }"
+	dir := vendorTestFolder(t, map[string]vendorTestResponse{
+		"https://" + styles: {status: 200, body: stylesheet},
+		"https://" + script: {status: 200, body: "/* script */"},
+		googleCSS:           {status: 200, body: fontCSS},
+		font:                {status: 200, body: string(fontBytes)},
+		"https://data.jsdelivr.com/v1/packages/npm/lib@1.2.3?structure=flat": {status: 200, body: `{"files":[{"name":"/main.css"}]}`},
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri":         {status: 200, body: `{"files":["main.js"]}`},
+	})
+	indexFile := filepath.Join(dir, "index.html")
+	cssFile := filepath.Join(dir, "app.css")
+	nonResources := `<a href="` + nonResource + `">View</a>`
+	for _, rel := range []string{"canonical", "alternate", "author", "license", "help", "next", "prev", "me"} {
+		nonResources += `<link rel="` + rel + `" href="` + nonResource + `">`
+	}
+	original := "<style>\n@import url(http://" + styles + ");\n@import \"https://" + styles + "\";\n</style>" +
+		`<link rel="preload" as="style" href="//` + styles + `">` +
+		`<link rel="preload" as="script" href="http://` + script + `">` +
+		`<link rel="preload" as="font" href="` + font + `">` +
+		`<noscript><link rel="stylesheet" href="//` + styles + `"></noscript>` +
+		`<script src="//` + script + `"></script>` +
+		`<link rel="stylesheet" href="` + googleCSS + `">` + nonResources
+	require.NoError(t, os.WriteFile(indexFile, []byte(original), 0o644))
+	require.NoError(t, os.WriteFile(cssFile, []byte(`@import'https://`+styles+`' screen;`), 0o644))
+
+	got, err := runVendorTestCommand(t, dir, "--all")
+	require.NoError(t, err)
+	assert.NotContains(t, got, nonResource)
+	assert.Contains(t, got, nested)
+	assert.Contains(t, got, "keep their downloaded bytes")
+	index, err := os.ReadFile(indexFile)
+	require.NoError(t, err)
+	stylePath := "vendor/npm/lib/1.2.3/main.css"
+	scriptPath := "vendor/cdnjs/lib/1.2.3/main.js"
+	fontURLDigest := sha256.Sum256([]byte(googleCSS))
+	fontDir := fmt.Sprintf("vendor/fonts/%x/", fontURLDigest[:8])
+	fontPath := fmt.Sprintf("%s%x.woff2", fontDir, sha256.Sum256(fontBytes))
+	want := "<style>\n@import url(" + stylePath + ");\n@import \"" + stylePath + "\";\n</style>" +
+		`<link rel="preload" as="style" href="` + stylePath + `">` +
+		`<link rel="preload" as="script" href="` + scriptPath + `">` +
+		`<link rel="preload" as="font" href="` + fontPath + `">` +
+		`<noscript><link rel="stylesheet" href="` + stylePath + `"></noscript>` +
+		`<script src="` + scriptPath + `"></script>` +
+		`<link rel="stylesheet" href="` + fontDir + `fonts.css">` + nonResources
+	assert.Equal(t, want, string(index))
+	css, err := os.ReadFile(cssFile)
+	require.NoError(t, err)
+	assert.Equal(t, `@import'`+stylePath+`' screen;`, string(css))
+	downloaded, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(stylePath)))
+	require.NoError(t, err)
+	assert.Equal(t, stylesheet, string(downloaded))
+}
+
+func TestDesignVendorAllPreservesMalformedAttributesAndFileMode(t *testing.T) {
+	const script = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/main.js"
+	dir := vendorTestFolder(t, map[string]vendorTestResponse{
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri": {status: 200, body: `{"files":["main.js"]}`},
+		script: {status: 200, body: "/* script */"},
+	})
+	malformed := `<script =src="KEEP" src="` + script + `"></script>`
+	file := filepath.Join(dir, "index.html")
+	require.NoError(t, os.WriteFile(file, []byte(malformed+`<script src="`+script+`"></script>`), 0o644))
+	require.NoError(t, os.Chmod(file, 0o750))
+	before, err := os.Stat(file)
+	require.NoError(t, err)
+
+	got, err := runVendorTestCommand(t, dir, "--all")
+	require.NoError(t, err)
+	assert.Contains(t, got, "attribute value differs")
+	rewritten, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.Equal(t, malformed+`<script src="vendor/cdnjs/lib/1.2.3/main.js"></script>`, string(rewritten))
+	after, err := os.Stat(file)
+	require.NoError(t, err)
+	assert.Equal(t, before.Mode(), after.Mode())
 }
