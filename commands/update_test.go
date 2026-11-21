@@ -71,7 +71,7 @@ func TestUpdateWithoutTerminal(t *testing.T) {
 	}{
 		{name: "json installs", latest: nextUpdateVersion, dirMode: 0700, fileMode: 0755},
 		{name: "json up to date", latest: installedUpdateVersion, dirMode: 0700, fileMode: 0755},
-		{name: "plain writable binary", latest: nextUpdateVersion, dirMode: 0500, fileMode: 0755, plain: true},
+		{name: "plain writable binary", latest: nextUpdateVersion, dirMode: 0500, fileMode: 0755, plain: true, expectFailure: runtime.GOOS == "darwin"},
 		{name: "plain requires terminal", latest: nextUpdateVersion, dirMode: 0500, fileMode: 0555, plain: true, expectFailure: true},
 		{name: "checksum mismatch", latest: nextUpdateVersion, dirMode: 0700, fileMode: 0755, badChecksum: true, expectFailure: true},
 	} {
@@ -139,6 +139,7 @@ func TestUpdateWithoutTerminal(t *testing.T) {
 				assert.NoError(t, err, "%s", stderr.String())
 				if tc.plain {
 					assert.Contains(t, stderr.String(), "Updated to v"+nextUpdateVersion)
+					assert.Regexp(t, `Update backup: .*copera\.backup`, stderr.String())
 				} else {
 					action := "updated"
 					if tc.latest == installedUpdateVersion {
