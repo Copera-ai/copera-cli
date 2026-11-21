@@ -383,3 +383,120 @@ func TestDesignVendorAllRewritesReferences(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, actualCSS, afterCSS)
 }
+
+func TestDesignVendorAllContinuesAfterDownloadFailure(t *testing.T) {
+	const base = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/"
+	responses := map[string]vendorTestResponse{
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri": {status: 200, body: `{"files":["first.js","second.js","missing.js"]}`},
+		base + "first.js":   {status: 200, body: "/* first */"},
+		base + "second.js":  {status: 200, body: "/* second */"},
+		base + "missing.js": {status: 404},
+	}
+	dir := vendorTestFolder(t, responses)
+	source := filepath.Join(dir, "index.html")
+	original := `<script src="` + base + `first.js"></script>` +
+		`<script src="` + base + `second.js"></script>` +
+		`<script src="` + base + `missing.js"></script>` +
+		`<link rel="preconnect" href="https://cdnjs.cloudflare.com">`
+	require.NoError(t, os.WriteFile(source, []byte(original), 0o644))
+
+	got, err := runVendorTestCommand(t, dir, "--all")
+	assert.NoError(t, err)
+	assert.Contains(t, got, `"url": "`+base+`missing.js"`)
+	assert.Contains(t, got, "returned HTTP 404")
+	rewritten, err := os.ReadFile(source)
+	require.NoError(t, err)
+	assert.Equal(t, `<script src="vendor/cdnjs/lib/1.2.3/first.js"></script>`+
+		`<script src="vendor/cdnjs/lib/1.2.3/second.js"></script>`+
+		`<script src="`+base+`missing.js"></script>`, string(rewritten))
+
+	got, err = runVendorTestCommand(t, dir, "--all")
+	assert.Error(t, err)
+	assert.Contains(t, got, `"url": "`+base+`missing.js"`)
+	assert.Contains(t, got, "returned HTTP 404")
+	assert.Contains(t, got, `"changed": false`)
+	after, err := os.ReadFile(source)
+	require.NoError(t, err)
+	assert.Equal(t, rewritten, after)
+}
+
+func TestDesignVendorAllPreservesDesignSystemFiles(t *testing.T) {
+	const script = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/main.js"
+	original := `<script src="` + script + `"></script>`
+	dir := vendorTestFolder(t, map[string]vendorTestResponse{
+		"https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri": {status: 200, body: `{"files":["main.js"]}`},
+		script: {status: 200, body: "/* script */"},
+	})
+	state := fmt.Sprintf(`{"kind":"website","runtime":"static","designSystemFiles":{"managed.html":"%x"}}`, sha256.Sum256([]byte(original)))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".copera", "design.json"), []byte(state), 0o600))
+	managed := filepath.Join(dir, "managed.html")
+	unmanaged := filepath.Join(dir, "index.html")
+	for _, file := range []string{managed, unmanaged} {
+		require.NoError(t, os.WriteFile(file, []byte(original), 0o644))
+	}
+
+	got, err := runVendorTestCommand(t, dir, "--all")
+	require.NoError(t, err)
+	assert.Contains(t, got, "managed by the Design system")
+	managedBytes, err := os.ReadFile(managed)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(managedBytes))
+	unmanagedBytes, err := os.ReadFile(unmanaged)
+	require.NoError(t, err)
+	assert.Equal(t, `<script src="vendor/cdnjs/lib/1.2.3/main.js"></script>`, string(unmanagedBytes))
+}
+
+func TestDesignVendorAllDownloadLimits(t *testing.T) {
+	const base = "https://cdnjs.cloudflare.com/ajax/libs/lib/1.2.3/"
+	for _, tt := range []struct {
+		name    string
+		count   int
+		body    string
+		handled int
+		reason  string
+	}{
+		{"distinct URLs", 33, "/* script */", 32, "32 distinct URLs"},
+		{"total bytes", 5, strings.Repeat(" ", 5<<20), 3, "20 MiB download limit"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var files []string
+			var original, expected strings.Builder
+			responses := map[string]vendorTestResponse{}
+			for i := 1; i <= tt.count; i++ {
+				name := fmt.Sprintf("resource%02d.js", i)
+				files = append(files, name)
+				remote := base + name
+				responses[remote] = vendorTestResponse{status: 200, body: tt.body}
+				fmt.Fprintf(&original, `<script src="%s"></script>`, remote)
+				if i <= tt.handled {
+					remote = "vendor/cdnjs/lib/1.2.3/" + name
+				}
+				fmt.Fprintf(&expected, `<script src="%s"></script>`, remote)
+			}
+			metadata, err := json.Marshal(map[string][]string{"files": files})
+			require.NoError(t, err)
+			responses["https://api.cdnjs.com/libraries/lib/1.2.3?fields=files,sri"] = vendorTestResponse{status: 200, body: string(metadata)}
+			dir := vendorTestFolder(t, responses)
+			file := filepath.Join(dir, "index.html")
+			require.NoError(t, os.WriteFile(file, []byte(original.String()), 0o644))
+
+			got, err := runVendorTestCommand(t, dir, "--all")
+			require.NoError(t, err)
+			assert.Contains(t, got, tt.reason)
+			rewritten, err := os.ReadFile(file)
+			require.NoError(t, err)
+			assert.Equal(t, expected.String(), string(rewritten))
+		})
+	}
+}
+
+func TestDesignVendorAllSuggestsPushWithMessagePlaceholder(t *testing.T) {
+	dir := vendorTestFolder(t, nil)
+	got, err := runVendorTestCommand(t, dir, "--all")
+	require.NoError(t, err)
+	var result struct {
+		NextCommand string `json:"nextCommand"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got), &result))
+	assert.Equal(t, `copera designs push --wait -m "<what this version is>" '`+dir+`'`, result.NextCommand)
+}

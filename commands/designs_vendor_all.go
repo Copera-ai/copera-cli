@@ -61,9 +61,10 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		refs []designOutsideReference
 	}
 	toRewrite := make(map[string]sourceFile)
-	var sources []designVendorSource
+	var sources []designOutsideReference
 	byURL := make(map[string]int)
 	byHost := make(map[string][]int)
+	failed := make(map[string]string)
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		data, err := designReferenceContents(name, files[name])
 		if err != nil {
@@ -71,6 +72,13 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		}
 		refs := scanDesignReferences(name, data)
 		if len(refs) == 0 {
+			continue
+		}
+		if _, managed := state.DesignSystemFiles[name]; managed {
+			for _, ref := range refs {
+				ref.Reason = "managed by the Design system"
+				result.Skipped = append(result.Skipped, ref)
+			}
 			continue
 		}
 		toRewrite[name] = sourceFile{data, refs}
@@ -86,29 +94,36 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 			if _, exists := byURL[key]; exists {
 				continue
 			}
-			i := len(sources)
-			byURL[key] = i
-			byHost[ref.Host] = append(byHost[ref.Host], i)
-			if ref.Host == "fonts.googleapis.com" {
-				byHost["fonts.gstatic.com"] = append(byHost["fonts.gstatic.com"], i)
-			}
-			sources = append(sources, ref.source)
-			result.Vendored = append(result.Vendored, designVendoredReference{
-				URL: ref.URL, FilesRewritten: []string{},
-			})
+			byURL[key] = -1
+			sources = append(sources, ref)
 		}
 	}
 
-	for i, source := range sources {
-		downloaded, err := downloadDesignVendorSource(ctx, source)
+	var bytesLeft int64 = 20 << 20
+	for n, ref := range sources {
+		key := ref.source.url.String()
+		if n >= 32 {
+			failed[key] = "reached the limit of 32 distinct URLs"
+			continue
+		}
+		downloaded, err := downloadDesignVendorSource(ctx, ref.source, &bytesLeft)
 		if err != nil {
-			return designError(cli, fmt.Errorf("vendor %s: %w", result.Vendored[i].URL, err))
+			failed[key] = err.Error()
+			continue
 		}
 		written, err := writeDesignVendorFiles(root, downloaded)
 		if err != nil {
 			return designError(cli, err)
 		}
-		result.Vendored[i].FilesWritten = written
+		i := len(result.Vendored)
+		byURL[key] = i
+		byHost[ref.Host] = append(byHost[ref.Host], i)
+		if ref.Host == "fonts.googleapis.com" {
+			byHost["fonts.gstatic.com"] = append(byHost["fonts.gstatic.com"], i)
+		}
+		result.Vendored = append(result.Vendored, designVendoredReference{
+			URL: ref.URL, FilesWritten: written, FilesRewritten: []string{},
+		})
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(toRewrite)) {
@@ -125,12 +140,18 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 					continue
 				}
 			case ref.Reason == "":
+				key := ref.source.url.String()
+				if reason := failed[key]; reason != "" {
+					ref.Reason = reason
+					result.Skipped = append(result.Skipped, ref)
+					continue
+				}
 				relative, err := filepath.Rel(filepath.Dir(filepath.FromSlash(name)), filepath.FromSlash(ref.source.path))
 				if err != nil {
 					return designError(cli, err)
 				}
 				replacement = filepath.ToSlash(relative)
-				owners = []int{byURL[ref.source.url.String()]}
+				owners = []int{byURL[key]}
 			default:
 				continue
 			}
@@ -161,26 +182,33 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		result.Changed = true
 	}
 
-	result.NextCommand = `copera designs push --wait -m "Publish existing folder"`
+	result.NextCommand = `copera designs push --wait -m "<what this version is>"`
 	if dir != "." {
 		result.NextCommand += " '" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
 	}
 	if cli.Printer.IsJSON() {
-		return cli.Printer.PrintJSON(result)
-	}
-	if !result.Changed {
-		cli.Printer.PrintLine("No changes.")
-	}
-	for _, ref := range result.Vendored {
-		cli.Printer.PrintLine("Vendored: " + ref.URL)
-		if len(ref.FilesWritten) > 0 {
-			cli.Printer.PrintLine("  Wrote: " + strings.Join(ref.FilesWritten, ", "))
+		if err := cli.Printer.PrintJSON(result); err != nil {
+			return err
 		}
-		cli.Printer.PrintLine("  Rewrote: " + strings.Join(ref.FilesRewritten, ", "))
+	} else {
+		if !result.Changed {
+			cli.Printer.PrintLine("No changes.")
+		}
+		for _, ref := range result.Vendored {
+			cli.Printer.PrintLine("Vendored: " + designsTerminalLine(ref.URL))
+			if len(ref.FilesWritten) > 0 {
+				cli.Printer.PrintLine("  Wrote: " + designsTerminalLine(strings.Join(ref.FilesWritten, ", ")))
+			}
+			cli.Printer.PrintLine("  Rewrote: " + designsTerminalLine(strings.Join(ref.FilesRewritten, ", ")))
+		}
+		for _, ref := range result.Skipped {
+			cli.Printer.PrintLine(fmt.Sprintf("Skipped: %s (%s) — %s",
+				designsTerminalLine(ref.URL), designsTerminalLine(ref.Path), designsTerminalLine(ref.Reason)))
+		}
+		cli.Printer.PrintLine("Run: " + designsTerminalLine(result.NextCommand))
 	}
-	for _, ref := range result.Skipped {
-		cli.Printer.PrintLine(fmt.Sprintf("Skipped: %s (%s) — %s", ref.URL, ref.Path, ref.Reason))
+	if len(sources) > 0 && len(result.Vendored) == 0 {
+		return designError(cli, fmt.Errorf("no vendorable URLs could be downloaded"))
 	}
-	cli.Printer.PrintLine("Run: " + result.NextCommand)
 	return nil
 }

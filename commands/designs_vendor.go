@@ -109,7 +109,7 @@ func newDesignVendorCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			files, err := downloadDesignVendorSource(cmd.Context(), source)
+			files, err := downloadDesignVendorSource(cmd.Context(), source, nil)
 			if err != nil {
 				return designError(cli, err)
 			}
@@ -133,7 +133,7 @@ func newDesignVendorCmd(cli *CLI) *cobra.Command {
 	return cmd
 }
 
-func downloadDesignVendorSource(ctx context.Context, source designVendorSource) ([]designVendorFile, error) {
+func downloadDesignVendorSource(ctx context.Context, source designVendorSource, bytesLeft *int64) ([]designVendorFile, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -142,9 +142,9 @@ func downloadDesignVendorSource(ctx context.Context, source designVendorSource) 
 	var files []designVendorFile
 	var err error
 	if source.url.Host == "fonts.googleapis.com" {
-		files, err = vendorGoogleFonts(ctx, client, source)
+		files, err = vendorGoogleFonts(ctx, client, source, bytesLeft)
 	} else {
-		files, err = vendorCDNFile(ctx, client, source)
+		files, err = vendorCDNFile(ctx, client, source, bytesLeft)
 	}
 	if err != nil {
 		return nil, err
@@ -262,7 +262,14 @@ func validateDesignVendorPath(name, ext string) error {
 	return nil
 }
 
-func downloadDesignVendor(ctx context.Context, client *http.Client, remote string, limit int64) ([]byte, string, error) {
+func downloadDesignVendor(ctx context.Context, client *http.Client, remote string, limit int64, bytesLeft *int64) ([]byte, string, error) {
+	readLimit := limit + 1
+	if bytesLeft != nil {
+		if *bytesLeft == 0 {
+			return nil, "", fmt.Errorf("reached the 20 MiB download limit")
+		}
+		readLimit = min(readLimit, *bytesLeft)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remote, nil)
 	if err != nil {
 		return nil, "", err
@@ -276,7 +283,13 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 	if res.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("vendor download from %s returned HTTP %d", req.URL.Host, res.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
+	data, err := io.ReadAll(io.LimitReader(res.Body, readLimit))
+	if bytesLeft != nil {
+		*bytesLeft -= int64(len(data))
+		if *bytesLeft == 0 && res.ContentLength != int64(len(data)) {
+			return nil, "", fmt.Errorf("reached the 20 MiB download limit")
+		}
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -293,8 +306,8 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 	return data, mediaType, nil
 }
 
-func vendorCDNFile(ctx context.Context, client *http.Client, source designVendorSource) ([]designVendorFile, error) {
-	metadata, _, err := downloadDesignVendor(ctx, client, source.metadataURL, designVendorMetadataLimit)
+func vendorCDNFile(ctx context.Context, client *http.Client, source designVendorSource, bytesLeft *int64) ([]designVendorFile, error) {
+	metadata, _, err := downloadDesignVendor(ctx, client, source.metadataURL, designVendorMetadataLimit, bytesLeft)
 	if err != nil {
 		return nil, fmt.Errorf("read CDN metadata: %w", err)
 	}
@@ -333,7 +346,7 @@ func vendorCDNFile(ctx context.Context, client *http.Client, source designVendor
 	if !exact {
 		return nil, fmt.Errorf("CDN metadata did not confirm the exact file %q", source.cdnFile)
 	}
-	data, mediaType, err := downloadDesignVendor(ctx, client, source.url.String(), designVendorFileLimit)
+	data, mediaType, err := downloadDesignVendor(ctx, client, source.url.String(), designVendorFileLimit, bytesLeft)
 	if err != nil {
 		return nil, err
 	}
@@ -483,8 +496,8 @@ func parseDesignVendorFontURL(value string) (string, error) {
 	return u.String(), nil
 }
 
-func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVendorSource) ([]designVendorFile, error) {
-	css, mediaType, err := downloadDesignVendor(ctx, client, source.url.String(), designVendorCSSLimit)
+func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVendorSource, bytesLeft *int64) ([]designVendorFile, error) {
+	css, mediaType, err := downloadDesignVendor(ctx, client, source.url.String(), designVendorCSSLimit, bytesLeft)
 	if err != nil {
 		return nil, err
 	}
@@ -517,7 +530,7 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 				remote := value
 				name := urls[remote]
 				if name == "" {
-					font, mediaType, err := downloadDesignVendor(ctx, client, remote, designVendorFileLimit)
+					font, mediaType, err := downloadDesignVendor(ctx, client, remote, designVendorFileLimit, bytesLeft)
 					if err != nil {
 						return nil, err
 					}
