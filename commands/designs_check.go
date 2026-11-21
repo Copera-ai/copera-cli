@@ -381,9 +381,9 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 		}
 	} else {
 		if report.Version != nil {
-			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", report.Version.Version, report.Version.ID))
+			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", report.Version.Version, designsTerminalLine(report.Version.ID)))
 		}
-		cli.Printer.PrintLine("Build: " + report.State)
+		cli.Printer.PrintLine("Build: " + designsTerminalLine(report.State))
 		if report.AppURL != "" {
 			cli.Printer.PrintLine("URL: " + designsTerminalLine(report.AppURL))
 		}
@@ -395,14 +395,14 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 			if diagnostic.FilePath != "" {
 				message = designSourceLocation(diagnostic.FilePath, diagnostic.Line, diagnostic.Column) + ": " + message
 			}
-			cli.Printer.PrintLine(message)
+			cli.Printer.PrintLine(designsTerminalLine(message))
 		}
 		for _, entry := range report.RuntimeConsole.Entries {
 			message := fmt.Sprintf("Runtime %s: %s", entry.Level, entry.Text)
 			if entry.Source != nil {
 				message = designSourceLocation(entry.Source.File, entry.Source.Line, entry.Source.Column) + ": " + message
 			}
-			cli.Printer.PrintLine(message)
+			cli.Printer.PrintLine(designsTerminalLine(message))
 		}
 		if report.Version != nil && len(report.Screenshots) > 0 {
 			cli.Printer.PrintLine("Screenshots: .copera/shots/")
@@ -425,7 +425,8 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 		if report.FailureCode != "" {
 			message += " (" + report.FailureCode + ")"
 		}
-		cli.Printer.PrintError("build_failed", message, failureSuggestion, false)
+		message = designsTerminalLine(message)
+		cli.Printer.PrintError("build_failed", message, designsTerminalLine(failureSuggestion), false)
 		return exitcodes.New(exitcodes.Error, errors.New(message))
 	}
 	return nil

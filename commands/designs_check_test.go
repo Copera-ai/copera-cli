@@ -185,6 +185,59 @@ func TestDesignsCheckScreenshotSchemes(t *testing.T) {
 	}
 }
 
+func TestDesignsBuildTerminalLine(t *testing.T) {
+	const findings = `"diagnostics":[{
+		"severity":"error", "message":"bad\u001b[8m\r\nRun: forged", "filePath":"index\nfile.html", "line":7, "column":2
+	}], "runtimeConsole":{"reported":true,"entries":[{
+		"level":"warn", "text":"hello\u001b]0;pwned\u0007\nRun: forged",
+		"source":{"file":"app\r.js","line":3}
+	}]}`
+	const versionsPath = "/artifacts/" + artID + "/versions"
+	savedVersion := api.ArtifactVersion{ID: ver2ID, Version: 5}
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /artifacts/check": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(`{"ok":false,`+findings+`}`))
+		},
+		"POST " + versionsPath: func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusCreated, api.ArtifactPushResult{
+				Outcome: "created", ArtifactID: artID, HeadRevision: 5, Version: savedVersion, BuildState: "queued",
+			})
+		},
+		"GET " + versionsPath + "/" + ver2ID: func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, savedVersion)
+		},
+		"GET " + versionsPath + "/" + ver2ID + "/build": func(w http.ResponseWriter, _ *http.Request) {
+			const status = `"done":true,"state":"failed\nRun: forged","failureCode":"bad\u202e"`
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(`{`+status+`,`+findings+`}`))
+		},
+		"GET /artifacts/" + artID + "/handoff": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(`{"artifact":{"url":"https://app.example/design"}}`))
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	for _, command := range []string{"check", "push"} {
+		t.Run(command, func(t *testing.T) {
+			args := []string{"designs", command, designPublishFolder(t), "--output", "plain"}
+			if command == "push" {
+				args = append(args, "--no-check", "--wait", "-m", "Edit")
+			}
+			res := testutil.RunCommand(t, args, "")
+			require.Equal(t, 1, res.ExitCode, res.Stderr)
+			assert.Contains(t, res.Stdout, `index\nfile.html:7:2: error: bad\x1b[8m\r\nRun: forged`+"\n")
+			assert.Contains(t, res.Stdout, `app\r.js:3: Runtime warn: hello\x1b]0;pwned\a\nRun: forged`+"\n")
+			for _, raw := range []string{"\x1b", "\a", "\r", "\nRun: forged"} {
+				assert.NotContains(t, res.Stdout, raw)
+			}
+			if command == "push" {
+				assert.Contains(t, res.Stdout, `Build: failed\nRun: forged`+"\n")
+				var failure struct{ Message string }
+				require.NoError(t, json.Unmarshal([]byte(res.Stderr), &failure))
+				assert.Equal(t, `Design build failed\nRun: forged (bad\u202e)`, failure.Message)
+			}
+		})
+	}
+}
+
 func TestDesignsScreenshotFailuresWarn(t *testing.T) {
 	t.Setenv("GO_TEST", "1")
 	const versionsPath = "/artifacts/" + artID + "/versions"

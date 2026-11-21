@@ -26,6 +26,10 @@ func designsTerminalLine(value string) string {
 	var line strings.Builder
 	for _, r := range value {
 		switch {
+		case unicode.Is(unicode.Zs, r):
+			line.WriteByte(' ')
+		case r == '\u200c' || r == '\u200d' || r == '\ufe0f':
+			line.WriteRune(r)
 		case unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector):
 			if r <= 0xffff {
 				fmt.Fprintf(&line, "\\u%04x", r)
