@@ -8,13 +8,35 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/copera/copera-cli/internal/api"
+	"github.com/copera/copera-cli/internal/exitcodes"
+	"github.com/copera/copera-cli/internal/output"
 	"github.com/copera/copera-cli/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDesignsReportMissingLink(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "author's files")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	quoted := "'" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
+	for _, args := range [][]string{{"check", dir}, {"vendor", "--all", dir}} {
+		t.Run(args[0], func(t *testing.T) {
+			res := testutil.RunCommand(t, append([]string{"designs", "--json"}, args...), "")
+			assert.Equal(t, exitcodes.Usage, res.ExitCode)
+			var reported output.StructuredError
+			require.NoError(t, json.Unmarshal([]byte(res.Stderr), &reported))
+			assert.Equal(t, output.StructuredError{
+				Error:      "not_a_design_folder",
+				Message:    "This folder is not linked to a Design yet.",
+				Suggestion: "Run: copera designs init " + quoted + " --adopt --kind <kind> to keep the files that are here, or copera designs init " + quoted + " in an empty folder.",
+			}, reported)
+		})
+	}
+}
 
 func TestDesignsCheckMultipartWithNewBinary(t *testing.T) {
 	dir := t.TempDir()

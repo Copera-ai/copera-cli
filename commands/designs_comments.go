@@ -228,8 +228,7 @@ func setDesignCollaborationArgs(cmd *cobra.Command, minArgs, maxArgs int) {
 }
 
 func designCollaborationUsage(cli *CLI, err error) error {
-	cli.Printer.PrintError("invalid_input", err.Error(), "", false)
-	return exitcodes.New(exitcodes.Usage, err)
+	return designUsageError(cli, err)
 }
 
 func designCollaborationError(cli *CLI, err error) error {

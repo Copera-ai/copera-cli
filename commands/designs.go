@@ -47,6 +47,10 @@ func designsTerminalLine(value string) string {
 }
 
 func designError(cli *CLI, err error) error {
+	var missing *designLinkMissingError
+	if errors.As(err, &missing) {
+		return designUsageError(cli, missing)
+	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
 		cli.Printer.PrintError("api_error", apiErr.Error(),
@@ -328,6 +332,18 @@ func validateDesignTemplate(kind, runtime, template string) error {
 }
 
 func designUsageError(cli *CLI, err error) error {
+	var missing *designLinkMissingError
+	if errors.As(err, &missing) {
+		dir := missing.dir
+		if strings.HasPrefix(dir, "-") {
+			dir = "./" + dir
+		}
+		quoted := "'" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
+		suggestion := "Run: copera designs init " + quoted +
+			" --adopt --kind <kind> to keep the files that are here, or copera designs init " + quoted + " in an empty folder."
+		cli.Printer.PrintError("not_a_design_folder", missing.Error(), designsTerminalLine(suggestion), false)
+		return exitcodes.New(exitcodes.Usage, missing)
+	}
 	cli.Printer.PrintError("invalid_input", err.Error(), "", false)
 	return exitcodes.New(exitcodes.Usage, err)
 }
