@@ -327,6 +327,15 @@ func (body multipartRequest) stream(ctx context.Context) (io.ReadCloser, <-chan 
 }
 
 func (c *Client) doOnce(ctx context.Context, method, path string, body, out any, limit int64) error {
+	return c.doRequest(ctx, method, path, body, out, limit, nil)
+}
+
+// mediaRequest keeps paid input and private receipts out of HTTP diagnostics.
+type mediaRequest struct {
+	key string
+}
+
+func (c *Client) doRequest(ctx context.Context, method, path string, body, out any, limit int64, media *mediaRequest) error {
 	var bodyReader io.Reader
 	contentType := "application/json"
 	httpClient := c.httpClient
@@ -348,6 +357,11 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any,
 		bodyReader = bytes.NewReader(data)
 	}
 
+	if media != nil {
+		client := *httpClient
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		httpClient = &client
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
 	if err != nil {
 		return fmt.Errorf("api: build request: %w", err)
@@ -358,12 +372,18 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any,
 		req.Header.Set("Content-Type", contentType)
 	}
 
-	if c.verbose != nil {
+	if media != nil && media.key != "" {
+		req.Header.Set("Idempotency-Key", media.key)
+	}
+	if c.verbose != nil && media == nil {
 		fmt.Fprintf(c.verbose, ">> %s %s\n", method, req.URL.String())
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		if media != nil {
+			return mediaTransportError{}
+		}
 		return fmt.Errorf("api: %w", err)
 	}
 	defer resp.Body.Close()
@@ -393,17 +413,29 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any,
 	}
 	respBody, err := io.ReadAll(reader)
 	if err != nil {
+		if media != nil {
+			return mediaTransportError{}
+		}
 		return fmt.Errorf("api: read response: %w", err)
 	}
 
 	if limit > 0 && int64(len(respBody)) > limit {
 		return fmt.Errorf("api: Design system response exceeds the allowed size")
 	}
-	if c.verbose != nil {
+	if c.verbose != nil && media == nil {
 		fmt.Fprintf(c.verbose, "<< %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
 		if limit == 0 {
 			fmt.Fprintf(c.verbose, "<< %s\n", string(respBody))
 		}
+	}
+	if c.verbose != nil && media != nil {
+		defer func() {
+			if receipt, ok := out.(*MediaReceipt); ok && mediaOperationIDPattern.MatchString(receipt.OperationID) {
+				fmt.Fprintf(c.verbose, "<< %d operation %s\n", resp.StatusCode, receipt.OperationID)
+			} else {
+				fmt.Fprintf(c.verbose, "<< %d\n", resp.StatusCode)
+			}
+		}()
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -443,7 +475,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any,
 		if apiErr.Message == "" {
 			apiErr.Message = http.StatusText(resp.StatusCode)
 		}
-		if uploadFinished != nil {
+		if uploadFinished != nil || media != nil {
 			apiErr.readRetryAfter(resp.Header)
 		}
 		return apiErr
@@ -451,6 +483,9 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any,
 
 	if out != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, out); err != nil {
+			if media != nil {
+				return errors.New("api: invalid media response")
+			}
 			return fmt.Errorf("api: decode response: %w", err)
 		}
 	}
