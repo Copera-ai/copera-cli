@@ -583,3 +583,24 @@ func TestChannelsDMSend_MissingUser(t *testing.T) {
 	assert.Equal(t, 2, res.ExitCode)
 	assert.Contains(t, res.Stderr, "--user is required")
 }
+
+func TestChannelMessageHistoryPreservesWireEnvelope(t *testing.T) {
+	const channel = "aaaaaaaaaaaaaaaaaaaaaaaa"
+	const cursor = "bbbbbbbbbbbbbbbbbbbbbbbb"
+	const body = `{"channelId":"aaaaaaaaaaaaaaaaaaaaaaaa","messages":[{"_id":"bbbbbbbbbbbbbbbbbbbbbbbb","authorId":"cccccccccccccccccccccccc","contentType":"text","content":"chosen excerpt","createdAt":"2026-11-18T12:00:00Z","viaAgentName":"Assistant","lastModifiedViaAgentName":"Editor"}]}`
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /chat/channel/" + channel + "/messages": func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "50", r.URL.Query().Get("limit"))
+			assert.Equal(t, cursor, r.URL.Query().Get("before"))
+			assert.Empty(t, r.URL.Query().Get("after"))
+			_, _ = w.Write([]byte(body))
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	res := testutil.RunCommand(t, []string{"channels", "message", "list", channel, "--before", cursor, "--json"}, "")
+	require.Equal(t, 0, res.ExitCode, "stderr: %s", res.Stderr)
+	assert.JSONEq(t, body, res.Stdout)
+	res = testutil.RunCommand(t, []string{"channels", "message", "list", channel, "--before", cursor, "--after", cursor}, "")
+	assert.Equal(t, 2, res.ExitCode)
+}

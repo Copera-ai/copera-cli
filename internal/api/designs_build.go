@@ -22,7 +22,7 @@ type ArtifactProjectSettings struct {
 	Entrypoint   string                      `json:"entrypoint,omitempty"`
 	Dependencies []ArtifactDependency        `json:"dependencies,omitempty"`
 	Presentation *ArtifactPresentation       `json:"presentation,omitempty"`
-	Capabilities []ArtifactProjectCapability `json:"capabilities,omitempty"`
+	Capabilities []ArtifactProjectCapability `json:"capabilities,omitzero"`
 }
 
 type ArtifactPresentation struct {
@@ -39,6 +39,40 @@ type ArtifactProjectCapability struct {
 	Migration     *struct {
 		Strategy string `json:"strategy"`
 	} `json:"migration,omitempty"`
+	ContractVersion int                      `json:"contractVersion,omitempty"`
+	Collections     []ArtifactDataCollection `json:"collections,omitempty"`
+}
+
+func (capability *ArtifactProjectCapability) UnmarshalJSON(data []byte) error {
+	type capabilityFields ArtifactProjectCapability
+	var decoded capabilityFields
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	switch decoded.Kind {
+	case "ai", "speech", "dictation", "images", "files", "copera", "room":
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			return err
+		}
+		if len(fields) != 2 || fields["kind"] == nil || fields["contractVersion"] == nil || decoded.ContractVersion != 1 {
+			return fmt.Errorf("Design capability %q requires exactly kind and contractVersion 1", decoded.Kind)
+		}
+	}
+	*capability = ArtifactProjectCapability(decoded)
+	return nil
+}
+
+type ArtifactDataCollection struct {
+	Name   string `json:"name"`
+	Scope  string `json:"scope"`
+	Access string `json:"access,omitempty"`
+}
+
+type ArtifactMemberRuntimeDeclaration struct {
+	Kind            string                   `json:"kind"`
+	ContractVersion int                      `json:"contractVersion"`
+	Collections     []ArtifactDataCollection `json:"collections,omitempty"`
 }
 
 type ArtifactCheckInput struct {
@@ -176,12 +210,15 @@ type ArtifactPushResult struct {
 }
 
 type ArtifactCreateInput struct {
-	Title          string `json:"title"`
-	ChangeSummary  string `json:"changeSummary,omitempty"`
-	Tool           string `json:"tool"`
-	IdempotencyKey string `json:"idempotencyKey"`
-	DesignSystemID string `json:"designSystemId,omitempty"`
-	Project        struct {
+	Title                string `json:"title"`
+	ChangeSummary        string `json:"changeSummary,omitempty"`
+	Tool                 string `json:"tool"`
+	IdempotencyKey       string `json:"idempotencyKey"`
+	DesignSystemID       string `json:"designSystemId,omitempty"`
+	DesignSystemRevision int    `json:"designSystemRevision,omitempty"`
+	DesignSystemKit      string `json:"designSystemKit,omitempty"`
+	NoDesignSystem       bool   `json:"noDesignSystem,omitempty"`
+	Project              struct {
 		ArtifactProjectSettings
 		SchemaVersion int                   `json:"schemaVersion"`
 		Files         []ArtifactContentFile `json:"files"`
@@ -189,7 +226,7 @@ type ArtifactCreateInput struct {
 }
 
 type ArtifactCreateResult struct {
-	Artifact
+	ArtifactGetResult
 	Warnings []ArtifactWarning `json:"warnings"`
 }
 
@@ -281,7 +318,12 @@ func (c *Client) ArtifactCreate(ctx context.Context, input ArtifactCreateInput, 
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal Design create: %w", err)
 	}
+	payload := artifactMultipart("project", project, files)
 	var result ArtifactCreateResult
-	err = c.do(ctx, http.MethodPost, "/artifacts/", artifactMultipart("project", project, files), &result)
+	if input.DesignSystemRevision != 0 || input.NoDesignSystem {
+		err = c.doDesignMutation(ctx, "/artifacts/", payload, &result)
+	} else {
+		err = c.do(ctx, http.MethodPost, "/artifacts/", payload, &result)
+	}
 	return &result, err
 }

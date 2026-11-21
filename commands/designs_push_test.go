@@ -96,6 +96,57 @@ func TestDesignsCheck(t *testing.T) {
 	assert.Equal(t, "shot", string(image))
 }
 
+func TestDesignsExistingCapabilitySettings(t *testing.T) {
+	for _, capabilities := range []string{"", "[]", `[{"kind":"ai","contractVersion":1}]`} {
+		t.Run(capabilities, func(t *testing.T) {
+			dir := designPublishFolder(t)
+			if capabilities != "" {
+				path := filepath.Join(dir, ".copera", "design.json")
+				state, err := os.ReadFile(path)
+				require.NoError(t, err)
+				state = []byte(strings.TrimSuffix(string(state), "}") + `,"capabilities":` + capabilities + "}")
+				require.NoError(t, os.WriteFile(path, state, 0600))
+			}
+			var requests atomic.Int32
+			checkProject := func(r *http.Request) {
+				requests.Add(1)
+				var input struct {
+					Project json.RawMessage `json:"project"`
+				}
+				if assert.NoError(t, json.NewDecoder(r.Body).Decode(&input)) {
+					if capabilities == "" {
+						assert.Empty(t, input.Project)
+					} else {
+						assert.JSONEq(t, `{"capabilities":`+capabilities+"}", string(input.Project))
+					}
+				}
+			}
+			srv := testutil.NewMockServer(t, testutil.MockRoutes{
+				"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+					checkProject(r)
+					testutil.RespondJSON(w, http.StatusOK, json.RawMessage(`{"ok":true}`))
+				},
+				"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+					checkProject(r)
+					testutil.RespondJSON(w, http.StatusOK, api.ArtifactPushResult{
+						Outcome: "unchanged", ArtifactID: artID, HeadRevision: 4,
+						Version: api.ArtifactVersion{ID: verID, Version: 1}, BuildState: "ready",
+					})
+				},
+			}.Handler())
+			setupHome(t, srv.URL)
+			for _, args := range [][]string{
+				{"designs", "check", dir, "--json"},
+				{"designs", "push", dir, "-m", "Update declarations", "--no-check", "--json"},
+			} {
+				result := testutil.RunCommand(t, args, "")
+				assert.Equal(t, 0, result.ExitCode, result.Stderr)
+			}
+			assert.EqualValues(t, 2, requests.Load())
+		})
+	}
+}
+
 func TestDesignsPush(t *testing.T) {
 	dir := designPublishFolder(t)
 	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
@@ -467,6 +518,72 @@ func TestDesignsFirstPushWithImages(t *testing.T) {
 	assert.Equal(t, verID, state.Base)
 	assert.Equal(t, digestOf(png+"hero"), state.Files[hero])
 	assert.Equal(t, digestOf(png+"logo"), state.Files[logo])
+}
+
+func TestDesignsForcePushStockReviewWithMissingIndexes(t *testing.T) {
+	const (
+		entrypoint = "index.html"
+		html       = "<h1>Review</h1>"
+		guidance   = "shared/DESIGN.md"
+		tokens     = "shared/tokens.css"
+		components = "shared/components.json"
+		assets     = "shared/assets.json"
+	)
+	remote := designPullFixture(entrypoint, html, 1)
+	remote.CurrentVersion.AuthoringManifest.SharedDesign = api.ArtifactSharedDesign{
+		Version: 1, GuidancePath: guidance, TokensPath: tokens, ComponentsPath: components, AssetsPath: assets,
+	}
+	remote.CurrentVersion.Files = append(remote.CurrentVersion.Files,
+		api.ArtifactFileRef{Path: guidance, MediaType: "text/markdown", ContentDigest: digestOf("# Review")},
+		api.ArtifactFileRef{Path: tokens, MediaType: "text/css", ContentDigest: digestOf("body {}")},
+		api.ArtifactFileRef{Path: components, MediaType: "application/json", ContentDigest: digestOf(`{"schemaVersion":1,"components":[]}`)},
+		api.ArtifactFileRef{Path: assets, MediaType: "application/json", ContentDigest: digestOf(`{"schemaVersion":1,"assets":[]}`)},
+	)
+	const guide = `{"version":1,"kind":"web_app","runtime":"static_web","markdown":"# Review","facts":{},"template":{
+		"id":"review","subject":"Review","project":{"artifactKind":"web_app","runtime":"static_web","entrypoint":"index.html","capabilities":` + reviewDeclarations + `},
+		"files":[{"path":"index.html","mediaType":"text/html","content":"<h1>Review</h1>"},
+			{"path":"shared/DESIGN.md","mediaType":"text/markdown","content":"# Review"},
+			{"path":"shared/tokens.css","mediaType":"text/css","content":"body {}"}]}}`
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(guide))
+		},
+		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
+		},
+		"POST /artifacts/": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusCreated, remote)
+		},
+		"GET /artifacts/" + artID: func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, remote)
+		},
+		"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+			var input api.ArtifactPushInput
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&input)) || !assert.NotNil(t, input.AuthoringManifest) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assert.ElementsMatch(t, []string{components, assets}, input.RemovedPaths)
+			if !assert.Equal(t, api.ArtifactSharedDesign{Version: 1, GuidancePath: guidance, TokensPath: tokens}, input.AuthoringManifest.SharedDesign) {
+				testutil.RespondJSON(w, http.StatusBadRequest, map[string]string{"message": "manifest references missing shared indexes"})
+				return
+			}
+			version := remote.CurrentVersion
+			version.ID, version.Version, version.AuthoringManifest = ver2ID, 2, *input.AuthoringManifest
+			testutil.RespondJSON(w, http.StatusCreated, api.ArtifactPushResult{
+				Outcome: "created", ArtifactID: artID, HeadRevision: 2, Version: version,
+			})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+
+	dir := filepath.Join(t.TempDir(), "review")
+	init := testutil.RunCommand(t, []string{"designs", "init", dir, "--template", "review", "--json"}, "")
+	require.Equal(t, 0, init.ExitCode, init.Stderr)
+	create := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "First version", "--no-check", "--json"}, "")
+	require.Equal(t, 0, create.ExitCode, create.Stderr)
+	forced := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Update review", "--force", "--no-check", "--json"}, "")
+	require.Equal(t, 0, forced.ExitCode, forced.Stderr)
 }
 
 func TestDesignsFirstPushRejected(t *testing.T) {

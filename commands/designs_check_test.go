@@ -20,6 +20,39 @@ func TestDesignsCheckMultipartWithNewBinary(t *testing.T) {
 	dir := t.TempDir()
 	const newPath = "assets/hero.png"
 	const pinnedPath = "assets/logo.png"
+	const handoutPath = "assets/tideline-handout.pdf"
+	const handoutPDF = "%PDF-1.4\n" +
+		"1 0 obj\n" +
+		"<< /Type /Catalog /Pages 2 0 R >>\n" +
+		"endobj\n" +
+		"2 0 obj\n" +
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n" +
+		"endobj\n" +
+		"3 0 obj\n" +
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 160] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\n" +
+		"endobj\n" +
+		"4 0 obj\n" +
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\n" +
+		"endobj\n" +
+		"5 0 obj\n" +
+		"<< /Length 47 >>\n" +
+		"stream\n" +
+		"BT /F1 24 Tf 40 90 Td (Tideline handout) Tj ET\n" +
+		"endstream\n" +
+		"endobj\n" +
+		"xref\n" +
+		"0 6\n" +
+		"0000000000 65535 f \n" +
+		"0000000009 00000 n \n" +
+		"0000000058 00000 n \n" +
+		"0000000115 00000 n \n" +
+		"0000000241 00000 n \n" +
+		"0000000311 00000 n \n" +
+		"trailer\n" +
+		"<< /Size 6 /Root 1 0 R >>\n" +
+		"startxref\n" +
+		"407\n" +
+		"%%EOF\n"
 	newPNG := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
 	pinnedPNG := append([]byte{1}, newPNG...)
 	pinnedDigest := digestOf(string(pinnedPNG))
@@ -40,6 +73,7 @@ func TestDesignsCheckMultipartWithNewBinary(t *testing.T) {
 	writePublishFixture(t, filepath.Join(dir, designEntrypoint), []byte("new"))
 	writePublishFixture(t, filepath.Join(dir, pinnedPath), pinnedPNG)
 	writePublishFixture(t, filepath.Join(dir, newPath), newPNG)
+	writePublishFixture(t, filepath.Join(dir, handoutPath), []byte(handoutPDF))
 
 	srv := testutil.NewMockServer(t, testutil.MockRoutes{
 		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +112,19 @@ func TestDesignsCheckMultipartWithNewBinary(t *testing.T) {
 					data, err := io.ReadAll(part)
 					assert.NoError(t, err)
 					assert.Equal(t, newPNG, data)
+
+					part, err = reader.NextPart()
+					if !assert.NoError(t, err) {
+						return
+					}
+					_, params, err = mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+					assert.NoError(t, err)
+					assert.Equal(t, "file", part.FormName())
+					assert.Equal(t, handoutPath, params["filename"])
+					assert.Equal(t, "application/pdf", part.Header.Get("Content-Type"))
+					data, err = io.ReadAll(part)
+					assert.NoError(t, err)
+					assert.Equal(t, handoutPDF, string(data))
 					_, err = reader.NextPart()
 					assert.ErrorIs(t, err, io.EOF)
 				}()
@@ -99,6 +146,7 @@ func TestDesignsCheckMultipartWithNewBinary(t *testing.T) {
 	assert.Zero(t, result.ExitCode, result.Stderr)
 
 	require.NoError(t, os.Remove(filepath.Join(dir, newPath)))
+	require.NoError(t, os.Remove(filepath.Join(dir, handoutPath)))
 	result = testutil.RunCommand(t, args, "")
 	assert.Zero(t, result.ExitCode, result.Stderr)
 }

@@ -188,3 +188,36 @@ func (c *Client) SendDirectMessage(ctx context.Context, input *DirectMessageInpu
 	}
 	return &result, nil
 }
+
+// ChannelMessage keeps the history endpoint's text and attribution fields.
+type ChannelMessage struct {
+	ID                            string `json:"_id"`
+	AuthorID                      string `json:"authorId,omitempty"`
+	ContentType                   string `json:"contentType"`
+	Content                       string `json:"content"`
+	CreatedAt                     string `json:"createdAt"`
+	ViaAgentInstallID             string `json:"viaAgentInstallId,omitempty"`
+	ViaAgentName                  string `json:"viaAgentName,omitempty"`
+	LastModifiedViaAgentInstallID string `json:"lastModifiedViaAgentInstallId,omitempty"`
+	LastModifiedViaAgentName      string `json:"lastModifiedViaAgentName,omitempty"`
+}
+
+type ChannelMessagePage struct {
+	ChannelID string           `json:"channelId"`
+	Messages  []ChannelMessage `json:"messages"`
+}
+
+func (c *Client) ChannelMessages(ctx context.Context, id string, limit int, before, after string) (*ChannelMessagePage, error) {
+	query := url.Values{"limit": {fmt.Sprint(limit)}}
+	if before != "" {
+		query.Set("before", before)
+	}
+	if after != "" {
+		query.Set("after", after)
+	}
+	var page ChannelMessagePage
+	if err := c.do(ctx, "GET", "/chat/channel/"+id+"/messages?"+query.Encode(), nil, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
