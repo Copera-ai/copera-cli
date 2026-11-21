@@ -112,6 +112,8 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		data       = artifact + "/data/{collection}"
 		dataRecord = data + "/records/{key}"
 	)
+	const commentID = "cccccccccccccccccccccccc"
+	includeEarlier := false
 	type multipartAsset struct {
 		File     string                `json:"file"`
 		Metadata artifactAssetMetadata `json:"metadata"`
@@ -303,6 +305,25 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 		{"get", data + "/watch", "200", nil, dataWatch{}, func(c *Client) error {
 			return designContractRequest(c.ArtifactDataWatch(ctx, id, "answers", "v1.mark.sig"))
 		}},
+		{"get", artifact + "/comments", "200", nil, ArtifactCommentList{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactComments(ctx, id, ArtifactCommentListOpts{
+				VersionID: versionID, PageID: "cover", After: "cursor", Limit: 10, OpenFromEarlierVersions: &includeEarlier,
+			}))
+		}},
+		{"post", artifact + "/comments/{commentId}/replies", "201", ArtifactCommentReplyInput{}, ArtifactCommentReplyResult{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactCommentReply(ctx, id, commentID, ArtifactCommentReplyInput{Body: "Done", IdempotencyKey: "key"}))
+		}},
+		{"post", artifact + "/comments/{commentId}/resolve", "200", struct{}{}, ArtifactCommentResolveResult{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactCommentResolve(ctx, id, commentID))
+		}},
+		{"get", artifact + "/comments/watch", "200", nil, ArtifactCommentPoll{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactCommentWatch(ctx, id, "cursor"))
+		}},
+		{"post", artifact + "/authoring-requests", "202", ArtifactAskInput{}, ArtifactAskResult{}, func(c *Client) error {
+			return designContractRequest(c.ArtifactAsk(ctx, id, ArtifactAskInput{
+				BaseVersionID: versionID, Intent: "Make the heading shorter", IdempotencyKey: "key", ConfirmAICredits: true, PageID: "cover",
+			}))
+		}},
 	}
 	for _, route := range routes {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
@@ -372,6 +393,7 @@ func TestDesignsOpenAPIContract(t *testing.T) {
 					"{pageId}", "home",
 					"{collection}", "answers",
 					"{key}", "item-1",
+					"{commentId}", commentID,
 				).Replace(route.path)
 				assert.Equal(t, wantPath, r.URL.Path)
 				if route.method == "post" && (route.path == "/artifacts/" || route.path == "/artifacts/check") {

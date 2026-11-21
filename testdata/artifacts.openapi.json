@@ -27628,6 +27628,2136 @@
         }
       }
     },
+    "/artifacts/{artifactId}/authoring-requests": {
+      "post": {
+        "operationId": "askArtifact",
+        "summary": "Queue a paid Copera AI change to a Design",
+        "tags": [
+          "API Reference",
+          "public",
+          "Public API Artifacts"
+        ],
+        "description": "Requires a personal access token with Designs and AI Run permissions and edit access to the Design. The workflow spends workspace AI credits when it runs. Poll the URL in the Location header for its result. This operation is available through REST and the CLI.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                  "baseVersionId": {
+                    "pattern": "^[0-9a-fA-F]{24}$",
+                    "minLength": 24,
+                    "maxLength": 24,
+                    "description": "ObjectId",
+                    "type": "string"
+                  },
+                  "intent": {
+                    "description": "Trimmed to 1–8,192 UTF-16 code units.",
+                    "type": "string"
+                  },
+                  "idempotencyKey": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "confirmAiCredits": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  },
+                  "pageId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "baseVersionId",
+                  "intent",
+                  "idempotencyKey",
+                  "confirmAiCredits"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "minLength": 24,
+              "maxLength": 24,
+              "type": "string"
+            },
+            "in": "path",
+            "name": "artifactId",
+            "required": true,
+            "description": "ObjectId"
+          }
+        ],
+        "x-mint": {
+          "mcp": {
+            "enabled": false
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "Copera CLI",
+            "source": "copera designs ask 'Shorten the heading' --artifact 64f7f77bcf86cd7994390113 --base-version-id 64f7f77bcf86cd7994390114 --idempotency-key shorten-heading-1 --yes"
+          },
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "curl -X POST https://api.copera.app/public/v1/artifacts/64f7f77bcf86cd7994390113/authoring-requests \\\n  -H \"Authorization: Bearer YOUR_PERSONAL_TOKEN\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"baseVersionId\":\"64f7f77bcf86cd7994390114\",\"intent\":\"Shorten the heading\",\"idempotencyKey\":\"shorten-heading-1\",\"confirmAiCredits\":true}'"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "request": {
+                      "type": "object",
+                      "properties": {
+                        "viaAgentInstallId": {
+                          "pattern": "^[a-fA-F0-9]{24}$",
+                          "readOnly": true,
+                          "type": "string"
+                        },
+                        "viaAgentName": {
+                          "readOnly": true,
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "artifactId": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "pageId": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string"
+                        },
+                        "queuePosition": {
+                          "type": "integer"
+                        },
+                        "baseVersionId": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "resultVersionId": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "changedPageIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "errorCode": {
+                          "type": "string"
+                        },
+                        "requestedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "finishedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "artifactId",
+                        "state",
+                        "queuePosition",
+                        "baseVersionId",
+                        "changedPageIds",
+                        "requestedAt"
+                      ]
+                    },
+                    "spendsAiCredits": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "request",
+                    "spendsAiCredits"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Too Many Requests - The operation's rate limit was exceeded",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        429
+                      ]
+                    },
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Too Many Requests"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryAfter": {
+                      "minimum": 0,
+                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message",
+                    "retryAfter"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{artifactId}/comments": {
+      "get": {
+        "operationId": "listArtifactComments",
+        "summary": "List Design comment threads",
+        "tags": [
+          "API Reference",
+          "public",
+          "Public API Artifacts"
+        ],
+        "description": "Lists comment pins and replies in creation order. The cursor keeps the selected version and filters fixed while paging. Requires Designs permission and access to the Design.",
+        "parameters": [
+          {
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "minLength": 24,
+              "maxLength": 24,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "versionId",
+            "required": false,
+            "description": "ObjectId"
+          },
+          {
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "in": "query",
+            "name": "pageId",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "boolean"
+            },
+            "in": "query",
+            "name": "openFromEarlierVersions",
+            "required": false,
+            "description": "Include open pins from earlier versions. Defaults to true when versionId is omitted."
+          },
+          {
+            "schema": {
+              "minimum": 1,
+              "maximum": 20,
+              "default": 20,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "minLength": 1,
+              "maxLength": 1024,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "description": "Opaque cursor returned by this route for this Design and caller."
+          },
+          {
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "minLength": 24,
+              "maxLength": 24,
+              "type": "string"
+            },
+            "in": "path",
+            "name": "artifactId",
+            "required": true,
+            "description": "ObjectId"
+          }
+        ],
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl \"https://api.copera.app/public/v1/artifacts/64f7f77bcf86cd7994390113/comments?limit=20\" \\\n  -H \"Authorization: Bearer $COPERA_TOKEN\""
+          },
+          {
+            "lang": "bash",
+            "label": "Copera CLI",
+            "source": "copera designs comments list 64f7f77bcf86cd7994390113 --limit 20"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "versionId": {
+                      "pattern": "^[0-9a-fA-F]{24}$",
+                      "minLength": 24,
+                      "maxLength": 24,
+                      "description": "ObjectId",
+                      "type": "string"
+                    },
+                    "threads": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "pattern": "^[0-9a-fA-F]{24}$",
+                            "minLength": 24,
+                            "maxLength": 24,
+                            "description": "ObjectId",
+                            "type": "string"
+                          },
+                          "artifactId": {
+                            "pattern": "^[0-9a-fA-F]{24}$",
+                            "minLength": 24,
+                            "maxLength": 24,
+                            "description": "ObjectId",
+                            "type": "string"
+                          },
+                          "versionId": {
+                            "pattern": "^[0-9a-fA-F]{24}$",
+                            "minLength": 24,
+                            "maxLength": 24,
+                            "description": "ObjectId",
+                            "type": "string"
+                          },
+                          "versionNumber": {
+                            "type": "integer"
+                          },
+                          "pageId": {
+                            "type": "string"
+                          },
+                          "authorId": {
+                            "pattern": "^[0-9a-fA-F]{24}$",
+                            "minLength": 24,
+                            "maxLength": 24,
+                            "description": "ObjectId",
+                            "type": "string"
+                          },
+                          "authorName": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "anchor": {
+                            "type": "object",
+                            "properties": {
+                              "selector": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "x": {
+                                "type": "number"
+                              },
+                              "y": {
+                                "type": "number"
+                              },
+                              "width": {
+                                "type": "number"
+                              },
+                              "height": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "selector",
+                              "label",
+                              "x",
+                              "y",
+                              "width",
+                              "height"
+                            ]
+                          },
+                          "body": {
+                            "type": "string"
+                          },
+                          "replies": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "pattern": "^[0-9a-fA-F]{24}$",
+                                  "minLength": 24,
+                                  "maxLength": 24,
+                                  "description": "ObjectId",
+                                  "type": "string"
+                                },
+                                "authorId": {
+                                  "pattern": "^[0-9a-fA-F]{24}$",
+                                  "minLength": 24,
+                                  "maxLength": 24,
+                                  "description": "ObjectId",
+                                  "type": "string"
+                                },
+                                "authorName": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "body": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "format": "date-time",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "authorId",
+                                "authorName",
+                                "body",
+                                "createdAt"
+                              ]
+                            }
+                          },
+                          "resolvedAt": {
+                            "anyOf": [
+                              {
+                                "format": "date-time",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "resolvedById": {
+                            "anyOf": [
+                              {
+                                "pattern": "^[0-9a-fA-F]{24}$",
+                                "minLength": 24,
+                                "maxLength": 24,
+                                "description": "ObjectId",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "createdAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "artifactId",
+                          "versionId",
+                          "versionNumber",
+                          "pageId",
+                          "authorId",
+                          "authorName",
+                          "anchor",
+                          "body",
+                          "replies",
+                          "resolvedAt",
+                          "resolvedById",
+                          "createdAt",
+                          "updatedAt"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "versionId",
+                    "threads",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found - The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Not Found - The requested resource was not found",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        404
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Too Many Requests - The operation's rate limit was exceeded",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        429
+                      ]
+                    },
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Too Many Requests"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryAfter": {
+                      "minimum": 0,
+                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message",
+                    "retryAfter"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error - Something went wrong on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Internal Server Error - Something went wrong on the server",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        500
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{artifactId}/comments/watch": {
+      "get": {
+        "operationId": "pollArtifactComments",
+        "summary": "Poll Design comment pins",
+        "tags": [
+          "API Reference",
+          "public",
+          "Public API Artifacts"
+        ],
+        "description": "Omit after to start at the latest committed pin. Each later call returns at most one new pin and the cursor to resume from. Requires Designs permission and access to the Design.",
+        "parameters": [
+          {
+            "schema": {
+              "minLength": 1,
+              "maxLength": 1024,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "description": "Opaque cursor returned by this route for this Design and caller."
+          },
+          {
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "minLength": 24,
+              "maxLength": 24,
+              "type": "string"
+            },
+            "in": "path",
+            "name": "artifactId",
+            "required": true,
+            "description": "ObjectId"
+          }
+        ],
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl \"https://api.copera.app/public/v1/artifacts/64f7f77bcf86cd7994390113/comments/watch\" \\\n  -H \"Authorization: Bearer $COPERA_TOKEN\""
+          },
+          {
+            "lang": "bash",
+            "label": "Copera CLI",
+            "source": "copera designs watch 64f7f77bcf86cd7994390113 --until comment"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cursor": {
+                      "type": "string"
+                    },
+                    "comment": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "pattern": "^[0-9a-fA-F]{24}$",
+                              "minLength": 24,
+                              "maxLength": 24,
+                              "description": "ObjectId",
+                              "type": "string"
+                            },
+                            "artifactId": {
+                              "pattern": "^[0-9a-fA-F]{24}$",
+                              "minLength": 24,
+                              "maxLength": 24,
+                              "description": "ObjectId",
+                              "type": "string"
+                            },
+                            "versionId": {
+                              "pattern": "^[0-9a-fA-F]{24}$",
+                              "minLength": 24,
+                              "maxLength": 24,
+                              "description": "ObjectId",
+                              "type": "string"
+                            },
+                            "versionNumber": {
+                              "type": "integer"
+                            },
+                            "pageId": {
+                              "type": "string"
+                            },
+                            "authorId": {
+                              "pattern": "^[0-9a-fA-F]{24}$",
+                              "minLength": 24,
+                              "maxLength": 24,
+                              "description": "ObjectId",
+                              "type": "string"
+                            },
+                            "authorName": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "anchor": {
+                              "type": "object",
+                              "properties": {
+                                "selector": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                },
+                                "width": {
+                                  "type": "number"
+                                },
+                                "height": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "selector",
+                                "label",
+                                "x",
+                                "y",
+                                "width",
+                                "height"
+                              ]
+                            },
+                            "body": {
+                              "type": "string"
+                            },
+                            "replies": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "pattern": "^[0-9a-fA-F]{24}$",
+                                    "minLength": 24,
+                                    "maxLength": 24,
+                                    "description": "ObjectId",
+                                    "type": "string"
+                                  },
+                                  "authorId": {
+                                    "pattern": "^[0-9a-fA-F]{24}$",
+                                    "minLength": 24,
+                                    "maxLength": 24,
+                                    "description": "ObjectId",
+                                    "type": "string"
+                                  },
+                                  "authorName": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "body": {
+                                    "type": "string"
+                                  },
+                                  "createdAt": {
+                                    "format": "date-time",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "authorId",
+                                  "authorName",
+                                  "body",
+                                  "createdAt"
+                                ]
+                              }
+                            },
+                            "resolvedAt": {
+                              "anyOf": [
+                                {
+                                  "format": "date-time",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "resolvedById": {
+                              "anyOf": [
+                                {
+                                  "pattern": "^[0-9a-fA-F]{24}$",
+                                  "minLength": 24,
+                                  "maxLength": 24,
+                                  "description": "ObjectId",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "createdAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "artifactId",
+                            "versionId",
+                            "versionNumber",
+                            "pageId",
+                            "authorId",
+                            "authorName",
+                            "anchor",
+                            "body",
+                            "replies",
+                            "resolvedAt",
+                            "resolvedById",
+                            "createdAt",
+                            "updatedAt"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "cursor",
+                    "comment"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found - The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Not Found - The requested resource was not found",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        404
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Too Many Requests - The operation's rate limit was exceeded",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        429
+                      ]
+                    },
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Too Many Requests"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryAfter": {
+                      "minimum": 0,
+                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message",
+                    "retryAfter"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error - Something went wrong on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Internal Server Error - Something went wrong on the server",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        500
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{artifactId}/comments/{commentId}/replies": {
+      "post": {
+        "operationId": "replyToArtifactComment",
+        "summary": "Reply to a Design comment",
+        "tags": [
+          "API Reference",
+          "public",
+          "Public API Artifacts"
+        ],
+        "description": "Appends one reply to the original version's thread. Replays return the same reply, including when the thread reaches its 20-reply limit. Requires Designs permission and read access to the original version.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                  "body": {
+                    "description": "Plain text, 1 to 2,000 UTF-8 bytes after trimming.",
+                    "type": "string"
+                  },
+                  "idempotencyKey": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "description": "Replay the same normalized reply with the same key.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "body",
+                  "idempotencyKey"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "minLength": 24,
+              "maxLength": 24,
+              "type": "string"
+            },
+            "in": "path",
+            "name": "artifactId",
+            "required": true,
+            "description": "ObjectId"
+          },
+          {
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "minLength": 24,
+              "maxLength": 24,
+              "type": "string"
+            },
+            "in": "path",
+            "name": "commentId",
+            "required": true,
+            "description": "ObjectId"
+          }
+        ],
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -X POST \"https://api.copera.app/public/v1/artifacts/64f7f77bcf86cd7994390113/comments/64f7f77bcf86cd7994390114/replies\" \\\n  -H \"Authorization: Bearer $COPERA_TOKEN\" \\\n  -H \"Content-Type: application/json\" \\\n  --data '{\"body\":\"Updated the heading.\",\"idempotencyKey\":\"heading-reply\"}'"
+          },
+          {
+            "lang": "bash",
+            "label": "Copera CLI",
+            "source": "copera designs comments reply 64f7f77bcf86cd7994390114 \"Updated the heading.\" --artifact 64f7f77bcf86cd7994390113 --idempotency-key heading-reply"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reply": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "authorId": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "authorName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "body": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "authorId",
+                        "authorName",
+                        "body",
+                        "createdAt"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "reply"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found - The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Not Found - The requested resource was not found",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        404
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "ARTIFACT_IDEMPOTENCY_CONFLICT"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "ARTIFACT_LIMIT_EXCEEDED"
+                          ]
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "comment_reply_limit"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Too Many Requests - The operation's rate limit was exceeded",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        429
+                      ]
+                    },
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Too Many Requests"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryAfter": {
+                      "minimum": 0,
+                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message",
+                    "retryAfter"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error - Something went wrong on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Internal Server Error - Something went wrong on the server",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        500
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/artifacts/{artifactId}/comments/{commentId}/resolve": {
+      "post": {
+        "operationId": "resolveArtifactComment",
+        "summary": "Resolve a Design comment",
+        "tags": [
+          "API Reference",
+          "public",
+          "Public API Artifacts"
+        ],
+        "description": "Resolves a thread on its original version. Repeating the request preserves its first resolver and time until the thread is reopened in Copera. Requires Designs permission and read access to the original version.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {}
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "minLength": 24,
+              "maxLength": 24,
+              "type": "string"
+            },
+            "in": "path",
+            "name": "artifactId",
+            "required": true,
+            "description": "ObjectId"
+          },
+          {
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{24}$",
+              "minLength": 24,
+              "maxLength": 24,
+              "type": "string"
+            },
+            "in": "path",
+            "name": "commentId",
+            "required": true,
+            "description": "ObjectId"
+          }
+        ],
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "curl",
+            "source": "curl -X POST \"https://api.copera.app/public/v1/artifacts/64f7f77bcf86cd7994390113/comments/64f7f77bcf86cd7994390114/resolve\" \\\n  -H \"Authorization: Bearer $COPERA_TOKEN\" \\\n  -H \"Content-Type: application/json\" \\\n  --data '{}'"
+          },
+          {
+            "lang": "bash",
+            "label": "Copera CLI",
+            "source": "copera designs comments resolve 64f7f77bcf86cd7994390114 --artifact 64f7f77bcf86cd7994390113"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "comment": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "artifactId": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "versionId": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "versionNumber": {
+                          "type": "integer"
+                        },
+                        "pageId": {
+                          "type": "string"
+                        },
+                        "authorId": {
+                          "pattern": "^[0-9a-fA-F]{24}$",
+                          "minLength": 24,
+                          "maxLength": 24,
+                          "description": "ObjectId",
+                          "type": "string"
+                        },
+                        "authorName": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "anchor": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            },
+                            "width": {
+                              "type": "number"
+                            },
+                            "height": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "label",
+                            "x",
+                            "y",
+                            "width",
+                            "height"
+                          ]
+                        },
+                        "body": {
+                          "type": "string"
+                        },
+                        "replies": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "pattern": "^[0-9a-fA-F]{24}$",
+                                "minLength": 24,
+                                "maxLength": 24,
+                                "description": "ObjectId",
+                                "type": "string"
+                              },
+                              "authorId": {
+                                "pattern": "^[0-9a-fA-F]{24}$",
+                                "minLength": 24,
+                                "maxLength": 24,
+                                "description": "ObjectId",
+                                "type": "string"
+                              },
+                              "authorName": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "body": {
+                                "type": "string"
+                              },
+                              "createdAt": {
+                                "format": "date-time",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "authorId",
+                              "authorName",
+                              "body",
+                              "createdAt"
+                            ]
+                          }
+                        },
+                        "resolvedAt": {
+                          "anyOf": [
+                            {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "resolvedById": {
+                          "anyOf": [
+                            {
+                              "pattern": "^[0-9a-fA-F]{24}$",
+                              "minLength": 24,
+                              "maxLength": 24,
+                              "description": "ObjectId",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "artifactId",
+                        "versionId",
+                        "versionNumber",
+                        "pageId",
+                        "authorId",
+                        "authorName",
+                        "anchor",
+                        "body",
+                        "replies",
+                        "resolvedAt",
+                        "resolvedById",
+                        "createdAt",
+                        "updatedAt"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "comment"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found - The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Not Found - The requested resource was not found",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        404
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests - The operation's rate limit was exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Too Many Requests - The operation's rate limit was exceeded",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        429
+                      ]
+                    },
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Too Many Requests"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryAfter": {
+                      "minimum": 0,
+                      "description": "Seconds until the request may be retried. Matches the Retry-After response header.",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message",
+                    "retryAfter"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error - Something went wrong on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "Internal Server Error - Something went wrong on the server",
+                  "type": "object",
+                  "properties": {
+                    "statusCode": {
+                      "type": "number",
+                      "enum": [
+                        500
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statusCode",
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/artifacts/{artifactId}/data/{collection}/batch": {
       "post": {
         "operationId": "batchArtifactData",

@@ -51,6 +51,9 @@ func newDesignsCmd(cli *CLI) *cobra.Command {
 		newDesignLinkCmd(cli),
 		newDesignSourcesCmd(cli),
 		newDesignUnlinkCmd(cli),
+		newDesignCommentsCmd(cli),
+		newDesignWatchCmd(cli),
+		newDesignAskCmd(cli),
 	)
 	return cmd
 }
