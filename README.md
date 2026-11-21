@@ -312,6 +312,7 @@ copera designs versions <id>
 copera designs log <id|url> [--json]
 copera designs guide [--kind K]
 copera designs init <dir> --kind K [--runtime static|react] [--system NAME_OR_ID]
+copera designs vendor <url> [--dir DIR] [--path P]
 copera designs pull <id|url> [dir] [--version N]
 copera designs status [dir]
 copera designs diff [dir]
@@ -339,6 +340,11 @@ the named workspace. Select a workspace's token with `--profile`.
 `report`, `dashboard`) and API kinds such as `website` and `presentation`.
 When the guide offers a template for the selected kind and runtime, `init`
 writes the template files and uses its project settings.
+
+`vendor` saves exact-version cdnjs or jsDelivr npm JavaScript, CSS and JSON,
+or a Google Fonts stylesheet and its WOFF2 files, in an initialized Design.
+Use the printed local paths in your HTML or CSS. The command prints each path
+and its SHA-256, and refuses to overwrite a file with different bytes.
 
 `check` uses multipart for local binaries that still need uploading and
 JSON otherwise. The first `push` creates the Design and saves text and
