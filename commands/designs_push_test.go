@@ -417,6 +417,74 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 	}
 }
 
+func TestDesignsFirstPushTitle(t *testing.T) {
+	for _, test := range []struct {
+		name, entrypoint, html, title string
+	}{
+		{"manifest entrypoint", "pages/home.html", "<h1>Preview</h1><title>  Design &amp;\n   Review </title>", "Design & Review"},
+		{"default entrypoint and title limit", "", "<title>é" + strings.Repeat("🌿", 120) + "</title>", "é" + strings.Repeat("🌿", 119)},
+		{"folder fallback", "", "<template><title>Ignored</title></template><title> \n &nbsp; </title>", "Design Review"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "design-review")
+			state, err := json.Marshal(map[string]string{"kind": "website", "runtime": "static_web", "entrypoint": test.entrypoint})
+			require.NoError(t, err)
+			writePublishFixture(t, filepath.Join(dir, ".copera", "design.json"), state)
+			entrypoint := test.entrypoint
+			if entrypoint == "" {
+				entrypoint = "index.html"
+			} else {
+				writePublishFixture(t, filepath.Join(dir, "index.html"), []byte("<title>Wrong entrypoint</title>"))
+			}
+			entryFile := filepath.Join(dir, entrypoint)
+			writePublishFixture(t, entryFile, []byte(test.html))
+
+			const edited = "<title>Edited page title</title>"
+			var creates, versions atomic.Int32
+			srv := testutil.NewMockServer(t, testutil.MockRoutes{
+				"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+					testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
+				},
+				"POST /artifacts/": func(w http.ResponseWriter, r *http.Request) {
+					creates.Add(1)
+					var input api.ArtifactCreateInput
+					assert.NoError(t, json.Unmarshal([]byte(r.FormValue("project")), &input))
+					assert.Equal(t, test.title, input.Title)
+					testutil.RespondJSON(w, http.StatusOK, designPullFixture(entrypoint, test.html, 1))
+				},
+				"PATCH /artifacts/" + artID: func(w http.ResponseWriter, _ *http.Request) {
+					t.Error("unexpected Design rename during push")
+					w.WriteHeader(http.StatusBadRequest)
+				},
+				"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+					versions.Add(1)
+					var input struct {
+						Title json.RawMessage           `json:"title"`
+						Files []api.ArtifactContentFile `json:"files"`
+					}
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&input))
+					assert.Empty(t, input.Title)
+					assert.Equal(t, []api.ArtifactContentFile{{Path: entrypoint, MediaType: "text/html", Content: edited}}, input.Files)
+					version := designPullFixture(entrypoint, edited, 2).CurrentVersion
+					testutil.RespondJSON(w, http.StatusOK, api.ArtifactPushResult{
+						ArtifactID: artID, HeadRevision: 2, Version: version, BuildState: "ready",
+					})
+				},
+			}.Handler())
+			setupHome(t, srv.URL)
+			first := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "First version", "--no-check", "--json"}, "")
+			require.Equal(t, 0, first.ExitCode, first.Stderr)
+			if test.entrypoint != "" {
+				writePublishFixture(t, entryFile, []byte(edited))
+				later := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit page title", "--no-check", "--json"}, "")
+				require.Equal(t, 0, later.ExitCode, later.Stderr)
+				assert.EqualValues(t, 1, versions.Load())
+			}
+			assert.EqualValues(t, 1, creates.Load())
+		})
+	}
+}
+
 func TestDesignsFirstPushWithImages(t *testing.T) {
 	const (
 		hero    = "assets/hero.png"
@@ -798,6 +866,126 @@ func TestDesignsScreenshot(t *testing.T) {
 	assert.Equal(t, "mobile", string(image))
 }
 
+func TestDesignsVendoredFontSources(t *testing.T) {
+	const (
+		fontDir = "vendor/fonts/49753cca61a7e1a8/"
+		cssPath = fontDir + "fonts.css"
+		css     = `@font-face{font-family:Inter;src:url(regular.woff2)}@font-face{font-family:Inter;src:url(bold.woff2);font-weight:700}`
+		jsPath  = "vendor/npm/chart/chart.js"
+		js      = "const chart = true;"
+		html    = `<link rel="stylesheet" href="` + cssPath + `">`
+	)
+	fontData := map[string]string{fontDir + "regular.woff2": "wOF2\x00regular", fontDir + "bold.woff2": "wOF2\x00bold"}
+	vendorSources := []api.ArtifactContentFile{
+		{Path: cssPath, MediaType: "text/css", Content: css},
+		{Path: jsPath, MediaType: "text/javascript", Content: js},
+	}
+	allSources := append([]api.ArtifactContentFile{{Path: "index.html", MediaType: "text/html", Content: html}}, vendorSources...)
+	created := designPullFixture("index.html", html, 1)
+	for name, content := range fontData {
+		created.CurrentVersion.AuthoringManifest.Assets = append(created.CurrentVersion.AuthoringManifest.Assets,
+			api.ArtifactAsset{ID: digestOf(name)[:24], Path: name, MediaType: "font/woff2", ContentDigest: digestOf(content)})
+	}
+	readMultipart := func(r *http.Request) json.RawMessage {
+		reader, err := r.MultipartReader()
+		if !assert.NoError(t, err) {
+			return nil
+		}
+		project, err := reader.NextPart()
+		if !assert.NoError(t, err) {
+			return nil
+		}
+		assert.Equal(t, "project", project.FormName())
+		var payload json.RawMessage
+		assert.NoError(t, json.NewDecoder(project).Decode(&payload))
+		received := make(map[string]string)
+		for range fontData {
+			part, err := reader.NextPart()
+			if !assert.NoError(t, err) {
+				return nil
+			}
+			_, params, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+			assert.NoError(t, err)
+			assert.Equal(t, "file", part.FormName())
+			assert.Equal(t, "font/woff2", part.Header.Get("Content-Type"))
+			data, err := io.ReadAll(part)
+			assert.NoError(t, err)
+			received[params["filename"]] = string(data)
+		}
+		assert.Equal(t, fontData, received)
+		_, err = reader.NextPart()
+		assert.ErrorIs(t, err, io.EOF)
+		return payload
+	}
+	later := designPullFixture("index.html", html, 2)
+	later.CurrentVersion.AuthoringManifest = created.CurrentVersion.AuthoringManifest
+	const versionsPath = "/artifacts/" + artID + "/versions"
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /artifacts/check": func(w http.ResponseWriter, r *http.Request) {
+			var input api.ArtifactCheckInput
+			assert.NoError(t, json.Unmarshal(readMultipart(r), &input))
+			assert.Equal(t, allSources, input.Files)
+			testutil.RespondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		},
+		"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
+		},
+		"POST /artifacts/": func(w http.ResponseWriter, r *http.Request) {
+			var input api.ArtifactCreateInput
+			assert.NoError(t, json.Unmarshal(readMultipart(r), &input))
+			assert.Equal(t, allSources, input.Project.Files)
+			testutil.RespondJSON(w, http.StatusOK, created)
+		},
+		"POST /artifacts/" + artID + "/assets": func(w http.ResponseWriter, _ *http.Request) {
+			assert.Fail(t, "push should use the existing font pins without uploading sources")
+			w.WriteHeader(http.StatusBadRequest)
+		},
+		"POST " + versionsPath: func(w http.ResponseWriter, r *http.Request) {
+			var input api.ArtifactPushInput
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&input))
+			assert.Equal(t, vendorSources, input.Files)
+			assert.Nil(t, input.AuthoringManifest, "the existing font pins should be retained")
+			testutil.RespondJSON(w, http.StatusCreated, api.ArtifactPushResult{
+				Outcome: "created", ArtifactID: artID, HeadRevision: 2, Version: later.CurrentVersion,
+			})
+		},
+		"GET " + versionsPath + "/" + ver2ID: func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, later.CurrentVersion)
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, ".copera", "design.json")
+	writePublishFixture(t, statePath, []byte(`{"kind":"web_app","runtime":"static_web","entrypoint":"index.html"}`))
+	for _, file := range allSources {
+		writePublishFixture(t, filepath.Join(dir, file.Path), []byte(file.Content))
+	}
+	for name, content := range fontData {
+		writePublishFixture(t, filepath.Join(dir, name), []byte(content))
+	}
+	check := testutil.RunCommand(t, []string{"designs", "check", dir, "--json"}, "")
+	require.Zero(t, check.ExitCode, check.Stderr)
+	first := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Create", "--no-check", "--json"}, "")
+	require.Zero(t, first.ExitCode, first.Stderr)
+
+	// Model an existing Design with font pins and newly added vendor sources.
+	baseFiles := map[string]string{"index.html": digestOf(html)}
+	for _, asset := range created.CurrentVersion.AuthoringManifest.Assets {
+		baseFiles[asset.Path] = asset.ContentDigest
+	}
+	state, err := json.Marshal(struct {
+		ID            string               `json:"id"`
+		BaseVersionID string               `json:"baseVersionId"`
+		HeadRevision  int                  `json:"headRevision"`
+		Files         map[string]string    `json:"files"`
+		Manifest      api.ArtifactManifest `json:"manifest"`
+	}{ID: artID, BaseVersionID: verID, HeadRevision: 1, Files: baseFiles, Manifest: created.CurrentVersion.AuthoringManifest})
+	require.NoError(t, err)
+	writePublishFixture(t, statePath, state)
+	push := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Add sources", "--no-check", "--json"}, "")
+	require.Zero(t, push.ExitCode, push.Stderr)
+}
+
 func TestDesignsCheckClassifiesVendorAndMedia(t *testing.T) {
 	dir := t.TempDir()
 	const tracked = "vendor/authored.js"
@@ -813,7 +1001,9 @@ func TestDesignsCheckClassifiesVendorAndMedia(t *testing.T) {
 
 	vendor := "/*" + strings.Repeat("x", 1<<20) + "*/"
 	media := "\x00\x00\x00\x18ftypmp42" + strings.Repeat("\x00", 5<<20)
+	const binaryCSSPath, binaryCSS = "vendor/binary.css", "\x00\xff"
 	const vendorPath, mediaPath = "vendor/npm/chart/1.2.3/chart.JS", "movie.MP4"
+	writePublishFixture(t, filepath.Join(dir, binaryCSSPath), []byte(binaryCSS))
 	writePublishFixture(t, filepath.Join(dir, vendorPath), []byte(vendor))
 	writePublishFixture(t, filepath.Join(dir, mediaPath), []byte(media))
 
@@ -833,6 +1023,7 @@ func TestDesignsCheckClassifiesVendorAndMedia(t *testing.T) {
 			assert.Equal(t, []api.ArtifactContentFile{{Path: tracked, MediaType: "text/javascript", Content: "const authored = true;"}}, input.Files)
 			for _, file := range []struct{ path, mime, digest string }{
 				{mediaPath, "video/mp4", digestOf(media)},
+				{binaryCSSPath, "text/css", digestOf(binaryCSS)},
 				{vendorPath, "application/javascript", digestOf(vendor)},
 			} {
 				part, err := reader.NextPart()

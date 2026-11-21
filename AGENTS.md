@@ -151,11 +151,13 @@ and `dashboard`, and the API's kind names. When the guide returns a template,
 binaries with the text in a multipart dry run and uses JSON otherwise.
 
 The first `push` creates the Design and saves text and binaries together in
-version 1. If Copera rejects the create, the CLI reports that no Design was
-created. On later pushes, editing an image in place uploads the new bytes
-under the same project-relative path. Earlier versions keep the previous
-image. Separate asset uploads honor `Retry-After` on HTTP 503, with up to
-five attempts. `assets add --path` sets the asset path explicitly.
+version 1. It uses the entry HTML's `<title>` (`index.html` by default), or a
+humanized folder name if the title is missing or blank. Later pushes save
+versions under the existing title. If Copera rejects the create, the CLI
+reports that no Design was created. On later pushes, editing an image in place
+uploads the new bytes under the same project-relative path. Earlier versions
+keep the previous image. Separate asset uploads honor `Retry-After` on HTTP
+503, with up to five attempts. `assets add --path` sets the asset path explicitly.
 
 `log --json` returns the number, date, origin, author kind, tool, and change
 summary for each version.

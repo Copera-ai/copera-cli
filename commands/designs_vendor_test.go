@@ -193,6 +193,35 @@ func TestDesignVendorGoogleFontsSnapshotsLocalCSS(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fontBytes, written)
 
+	const css2 = "https://fonts.googleapis.com/css2?"
+	for _, test := range []struct {
+		name, query, canonical string
+	}{
+		{"literal weights", "family=Inter:wght@400;600&display=swap", "display=swap&family=Inter%3Awght%40400%3B600"},
+		{"encoded weights", "family=Inter:wght@400%3B600&display=swap", "display=swap&family=Inter%3Awght%40400%3B600"},
+		{"multiple families and axes", "family=Inter:ital,wght@0,400;1,700&family=Roboto+Flex:opsz,wght@12..96,600&display=swap",
+			"display=swap&family=Inter%3Aital%2Cwght%400%2C400%3B1%2C700&family=Roboto+Flex%3Aopsz%2Cwght%4012..96%2C600"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			responses[css2+test.canonical] = responses[canonical]
+			local := "vendor/" + strings.ReplaceAll(test.name, " ", "-") + "/fonts.css"
+			_, err := runVendorTestCommand(t, dir, css2+test.query, "--path", local)
+			require.NoError(t, err)
+			data, err := os.ReadFile(filepath.Join(dir, local))
+			require.NoError(t, err)
+			assert.Contains(t, string(data), fmt.Sprintf("url(%x.woff2)", fontSum))
+		})
+	}
+	for _, query := range []string{
+		"display=swap", "family=", "family=Inter:wght@400;%ZZ", "family=Inter&display=swap;other=value",
+		"family=Inter;display=swap", "family=Inter;Invalid:wght@400",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, err := runVendorTestCommand(t, dir, css2+query)
+			require.ErrorContains(t, err, "valid stylesheet family query")
+		})
+	}
+
 	responses[canonical] = vendorTestResponse{status: 200, body: css + "\n@import 'https://example.com/remote.css';"}
 	_, err = runVendorTestCommand(t, dir, remote, "--path", "vendor/new/fonts.css")
 	require.ErrorContains(t, err, "font-face")

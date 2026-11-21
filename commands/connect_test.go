@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	sharedSkillDigest  = "af2b2492eaaf497649c77b2f18e79b01462353d0c731c1043dc5c0d5a5e81353"
-	claudeSkillDigest  = "d3184297a0ce1351d449bd135131f5f567b9301b1c21a8a99be8360ff03a8781"
+	sharedSkillDigest  = "fa118f77699166728f417a78b280be3b218bc95ab73db8d43f57eadb16971310"
+	claudeSkillDigest  = "931a5bc0be7b5c8d5ba5210c5f65dd0f23005914150e24850a232f80e3be7305"
 	claudeAllowedTools = "allowed-tools: Bash(copera auth status *) Bash(copera designs check *) Bash(copera designs status *) Bash(copera designs diff *) Bash(copera designs log *) Bash(copera designs list *) Bash(copera designs get *) Bash(copera designs versions *) Bash(copera designs guide *) Bash(copera designs screenshot *)"
 	codexRules         = `prefix_rule(pattern=["copera", "auth", "status"], decision="allow")
 prefix_rule(pattern=["copera", "designs", "check"], decision="allow")

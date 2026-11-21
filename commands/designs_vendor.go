@@ -64,7 +64,9 @@ func newDesignVendorCmd(cli *CLI) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vendor <url>",
 		Short: "Save a pinned CDN file or Google font to the local Design",
-		Args:  cobra.ExactArgs(1),
+		Long: "Save a pinned CDN file or Google font to the local Design. " +
+			"Paste a Google Fonts stylesheet URL directly, including semicolon-separated axis values and multiple families.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := openDesignDir(dir, false)
 			if err != nil {
@@ -158,7 +160,25 @@ func parseDesignVendorSource(raw, override string) (designVendorSource, error) {
 		if u.Path != "/css" && u.Path != "/css2" {
 			return source, fmt.Errorf("Google Fonts URLs must use /css or /css2")
 		}
-		query, err := url.ParseQuery(u.RawQuery)
+		rawQuery := u.RawQuery
+		if u.Path == "/css2" && strings.Contains(rawQuery, ";") {
+			// Go rejects literal semicolons in queries, but CSS2 uses them in axis values.
+			params := strings.Split(rawQuery, "&")
+			for i, param := range params {
+				value, ok := strings.CutPrefix(param, "family=")
+				if !ok || !strings.Contains(value, ";") {
+					continue
+				}
+				spec, err := url.QueryUnescape(value)
+				beforeSemicolon, _, _ := strings.Cut(spec, ";")
+				_, style, _ := strings.Cut(beforeSemicolon, ":")
+				if err == nil && strings.Contains(style, "@") && !strings.Contains(spec, "=") {
+					params[i] = "family=" + strings.ReplaceAll(value, ";", "%3B")
+				}
+			}
+			rawQuery = strings.Join(params, "&")
+		}
+		query, err := url.ParseQuery(rawQuery)
 		if err != nil || query.Get("family") == "" {
 			return source, fmt.Errorf("Google Fonts requires a valid stylesheet family query")
 		}
