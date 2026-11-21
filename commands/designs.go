@@ -224,6 +224,7 @@ func newDesignLogCmd(cli *CLI) *cobra.Command {
 }
 
 func newDesignGuideCmd(cli *CLI) *cobra.Command {
+	const topics = "existing-app, narration, live-runtime, design-system-from-codebase"
 	var kind, runtime, topic, template string
 	cmd := &cobra.Command{
 		Use:   "guide",
@@ -231,8 +232,8 @@ func newDesignGuideCmd(cli *CLI) *cobra.Command {
 		Args:  systemArgs(cli, cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			topicSet := cmd.Flags().Changed("topic")
-			if topicSet && (topic != "design-system-from-codebase" || cmd.Flags().Changed("kind") || cmd.Flags().Changed("runtime") || cmd.Flags().Changed("template")) {
-				return systemUsage(cli, fmt.Errorf("topic must be design-system-from-codebase and cannot be combined with kind, runtime or template"))
+			if topicSet && (cmd.Flags().Changed("kind") || cmd.Flags().Changed("runtime") || cmd.Flags().Changed("template")) {
+				return systemUsage(cli, fmt.Errorf("--topic cannot be combined with --kind, --runtime or --template"))
 			}
 			if err := validateDesignTemplate(kind, runtime, template); err != nil {
 				return designUsageError(cli, err)
@@ -248,14 +249,11 @@ func newDesignGuideCmd(cli *CLI) *cobra.Command {
 				guide, err = client.ArtifactGuide(cmd.Context(), kind, runtime, template)
 			}
 			if err != nil {
-				if topicSet {
-					return systemAPIError(cli, err)
+				if topicSet && unsupportedDesignGuideTopic(err) {
+					cli.Printer.PrintError("guide_topic_unavailable", fmt.Sprintf("The server did not recognize guide topic %q.", topic), "Known topics: "+topics, false)
+					return exitcodes.New(exitcodes.Error, err)
 				}
 				return designError(cli, err)
-			}
-			if topicSet && (guide.Kind != "" || guide.Runtime != "" || guide.Template != nil ||
-				!strings.HasPrefix(guide.Markdown, "# Derive a Design system from a codebase")) {
-				return designError(cli, fmt.Errorf("the server needs Phase 3 Design systems support for the codebase guide"))
 			}
 			if cli.Printer.IsJSON() {
 				if topicSet {
@@ -275,7 +273,7 @@ func newDesignGuideCmd(cli *CLI) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "Design kind")
 	cmd.Flags().StringVar(&runtime, "runtime", "", "Design runtime (static or react)")
-	cmd.Flags().StringVar(&topic, "topic", "", "design-system-from-codebase")
+	cmd.Flags().StringVar(&topic, "topic", "", "Guide topic ("+topics+")")
 	cmd.Flags().StringVar(&template, "template", "", "Starter template (review)")
 	cmd.SetFlagErrorFunc(systemFlags(cli))
 	return cmd
