@@ -587,6 +587,22 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 					mediaType = ""
 				}
 			}
+			if mediaType == "text/css" || mediaType == "application/javascript" {
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				if info.Size() <= designSourceFileLimit {
+					data, err := readDesignSource(root, name)
+					if err != nil {
+						return err
+					}
+					if file := newLocalDesignFile(name, data); !file.Binary {
+						files[name] = file
+						return nil
+					}
+				}
+			}
 		}
 		if mediaType != "" {
 			if utf8.RuneCountInString(name) > 240 {

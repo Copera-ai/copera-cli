@@ -72,6 +72,7 @@ Use `copera update --version 1.2.0` to install a specific version, or
 
 - `copera designs vendor` accepts Google Fonts URLs copied directly from Google, including semicolon-separated axis values and multiple families.
 - The first `copera designs push` names the Design from the entry HTML's `<title>` or a humanized folder name. Later pushes save versions under the existing title.
+- `copera designs check` and `copera designs push` send vendored CSS and JavaScript within the source size limit as source files and keep WOFF2 fonts as assets.
 
 ### What's new in 0.18.1
 
