@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,11 +13,16 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/exitcodes"
 	"github.com/spf13/cobra"
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 func newDesignPushCmd(cli *CLI) *cobra.Command {
@@ -25,7 +31,9 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "push [dir] -m SUMMARY",
 		Short: "Save local edits as one new Design version",
-		Args:  cobra.MaximumNArgs(1),
+		Long: "Save local edits as one new Design version. The first push uses the entry HTML's <title> " +
+			"(index.html by default) or a humanized folder name. Later pushes save versions under the existing Design title.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(summary) == "" || utf8.RuneCountInString(summary) > 160 || strings.ContainsAny(summary, "\r\n") {
 				msg := "change summary must be one line of 1 to 160 characters"
@@ -195,13 +203,55 @@ func changedInitialSystemFiles(state *designState, files map[string]designFile) 
 	return changed
 }
 
+func designCreateTitle(dir, entrypoint string, files map[string]designFile) string {
+	if entrypoint == "" {
+		entrypoint = "index.html"
+	}
+	var title string
+	if entry := files[entrypoint]; entry.MediaType == "text/html" {
+		if doc, err := html.Parse(bytes.NewReader(entry.Data)); err == nil {
+		titles:
+			for node := range doc.Descendants() {
+				if node.DataAtom != atom.Title || node.Namespace != "" || node.FirstChild == nil {
+					continue
+				}
+				for parent := range node.Ancestors() {
+					if parent.DataAtom == atom.Template {
+						continue titles
+					}
+				}
+				title = strings.Join(strings.Fields(node.FirstChild.Data), " ")
+				if title != "" {
+					break
+				}
+			}
+		}
+	}
+	if title == "" {
+		folder := strings.NewReplacer("-", " ", "_", " ").Replace(filepath.Base(dir))
+		title = cases.Title(language.Und, cases.NoLower).String(strings.Join(strings.Fields(folder), " "))
+		if title == "" {
+			return "Untitled Design"
+		}
+	}
+	// The API measures its title limit in UTF-16 code units.
+	units := 0
+	for i, r := range title {
+		units += utf16.RuneLen(r)
+		if units > 240 {
+			return strings.TrimSpace(title[:i])
+		}
+	}
+	return title
+}
+
 func createLocalDesign(ctx context.Context, client *api.Client, root *os.Root, state *designState, files map[string]designFile, summary string) (*api.ArtifactPushResult, error) {
 	dir, err := filepath.Abs(root.Name())
 	if err != nil {
 		return nil, err
 	}
 	input := api.ArtifactCreateInput{
-		Title: filepath.Base(dir), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID,
+		Title: designCreateTitle(dir, state.Entrypoint, files), ChangeSummary: summary, Tool: designTool(), DesignSystemID: state.DesignSystemID,
 		DesignSystemRevision: state.DesignSystemRevision, DesignSystemKit: state.DesignSystemKit, NoDesignSystem: state.NoDesignSystem,
 	}
 	input.Project.ArtifactProjectSettings = designProject(state)

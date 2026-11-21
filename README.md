@@ -71,6 +71,7 @@ Use `copera update --version 1.2.0` to install a specific version, or
 ### What's new in 0.18.2
 
 - `copera designs vendor` accepts Google Fonts URLs copied directly from Google, including semicolon-separated axis values and multiple families.
+- The first `copera designs push` names the Design from the entry HTML's `<title>` or a humanized folder name. Later pushes save versions under the existing title.
 
 ### What's new in 0.18.1
 
@@ -400,8 +401,11 @@ and its SHA-256, and refuses to overwrite a file with different bytes.
 
 `check` uses multipart for local binaries that still need uploading and
 JSON otherwise. The first `push` creates the Design and saves text and
-binaries together in version 1. If Copera rejects the create, the CLI
-reports that no Design was created.
+binaries together in version 1. It takes the title from the manifest's entry
+HTML (`index.html` by default), collapses whitespace, and caps it at the API's
+240-character limit. If the page has no usable `<title>`, the CLI uses a
+humanized folder name. Later pushes save versions under the existing title.
+If Copera rejects the create, the CLI reports that no Design was created.
 On later pushes, editing an image in place uploads the new bytes at the same
 project-relative path. Earlier versions keep the previous image. Separate
 asset uploads honor `Retry-After` on HTTP 503, with up to five attempts.

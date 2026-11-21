@@ -417,6 +417,74 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 	}
 }
 
+func TestDesignsFirstPushTitle(t *testing.T) {
+	for _, test := range []struct {
+		name, entrypoint, html, title string
+	}{
+		{"manifest entrypoint", "pages/home.html", "<h1>Preview</h1><title>  Design &amp;\n   Review </title>", "Design & Review"},
+		{"default entrypoint and title limit", "", "<title>é" + strings.Repeat("🌿", 120) + "</title>", "é" + strings.Repeat("🌿", 119)},
+		{"folder fallback", "", "<template><title>Ignored</title></template><title> \n &nbsp; </title>", "Design Review"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "design-review")
+			state, err := json.Marshal(map[string]string{"kind": "website", "runtime": "static_web", "entrypoint": test.entrypoint})
+			require.NoError(t, err)
+			writePublishFixture(t, filepath.Join(dir, ".copera", "design.json"), state)
+			entrypoint := test.entrypoint
+			if entrypoint == "" {
+				entrypoint = "index.html"
+			} else {
+				writePublishFixture(t, filepath.Join(dir, "index.html"), []byte("<title>Wrong entrypoint</title>"))
+			}
+			entryFile := filepath.Join(dir, entrypoint)
+			writePublishFixture(t, entryFile, []byte(test.html))
+
+			const edited = "<title>Edited page title</title>"
+			var creates, versions atomic.Int32
+			srv := testutil.NewMockServer(t, testutil.MockRoutes{
+				"GET /workspace/info": func(w http.ResponseWriter, _ *http.Request) {
+					testutil.RespondJSON(w, http.StatusOK, api.Workspace{ID: designWorkspaceID})
+				},
+				"POST /artifacts/": func(w http.ResponseWriter, r *http.Request) {
+					creates.Add(1)
+					var input api.ArtifactCreateInput
+					assert.NoError(t, json.Unmarshal([]byte(r.FormValue("project")), &input))
+					assert.Equal(t, test.title, input.Title)
+					testutil.RespondJSON(w, http.StatusOK, designPullFixture(entrypoint, test.html, 1))
+				},
+				"PATCH /artifacts/" + artID: func(w http.ResponseWriter, _ *http.Request) {
+					t.Error("unexpected Design rename during push")
+					w.WriteHeader(http.StatusBadRequest)
+				},
+				"POST /artifacts/" + artID + "/versions": func(w http.ResponseWriter, r *http.Request) {
+					versions.Add(1)
+					var input struct {
+						Title json.RawMessage           `json:"title"`
+						Files []api.ArtifactContentFile `json:"files"`
+					}
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&input))
+					assert.Empty(t, input.Title)
+					assert.Equal(t, []api.ArtifactContentFile{{Path: entrypoint, MediaType: "text/html", Content: edited}}, input.Files)
+					version := designPullFixture(entrypoint, edited, 2).CurrentVersion
+					testutil.RespondJSON(w, http.StatusOK, api.ArtifactPushResult{
+						ArtifactID: artID, HeadRevision: 2, Version: version, BuildState: "ready",
+					})
+				},
+			}.Handler())
+			setupHome(t, srv.URL)
+			first := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "First version", "--no-check", "--json"}, "")
+			require.Equal(t, 0, first.ExitCode, first.Stderr)
+			if test.entrypoint != "" {
+				writePublishFixture(t, entryFile, []byte(edited))
+				later := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit page title", "--no-check", "--json"}, "")
+				require.Equal(t, 0, later.ExitCode, later.Stderr)
+				assert.EqualValues(t, 1, versions.Load())
+			}
+			assert.EqualValues(t, 1, creates.Load())
+		})
+	}
+}
+
 func TestDesignsFirstPushWithImages(t *testing.T) {
 	const (
 		hero    = "assets/hero.png"
