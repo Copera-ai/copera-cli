@@ -43,6 +43,7 @@ type designState struct {
 	Kind                 string                          `json:"kind"`
 	Runtime              string                          `json:"runtime"`
 	Entrypoint           string                          `json:"entrypoint,omitempty"`
+	Title                string                          `json:"title,omitempty"`
 	Presentation         *api.ArtifactPresentation       `json:"presentation,omitempty"`
 	Capabilities         []api.ArtifactProjectCapability `json:"capabilities,omitzero"`
 	Manifest             api.ArtifactManifest            `json:"manifest"`
@@ -154,7 +155,7 @@ func validateDesignContentPath(name string) error {
 	for _, part := range strings.Split(name, "/") {
 		switch strings.ToLower(part) {
 		case ".copera", ".git", ".ssh", ".claude", ".codex", ".cursor", ".vscode", ".idea", ".husky", ".github", ".envrc",
-			".mcp.json", ".npmrc", ".gitattributes", "claude.md", "agents.md", "gemini.md":
+			".mcp.json", ".npmrc", ".gitattributes", "claude.md", "agents.md", "gemini.md", "node_modules":
 			return fmt.Errorf("unsafe design path %q: refused name %q", name, part)
 		}
 	}
@@ -530,13 +531,18 @@ func scanDesignFiles(root *os.Root, state *designState) (map[string]designFile, 
 }
 
 func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, designPaths, error) {
+	return scanDesignTreeWithRefusals(root, state, false)
+}
+
+func scanDesignTreeWithRefusals(root *os.Root, state *designState, collectRefusals bool) (map[string]designFile, designPaths, error) {
 	files := make(map[string]designFile)
 	paths := make(designPaths)
 	pinned := designPinnedAssetTypes(state)
 	tree := root.FS()
 	var assetBytes int64
 	var assetCount int
-	err := fs.WalkDir(tree, ".", func(name string, entry fs.DirEntry, err error) error {
+	var assetLimitExceeded bool
+	scan := func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || name == "." {
 			return err
 		}
@@ -555,6 +561,9 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 				return fmt.Errorf("%q is not a directory", name)
 			}
 			return nil
+		}
+		if strings.Contains(name, " ") {
+			return fmt.Errorf("unsafe design path %q: spaces are refused", name)
 		}
 		if err := validateDesignContentPath(name); err != nil {
 			if entry.IsDir() {
@@ -608,7 +617,23 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 			if utf8.RuneCountInString(name) > 240 {
 				return fmt.Errorf("asset path %q exceeds 240 characters", name)
 			}
-			upload, err := captureDesignUpload(name, designAssetLimit(mediaType), func() (*os.File, error) {
+			limit := designAssetLimit(mediaType)
+			if assetLimitExceeded {
+				// Adoption still reports invalid paths and individual files
+				// without hashing more data from an oversized project.
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("%q must be a regular file", name)
+				}
+				if info.Size() > limit {
+					return fmt.Errorf("%q exceeds the %s upload limit", name, humanSize(limit))
+				}
+				return nil
+			}
+			upload, err := captureDesignUpload(name, limit, func() (*os.File, error) {
 				return openDesignFile(root, name)
 			})
 			if err != nil {
@@ -617,6 +642,7 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 			assetBytes += upload.ByteLength
 			assetCount++
 			if assetCount > 128 || assetBytes > 256<<20 {
+				assetLimitExceeded = true
 				return fmt.Errorf("Design exceeds 128 assets or 256 MiB of asset data")
 			}
 			files[name] = designFile{MediaType: mediaType, Binary: true, Upload: &upload}
@@ -628,8 +654,20 @@ func scanDesignTree(root *os.Root, state *designState) (map[string]designFile, d
 		}
 		files[name] = newLocalDesignFile(name, data)
 		return nil
+	}
+	var refusals []error
+	err := fs.WalkDir(tree, ".", func(name string, entry fs.DirEntry, err error) error {
+		err = scan(name, entry, err)
+		if !collectRefusals || err == nil || err == fs.SkipDir {
+			return err
+		}
+		refusals = append(refusals, err)
+		if entry != nil && entry.IsDir() {
+			return fs.SkipDir
+		}
+		return nil
 	})
-	return files, paths, err
+	return files, paths, errors.Join(err, errors.Join(refusals...))
 }
 
 func vendorDesignAssetMediaType(mediaType string) bool {
