@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -50,7 +51,10 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				if state.ID != "" {
 					return designUsageError(cli, fmt.Errorf("--title is for the first push. Use copera designs rename to change this Design's title"))
 				}
-				requestedTitle = title
+				requestedTitle = strings.Join(strings.Fields(title), " ")
+				if requestedTitle == "" {
+					return designUsageError(cli, fmt.Errorf("--title must not be empty"))
+				}
 			}
 			if state.ID == "" {
 				if changed := changedInitialSystemFiles(state, files); len(changed) != 0 {
@@ -281,36 +285,69 @@ titles:
 
 func sharedDesignPageTitle(entryTitle, entrypoint string, files map[string]designFile) string {
 	separators := []string{" — ", " – ", " - ", " | ", " · ", ": "}
-	var leading, trailing []string
-	for _, separator := range separators {
-		if i := strings.Index(entryTitle, separator); i > 0 {
-			leading = append(leading, entryTitle[:i])
+	type part struct {
+		text     string
+		trailing bool
+	}
+	type matches struct {
+		count      int
+		firstOther string
+		varies     bool
+		entry      bool
+	}
+	parts := make(map[part]matches)
+	record := func(key part, other string, entry bool) {
+		if other == "" || !strings.ContainsFunc(key.text, func(r rune) bool {
+			return unicode.IsLetter(r) || unicode.IsDigit(r)
+		}) {
+			return
 		}
-		if i := strings.LastIndex(entryTitle, separator); i >= 0 && i+len(separator) < len(entryTitle) {
-			trailing = append(trailing, entryTitle[i+len(separator):])
+		match := parts[key]
+		if match.count == 0 {
+			match.firstOther = other
+		}
+		match.varies = match.varies || other != match.firstOther
+		match.entry = match.entry || entry
+		match.count++
+		parts[key] = match
+	}
+	addTitle := func(title string, entry bool) {
+		for _, separator := range separators {
+			if i := strings.Index(title, separator); i >= 0 {
+				record(part{text: title[:i]}, title[i+len(separator):], entry)
+			}
+			if i := strings.LastIndex(title, separator); i >= 0 {
+				record(part{text: title[i+len(separator):], trailing: true}, title[:i], entry)
+			}
 		}
 	}
-	if len(leading) == 0 && len(trailing) == 0 {
-		return ""
-	}
-	var shared string
-	for _, name := range slices.Sorted(maps.Keys(files)) {
+	addTitle(entryTitle, true)
+	seen := map[string]bool{"": true, entryTitle: true}
+	for name, file := range files {
 		if name == entrypoint {
 			continue
 		}
-		title := designHTMLTitle(files[name])
-		for _, separator := range separators {
-			for _, part := range leading {
-				if len(part) > len(shared) && strings.HasPrefix(title, part+separator) {
-					shared = part
-				}
+		title := designHTMLTitle(file)
+		if !seen[title] {
+			seen[title] = true
+			addTitle(title, false)
+		}
+	}
+	var shared string
+	var best matches
+	for key, match := range parts {
+		if !match.varies || match.count < best.count {
+			continue
+		}
+		if match.count == best.count {
+			if best.entry && !match.entry {
+				continue
 			}
-			for _, part := range trailing {
-				if len(part) > len(shared) && strings.HasSuffix(title, separator+part) {
-					shared = part
-				}
+			if best.entry == match.entry && (len(key.text) < len(shared) || len(key.text) == len(shared) && key.text >= shared) {
+				continue
 			}
 		}
+		shared, best = key.text, match
 	}
 	return shared
 }

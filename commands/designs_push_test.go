@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -419,17 +420,26 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 
 func TestDesignsFirstPushTitle(t *testing.T) {
 	for _, test := range []struct {
-		name, entrypoint, html, title    string
-		otherTitle, savedTitle, override string
+		name, entrypoint, html, title string
+		otherTitles                   []string
+		savedTitle, override          string
+		rejectOverride                bool
 	}{
 		{name: "manifest entrypoint", entrypoint: "pages/home.html", html: "<h1>Preview</h1><title>  Design &amp;\n   Review </title>", title: "Design & Review"},
 		{name: "one page and title limit", html: "<title>é" + strings.Repeat("🌿", 120) + "</title>", title: "é" + strings.Repeat("🌿", 119)},
 		{name: "folder fallback", html: "<template><title>Ignored</title></template><title> \n &nbsp; </title>", title: "Design Review"},
-		{name: "shared leading title", html: "<title>Ridgeline — Explore</title>", otherTitle: "Ridgeline — Trail", title: "Ridgeline"},
-		{name: "shared trailing title", html: "<title>Explore | Ridgeline</title>", otherTitle: "Log | Ridgeline", title: "Ridgeline"},
-		{name: "no shared title", html: "<title>Ridgeline — Explore</title>", otherTitle: "Other — Trails", title: "Ridgeline — Explore"},
+		{name: "shared leading title", html: "<title>Ridgeline — Explore</title>", otherTitles: []string{"Ridgeline — Trail"}, title: "Ridgeline"},
+		{name: "shared trailing title", html: "<title>Explore | Ridgeline</title>", otherTitles: []string{"Log | Ridgeline"}, title: "Ridgeline"},
+		{name: "no shared title", html: "<title>Ridgeline — Explore</title>", otherTitles: []string{"Other — Trails"}, title: "Ridgeline — Explore"},
+		{name: "identical titles", html: "<title>Acme — Dashboard</title>", otherTitles: []string{"Acme — Dashboard"}, title: "Acme — Dashboard"},
+		{name: "duplicate entry with related title", html: "<title>Acme — Dashboard</title>", otherTitles: []string{"Acme — Dashboard", "Acme — Settings"}, title: "Acme"},
+		{name: "separator alone differs", html: "<title>Acme — Dashboard</title>", otherTitles: []string{"Acme | Dashboard"}, title: "Acme — Dashboard"},
+		{name: "punctuation alone", html: "<title>✦ — Dashboard</title>", otherTitles: []string{"✦ — Settings"}, title: "✦ — Dashboard"},
+		{name: "most distinct titles wins", html: "<title>Acme — Dashboard</title>", otherTitles: []string{"Acme — Settings", "Acme — Settings", "Reports | Home", "Reports | Charts", "Reports | Export"}, title: "Reports"},
+		{name: "entry part breaks tie", html: "<title>Front — Acme</title>", otherTitles: []string{"Docs — Acme", "Reports | Home", "Reports | Charts"}, title: "Acme"},
 		{name: "saved init title", html: "<title>Page title</title>", savedTitle: "Selected title", title: "Selected title"},
-		{name: "first push override", html: "<title>Page title</title>", savedTitle: "Saved title", override: "Override", title: "Override"},
+		{name: "first push override", html: "<title>Page title</title>", savedTitle: "Saved title", override: " \t Override\nTitle  ", title: "Override Title"},
+		{name: "blank push override", html: "<title>Page title</title>", override: " \t\n ", title: "Page title", rejectOverride: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "design-review")
@@ -444,8 +454,8 @@ func TestDesignsFirstPushTitle(t *testing.T) {
 			}
 			entryFile := filepath.Join(dir, entrypoint)
 			writePublishFixture(t, entryFile, []byte(test.html))
-			if test.otherTitle != "" {
-				writePublishFixture(t, filepath.Join(dir, "other.html"), []byte("<title>"+test.otherTitle+"</title>"))
+			for i, title := range test.otherTitles {
+				writePublishFixture(t, filepath.Join(dir, "other-"+strconv.Itoa(i)+".html"), []byte("<title>"+title+"</title>"))
 			}
 
 			const edited = "<title>Edited page title</title>"
@@ -486,6 +496,12 @@ func TestDesignsFirstPushTitle(t *testing.T) {
 				args = append(args, "--title", test.override)
 			}
 			first := testutil.RunCommand(t, args, "")
+			if test.rejectOverride {
+				require.Equal(t, 2, first.ExitCode, first.Stderr)
+				assert.Contains(t, first.Stderr, "--title")
+				assert.Zero(t, creates.Load())
+				return
+			}
 			require.Equal(t, 0, first.ExitCode, first.Stderr)
 			rejected := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Edit", "--title", "New name", "--no-check"}, "")
 			assert.Equal(t, 2, rejected.ExitCode, rejected.Stderr)
@@ -499,6 +515,26 @@ func TestDesignsFirstPushTitle(t *testing.T) {
 			assert.EqualValues(t, 1, creates.Load())
 		})
 	}
+}
+
+func TestDesignsInitTitleWhitespace(t *testing.T) {
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"GET /artifacts/guide": designGuideResponse,
+		"GET /artifacts/design-systems/defaults": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, api.ArtifactSystemDefaults{})
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	dir := t.TempDir()
+	args := []string{"designs", "init", "--kind", "landing_page", "--no-system", "--json", "--title"}
+	blank := testutil.RunCommand(t, append(args, " \t\n ", dir), "")
+	assert.Equal(t, 2, blank.ExitCode, blank.Stderr)
+	assert.Contains(t, blank.Stderr, "--title")
+	assert.NoFileExists(t, filepath.Join(dir, ".copera", "design.json"))
+
+	valid := testutil.RunCommand(t, append(args, " \t  A title\n with spaces \u00a0 ", t.TempDir()), "")
+	require.Equal(t, 0, valid.ExitCode, valid.Stderr)
+	assert.Contains(t, valid.Stdout, `"title": "A title with spaces"`)
 }
 
 func TestDesignsFirstPushWithImages(t *testing.T) {

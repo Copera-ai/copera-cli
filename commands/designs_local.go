@@ -29,6 +29,10 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 		Short: "Set up a local Design project",
 		Args:  systemArgs(cli, cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			title = strings.Join(strings.Fields(title), " ")
+			if cmd.Flags().Changed("title") && title == "" {
+				return designUsageError(cli, fmt.Errorf("--title must not be empty"))
+			}
 			if adopt {
 				if runtime != "static" {
 					return systemUsage(cli, fmt.Errorf("--adopt requires --runtime static"))
@@ -83,7 +87,7 @@ func newDesignInitCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return designError(cli, err)
 			}
-			state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: "index.html", Title: strings.TrimSpace(title), NoDesignSystem: decline}
+			state := &designState{Kind: guide.Kind, Runtime: guide.Runtime, Entrypoint: "index.html", Title: title, NoDesignSystem: decline}
 			paths := make(designPaths)
 			templateFiles := make(map[string]api.ArtifactContentFile)
 			if template := guide.Template; template != nil {
