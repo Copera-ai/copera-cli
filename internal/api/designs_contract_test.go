@@ -604,6 +604,11 @@ func assertDesignContractFields(t *testing.T, schema *designContractSchema, mode
 		if child == nil && path == "response.template.project" && name == "dependencies" {
 			continue
 		}
+		// The production snapshot predates the optional per-page evidence.
+		if child == nil && ((path == "response.screenshots[]" && name == "route") ||
+			(path == "response" && model == reflect.TypeFor[ArtifactCheckResult]() && name == "screenshotsOmittedPageIds")) {
+			continue
+		}
 		// Older previews exposed visualReviewStatus. The compact version DTO
 		// used by list and push omits expanded source and declarations.
 		if child == nil && (name == "visualReviewStatus" ||

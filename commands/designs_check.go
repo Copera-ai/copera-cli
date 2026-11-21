@@ -290,7 +290,7 @@ func checkDesign(ctx context.Context, cli *CLI, client *api.Client, root *os.Roo
 	}
 	report := &designBuildReport{
 		State: "ready", ArtifactBuildFindings: result.ArtifactBuildFindings, Warnings: result.Warnings,
-		DarkScheme: result.DarkScheme,
+		DarkScheme: result.DarkScheme, ScreenshotsOmittedPageIDs: result.ScreenshotsOmittedPageIDs,
 	}
 	if !result.OK {
 		report.State = "failed"
@@ -308,7 +308,7 @@ func checkDesign(ctx context.Context, cli *CLI, client *api.Client, root *os.Roo
 			cli.Printer.Info("Warning: save Design screenshot: %s", err)
 			continue
 		}
-		report.Screenshots = append(report.Screenshots, name)
+		report.addScreenshot(shot.PageID, shot.Route, name)
 	}
 	return report, nil
 }
@@ -320,7 +320,37 @@ type designBuildReport struct {
 	Version     *api.ArtifactVersion  `json:"version,omitempty"`
 	DarkScheme  *bool                 `json:"darkScheme,omitempty"`
 	api.ArtifactBuildFindings
-	Screenshots []string `json:"screenshots"`
+	Screenshots               []string               `json:"screenshots"`
+	ScreenshotPages           []designScreenshotPage `json:"screenshotPages,omitempty"`
+	ScreenshotsOmittedPageIDs []string               `json:"screenshotsOmittedPageIds,omitempty"`
+}
+
+type designScreenshotPage struct {
+	PageID string   `json:"pageId"`
+	Route  string   `json:"route,omitempty"`
+	Paths  []string `json:"paths"`
+}
+
+func (report *designBuildReport) addScreenshot(pageID, route, name string) {
+	if !slices.Contains(report.Screenshots, name) {
+		report.Screenshots = append(report.Screenshots, name)
+	}
+	for i := range report.ScreenshotPages {
+		page := &report.ScreenshotPages[i]
+		if page.PageID != pageID {
+			continue
+		}
+		if route != "" {
+			page.Route = route
+		}
+		if !slices.Contains(page.Paths, name) {
+			page.Paths = append(page.Paths, name)
+		}
+		return
+	}
+	report.ScreenshotPages = append(report.ScreenshotPages, designScreenshotPage{
+		PageID: pageID, Route: route, Paths: []string{name},
+	})
 }
 
 func saveDesignShot(root *os.Root, page string, width int, scheme string, data []byte) (string, error) {
@@ -369,8 +399,17 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 			}
 			cli.Printer.PrintLine(message)
 		}
-		for _, name := range report.Screenshots {
-			cli.Printer.PrintLine(name)
+		for _, page := range report.ScreenshotPages {
+			label := "Page " + page.PageID
+			if page.Route != "" {
+				label += " (" + page.Route + ")"
+			}
+			cli.Printer.PrintLine(label + ": " + strings.Join(page.Paths, ", "))
+		}
+		for _, pageID := range report.ScreenshotsOmittedPageIDs {
+			if !slices.ContainsFunc(report.ScreenshotPages, func(page designScreenshotPage) bool { return page.PageID == pageID }) {
+				cli.Printer.PrintLine("Page " + pageID + ": screenshots omitted")
+			}
 		}
 	}
 	if report.State != "ready" {

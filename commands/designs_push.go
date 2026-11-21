@@ -72,13 +72,14 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				}
 				checked = digest == state.LastCheck.Digest
 			}
+			var check *designBuildReport
 			if !noCheck && !checked {
-				report, err := checkDesign(ctx, cli, client, root, state, files, force)
+				check, err = checkDesign(ctx, cli, client, root, state, files, force)
 				if err != nil {
 					return designPushError(cli, err, designPushProgress(state))
 				}
-				if report.State != "ready" {
-					return printDesignBuild(cli, report, designPushProgress(state))
+				if check.State != "ready" {
+					return printDesignBuild(cli, check, designPushProgress(state))
 				}
 			}
 			var pushed *api.ArtifactPushResult
@@ -128,7 +129,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				return waitForDesignPreview(committedCtx, cli, client, pushed, defaultPageID, progress)
 			}
 			if wait {
-				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, progress)
+				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, progress)
 			}
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(pushed)
@@ -589,7 +590,7 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 	}
 }
 
-func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, progress string) error {
+func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root *os.Root, state *designState, version *api.ArtifactVersion, check *designBuildReport, progress string) error {
 	wait := max(0, min(20, int(client.HTTPClient().Timeout/time.Second)-1))
 	for {
 		build, err := client.ArtifactBuild(ctx, state.ID, state.BaseVersionID, wait)
@@ -616,6 +617,18 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 			State: build.State, FailureCode: build.FailureCode, ArtifactBuildFindings: build.ArtifactBuildFindings,
 			Version: version,
 		}
+		if check != nil {
+			report.Screenshots = check.Screenshots
+			report.ScreenshotPages = check.ScreenshotPages
+			report.ScreenshotsOmittedPageIDs = check.ScreenshotsOmittedPageIDs
+		}
+		defaultPage := state.Manifest.DefaultPageID
+		if defaultPage == "" {
+			defaultPage = version.AuthoringManifest.DefaultPageID
+		}
+		if defaultPage == "" && len(build.Screenshots) > 0 {
+			defaultPage = build.Screenshots[0].PageID
+		}
 		for _, shot := range build.Screenshots {
 			data, err := downloadHandoffAsset(ctx, client, shot.URL)
 			if err != nil {
@@ -625,7 +638,11 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 				cli.Printer.Info("Warning: download Design screenshot: %s", err)
 				continue
 			}
-			name, err := saveDesignShot(root, shot.PageID, shot.Width, "", data)
+			scheme := ""
+			if shot.PageID != defaultPage {
+				scheme = "light"
+			}
+			name, err := saveDesignShot(root, shot.PageID, shot.Width, scheme, data)
 			if err != nil {
 				if build.State != "ready" {
 					return designPushError(cli, err, progress)
@@ -633,7 +650,7 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 				cli.Printer.Info("Warning: save Design screenshot: %s", err)
 				continue
 			}
-			report.Screenshots = append(report.Screenshots, name)
+			report.addScreenshot(shot.PageID, shot.Route, name)
 		}
 		return printDesignBuild(cli, report, progress)
 	}
