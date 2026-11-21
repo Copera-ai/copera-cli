@@ -353,6 +353,7 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 		prefix   = "/artifacts/" + artID + "/versions"
 		readyAt  = "2026-11-18T15:00:00Z"
 		shellURL = "https://preview.example/exact-version"
+		appURL   = "https://app.copera.ai/acme/ai/artifacts/" + artID
 	)
 	for _, test := range []struct {
 		name          string
@@ -397,6 +398,9 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 					}
 					testutil.RespondJSON(w, http.StatusOK, response)
 				},
+				"GET /artifacts/" + artID + "/handoff": func(w http.ResponseWriter, _ *http.Request) {
+					testutil.RespondJSON(w, http.StatusOK, api.ArtifactHandoff{Artifact: api.ArtifactHandoffArtifact{URL: appURL}})
+				},
 			}.Handler())
 			setupHome(t, srv.URL)
 
@@ -411,7 +415,7 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 				return
 			}
 			require.Equal(t, 0, push.ExitCode, push.Stderr)
-			assert.JSONEq(t, `{"artifactId":"`+artID+`","versionId":"`+ver2ID+`","state":"building","previewReadyAt":"`+readyAt+`","evidenceStatus":"pending","url":"`+shellURL+`"}`, push.Stdout)
+			assert.JSONEq(t, `{"artifactId":"`+artID+`","versionId":"`+ver2ID+`","state":"building","previewReadyAt":"`+readyAt+`","evidenceStatus":"pending","url":"`+shellURL+`","appUrl":"`+appURL+`"}`, push.Stdout)
 			assert.EqualValues(t, 2, previews.Load())
 			assert.EqualValues(t, 1, versionReads.Load())
 		})

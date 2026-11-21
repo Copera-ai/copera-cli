@@ -319,7 +319,7 @@ type designBuildReport struct {
 	FailureCode string                `json:"failureCode,omitempty"`
 	Warnings    []api.ArtifactWarning `json:"warnings,omitempty"`
 	Version     *api.ArtifactVersion  `json:"version,omitempty"`
-	URL         string                `json:"url,omitempty"`
+	AppURL      string                `json:"appUrl,omitempty"`
 	DarkScheme  *bool                 `json:"darkScheme,omitempty"`
 	api.ArtifactBuildFindings
 	Screenshots               []string               `json:"screenshots"`
@@ -384,8 +384,8 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", report.Version.Version, report.Version.ID))
 		}
 		cli.Printer.PrintLine("Build: " + report.State)
-		if report.URL != "" {
-			cli.Printer.PrintLine("URL: " + report.URL)
+		if report.AppURL != "" {
+			cli.Printer.PrintLine("URL: " + designsTerminalLine(report.AppURL))
 		}
 		if report.DarkScheme != nil && !*report.DarkScheme {
 			cli.Printer.PrintLine("darkScheme: false")

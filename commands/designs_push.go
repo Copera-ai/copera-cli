@@ -144,7 +144,8 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 			}
 			appURL, err := designAppURL(ctx, client, state.ID)
 			if err != nil {
-				cli.Printer.Info("Version %s was saved. Run copera designs open %s for its URL: %s", pushed.Version.ID, state.ID, err)
+				cli.Printer.Info("Version %s was saved. Run copera designs open %s for its URL: %s",
+					designsTerminalLine(pushed.Version.ID), designsTerminalLine(state.ID), designsTerminalLine(err.Error()))
 			}
 			if wait {
 				return waitForDesignBuild(ctx, cli, client, root, state, &pushed.Version, check, vendorHint, progress, appURL)
@@ -152,13 +153,13 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 			if cli.Printer.IsJSON() {
 				return cli.Printer.PrintJSON(struct {
 					*api.ArtifactPushResult
-					URL string `json:"url,omitempty"`
+					AppURL string `json:"appUrl,omitempty"`
 				}{pushed, appURL})
 			}
 			cli.Printer.PrintLine(fmt.Sprintf("Version: %d (%s)", pushed.Version.Version, pushed.Version.ID))
 			cli.Printer.PrintLine("Build: " + pushed.BuildState)
 			if appURL != "" {
-				cli.Printer.PrintLine("URL: " + appURL)
+				cli.Printer.PrintLine("URL: " + designsTerminalLine(appURL))
 			}
 			return nil
 		},
@@ -666,6 +667,11 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 				return designPushError(cli, err, progress)
 			}
 			if preview.Status == "ready" && preview.URL != "" {
+				appURL, err := designAppURL(ctx, client, id)
+				if err != nil {
+					cli.Printer.Info("Version %s was saved. Run copera designs open %s for its URL: %s",
+						designsTerminalLine(version), designsTerminalLine(id), designsTerminalLine(err.Error()))
+				}
 				if cli.Printer.IsJSON() {
 					return cli.Printer.PrintJSON(struct {
 						ArtifactID     string     `json:"artifactId"`
@@ -674,9 +680,13 @@ func waitForDesignPreview(ctx context.Context, cli *CLI, client *api.Client, pus
 						PreviewReadyAt *time.Time `json:"previewReadyAt"`
 						EvidenceStatus string     `json:"evidenceStatus"`
 						URL            string     `json:"url"`
-					}{id, version, build.State, build.PreviewReadyAt, build.EvidenceStatus, preview.URL})
+						AppURL         string     `json:"appUrl,omitempty"`
+					}{id, version, build.State, build.PreviewReadyAt, build.EvidenceStatus, preview.URL, appURL})
 				}
-				cli.Printer.PrintLine(preview.URL)
+				cli.Printer.PrintLine(designsTerminalLine(preview.URL))
+				if appURL != "" {
+					cli.Printer.PrintLine("URL: " + designsTerminalLine(appURL))
+				}
 				return nil
 			}
 		} else if build.Done {
@@ -721,7 +731,7 @@ func waitForDesignBuild(ctx context.Context, cli *CLI, client *api.Client, root 
 
 		report := &designBuildReport{
 			State: build.State, FailureCode: build.FailureCode, ArtifactBuildFindings: build.ArtifactBuildFindings,
-			Version: version, URL: appURL,
+			Version: version, AppURL: appURL,
 		}
 		vendorHint(report)
 		if check != nil {
