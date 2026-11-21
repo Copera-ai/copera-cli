@@ -41,6 +41,12 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				cli.Printer.PrintError("invalid_flag", msg, "", false)
 				return exitcodes.Newf(exitcodes.Usage, "%s", msg)
 			}
+			if cmd.Flags().Changed("title") {
+				title = strings.Join(strings.Fields(title), " ")
+				if title == "" {
+					return designUsageError(cli, fmt.Errorf("--title must not be empty"))
+				}
+			}
 			root, state, files, err := openDesignForBuild(cli, args)
 			if err != nil {
 				return designError(cli, err)
@@ -51,10 +57,7 @@ func newDesignPushCmd(cli *CLI) *cobra.Command {
 				if state.ID != "" {
 					return designUsageError(cli, fmt.Errorf("--title is for the first push. Use copera designs rename to change this Design's title"))
 				}
-				requestedTitle = strings.Join(strings.Fields(title), " ")
-				if requestedTitle == "" {
-					return designUsageError(cli, fmt.Errorf("--title must not be empty"))
-				}
+				requestedTitle = title
 			}
 			if state.ID == "" {
 				if changed := changedInitialSystemFiles(state, files); len(changed) != 0 {

@@ -423,6 +423,12 @@ func TestDesignsPushWaitForPreview(t *testing.T) {
 }
 
 func TestDesignsFirstPushTitle(t *testing.T) {
+	t.Run("blank override before opening project", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "missing")
+		res := testutil.RunCommand(t, []string{"designs", "push", dir, "-m", "Publish", "--title", " \t\n "}, "")
+		assert.Equal(t, 2, res.ExitCode, res.Stderr)
+		assert.Contains(t, res.Stderr, "--title")
+	})
 	for _, test := range []struct {
 		name, entrypoint, html, title string
 		otherTitles                   []string
