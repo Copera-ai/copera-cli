@@ -26,7 +26,18 @@ type ArtifactGuideTemplate struct {
 }
 
 func (c *Client) ArtifactGuide(ctx context.Context, kind, runtime string) (*ArtifactGuide, error) {
+	return c.artifactGuide(ctx, kind, runtime, "")
+}
+
+func (c *Client) ArtifactGuideTopic(ctx context.Context, topic string) (*ArtifactGuide, error) {
+	return c.artifactGuide(ctx, "", "", topic)
+}
+
+func (c *Client) artifactGuide(ctx context.Context, kind, runtime, topic string) (*ArtifactGuide, error) {
 	params := url.Values{}
+	if topic != "" {
+		params.Set("topic", topic)
+	}
 	if kind != "" {
 		params.Set("kind", kind)
 	}

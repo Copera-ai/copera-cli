@@ -64,7 +64,10 @@ type ArtifactRestoreInput struct {
 	Tool                 string `json:"tool"`
 }
 
-type artifactForkInput struct {
+type ArtifactForkInput struct {
+	VersionID      string `json:"versionId,omitempty"`
+	Title          string `json:"title,omitempty"`
+	Plain          bool   `json:"plain,omitempty"`
 	IdempotencyKey string `json:"idempotencyKey"`
 	Tool           string `json:"tool"`
 }
@@ -92,7 +95,7 @@ func (c *Client) ArtifactImport(ctx context.Context, filename string, file Artif
 		{Path: filepath.Base(filename), MediaType: "application/zip", ArtifactUpload: file},
 	})
 	var result Artifact
-	if err := c.doOnce(ctx, http.MethodPost, "/artifacts/archives", form, &result); err != nil {
+	if err := c.doOnce(ctx, http.MethodPost, "/artifacts/archives", form, &result, 0); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -113,7 +116,7 @@ func (c *Client) ArtifactAssetUpload(ctx context.Context, artifactID string, fil
 	form := artifactMultipart("metadata", metadata, []ArtifactCheckFile{file})
 	for attempt := 1; ; attempt++ {
 		var result ArtifactUploadedAsset
-		err := c.doOnce(ctx, http.MethodPost, artifactPath(artifactID)+"/assets", form, &result)
+		err := c.doOnce(ctx, http.MethodPost, artifactPath(artifactID)+"/assets", form, &result, 0)
 		if err == nil {
 			return &result, nil
 		}
@@ -168,12 +171,14 @@ func (c *Client) ArtifactRestore(ctx context.Context, artifactID, versionID stri
 	return &result, nil
 }
 
-// ArtifactFork makes a new private Design from another Design's head.
-func (c *Client) ArtifactFork(ctx context.Context, artifactID, key, tool string) (*Artifact, error) {
-	var result Artifact
-	input := artifactForkInput{IdempotencyKey: key, Tool: tool}
-	if err := c.do(ctx, http.MethodPost, artifactPath(artifactID)+"/fork", input, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+type ArtifactForkResult struct {
+	Artifact
+	Warnings []ArtifactWarning `json:"warnings"`
+}
+
+// ArtifactFork optionally selects a version and removes the kit's ownership.
+func (c *Client) ArtifactFork(ctx context.Context, artifactID string, input ArtifactForkInput) (*ArtifactForkResult, error) {
+	var result ArtifactForkResult
+	err := c.doDesignMutation(ctx, artifactPath(artifactID)+"/fork", input, &result)
+	return &result, err
 }

@@ -45,6 +45,8 @@ func newDesignsCmd(cli *CLI) *cobra.Command {
 		newDesignTrashCmd(cli),
 		newDesignRestoreCmd(cli),
 		newDesignForkCmd(cli),
+		newDesignSystemsCmd(cli),
+		newDesignShadcnCmd(cli),
 	)
 	return cmd
 }

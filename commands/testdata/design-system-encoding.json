@@ -1,0 +1,31 @@
+{
+  "kit": {
+    "kind": "shadcn",
+    "specJson": "{\"font\":\"São <M>& \\\" \\ 😀   \n\u0001\"}",
+    "registryCommit": "0000000000000000000000000000000000000000",
+    "components": [
+      "button",
+      "input"
+    ]
+  },
+  "files": [
+    {
+      "path": "tokens.css",
+      "mediaType": "text/css",
+      "contentDigest": "8771983c1144e80bfacd458e658782f3794df79839b6786c8f5a72337c28cff7"
+    },
+    {
+      "path": "fonts/font.woff2",
+      "mediaType": "font/woff2",
+      "contentDigest": "c83e255230d3a3222bd0e36e82f6fd3420031ecf150b9be3b6823cec26195a53",
+      "usage": "font"
+    },
+    {
+      "path": "DESIGN.md",
+      "mediaType": "text/markdown",
+      "contentDigest": "029faf68025df8cbb2c05fd2b7239aa31ffe5a9f1c63af1e812292fdfcc8c1f8"
+    }
+  ],
+  "canonical": "{\"schemaVersion\":1,\"kit\":{\"kind\":\"shadcn\",\"specJson\":\"{\\\"font\\\":\\\"São <M>& \\\\\\\" \\\\ 😀   \\n\\u0001\\\"}\",\"registryCommit\":\"0000000000000000000000000000000000000000\",\"components\":[\"button\",\"input\"]},\"files\":[{\"path\":\"DESIGN.md\",\"mediaType\":\"text/markdown\",\"contentDigest\":\"029faf68025df8cbb2c05fd2b7239aa31ffe5a9f1c63af1e812292fdfcc8c1f8\"},{\"path\":\"fonts/font.woff2\",\"mediaType\":\"font/woff2\",\"contentDigest\":\"c83e255230d3a3222bd0e36e82f6fd3420031ecf150b9be3b6823cec26195a53\",\"usage\":\"font\"},{\"path\":\"tokens.css\",\"mediaType\":\"text/css\",\"contentDigest\":\"8771983c1144e80bfacd458e658782f3794df79839b6786c8f5a72337c28cff7\"}]}",
+  "digest": "bd50c2b7c2ad80e50ab398f5ed97b2086bfb9013cbb2bb9ae2461ce3b4913d9f"
+}
