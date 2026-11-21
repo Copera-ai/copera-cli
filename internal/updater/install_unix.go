@@ -3,6 +3,7 @@
 package updater
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,23 +37,27 @@ func directInstall(src, dest string) error {
 }
 
 func sudoInstall(src, dest string) error {
-	cmd := exec.Command("sudo", "cp", src, dest)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("sudo cp: %w", err)
+	// Stage next to dest so mv can replace the running binary atomically.
+	staged := filepath.Join(filepath.Dir(dest), ".copera-new-"+rand.Text())
+	if err := runSudo("install", "-m", "0755", src, staged); err != nil {
+		_ = runSudo("rm", "-f", staged)
+		return fmt.Errorf("sudo install: %w", err)
 	}
 
-	cmd = exec.Command("sudo", "chmod", "755", dest)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("sudo chmod: %w", err)
+	if err := runSudo("mv", "-f", staged, dest); err != nil {
+		_ = runSudo("rm", "-f", staged)
+		return fmt.Errorf("sudo mv: %w", err)
 	}
 
 	return nil
+}
+
+var runSudo = func(args ...string) error {
+	cmd := exec.Command("sudo", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func isWritable(dir string) bool {

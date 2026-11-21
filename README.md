@@ -68,6 +68,10 @@ copera update
 Use `copera update --version 1.2.0` to install a specific version, or
 `copera update --force` to skip the confirmation prompt.
 
+### What's new in 0.18.1
+
+- `copera update` no longer fails with "Text file busy" when it needs administrator rights.
+
 ## First Setup
 
 For most people, the easiest authentication flow is:
