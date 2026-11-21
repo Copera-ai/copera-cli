@@ -16,7 +16,7 @@ func main() {
 		// this handles unexpected errors that bubble up without being formatted.
 		var exitErr *exitcodes.ExitError
 		if errors.As(err, &exitErr) {
-			if exitErr.Err != nil {
+			if !exitErr.Printed && exitErr.Err != nil {
 				fmt.Fprintln(os.Stderr, exitErr.Err.Error())
 			}
 			os.Exit(exitErr.Code)
