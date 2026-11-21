@@ -10,8 +10,10 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/copera/copera-cli/internal/api"
 	"github.com/copera/copera-cli/internal/auth"
@@ -19,6 +21,26 @@ import (
 	"github.com/copera/copera-cli/internal/output"
 	"github.com/spf13/cobra"
 )
+
+func designsTerminalLine(value string) string {
+	var line strings.Builder
+	for _, r := range value {
+		switch {
+		case unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector):
+			if r <= 0xffff {
+				fmt.Fprintf(&line, "\\u%04x", r)
+			} else {
+				fmt.Fprintf(&line, "\\U%08x", r)
+			}
+		case !unicode.IsPrint(r):
+			quoted := strconv.QuoteRune(r)
+			line.WriteString(quoted[1 : len(quoted)-1])
+		default:
+			line.WriteRune(r)
+		}
+	}
+	return line.String()
+}
 
 func designError(cli *CLI, err error) error {
 	var apiErr *api.APIError

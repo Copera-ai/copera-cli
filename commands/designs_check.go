@@ -412,11 +412,11 @@ func printDesignBuild(cli *CLI, report *designBuildReport, failureSuggestion str
 			if page.Route != "" {
 				label += " (" + page.Route + ")"
 			}
-			cli.Printer.PrintLine(label + ": " + strings.Join(page.Paths, ", "))
+			cli.Printer.PrintLine(designsTerminalLine(label + ": " + strings.Join(page.Paths, ", ")))
 		}
 		for _, pageID := range report.ScreenshotsOmittedPageIDs {
 			if !slices.ContainsFunc(report.ScreenshotPages, func(page designScreenshotPage) bool { return page.PageID == pageID }) {
-				cli.Printer.PrintLine("Page " + pageID + ": screenshots omitted")
+				cli.Printer.PrintLine("Page " + designsTerminalLine(pageID) + ": screenshots omitted")
 			}
 		}
 	}

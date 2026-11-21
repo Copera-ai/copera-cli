@@ -59,6 +59,25 @@ func TestDesignsCheckReportsScreenshotPages(t *testing.T) {
 	assert.Equal(t, wantPaths[1:], report.ScreenshotPages[1].Paths)
 }
 
+func TestDesignsCheckScreenshotTerminalLine(t *testing.T) {
+	dir := designPublishFolder(t)
+	srv := testutil.NewMockServer(t, testutil.MockRoutes{
+		"POST /artifacts/check": func(w http.ResponseWriter, _ *http.Request) {
+			testutil.RespondJSON(w, http.StatusOK, json.RawMessage(`{"ok":true,"screenshots":[
+				{"pageId":"home","width":390,"route":"home\nmarker\u001b[8m\u200b","data":"aG9tZQ=="}
+			],"screenshotsOmittedPageIds":["other\rmarker\u202e"]}`))
+		},
+	}.Handler())
+	setupHome(t, srv.URL)
+	res := testutil.RunCommand(t, []string{"designs", "check", dir, "--output", "plain"}, "")
+	require.Zero(t, res.ExitCode, res.Stderr)
+	assert.NotContains(t, res.Stdout, "\nmarker")
+	assert.NotContains(t, res.Stdout, "\x1b")
+	assert.NotContains(t, res.Stdout, "\r")
+	assert.Contains(t, res.Stdout, `Page home (home\nmarker\x1b[8m\u200b):`)
+	assert.Contains(t, res.Stdout, `Page other\rmarker\u202e: screenshots omitted`)
+}
+
 func TestDesignsPushWaitReportsScreenshotPages(t *testing.T) {
 	dir := designPublishFolder(t)
 	const versionsPath = "/artifacts/" + artID + "/versions"
