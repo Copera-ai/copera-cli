@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/copera/copera-cli/internal/api"
+	"github.com/copera/copera-cli/internal/exitcodes"
 )
 
 type designVendoredReference struct {
@@ -109,6 +110,7 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 
 	var bytesLeft int64 = 20 << 20
 	limitReached := false
+	temporaryFailure := false
 	for n, ref := range sources {
 		key := ref.source.url.String()
 		if n >= 32 {
@@ -119,6 +121,7 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		downloaded, err := downloadDesignVendorSource(ctx, ref.source, &bytesLeft)
 		if err != nil {
 			limitReached = limitReached || errors.Is(err, errDesignVendorDownloadLimit)
+			temporaryFailure = temporaryFailure || isDesignVendorTemporary(err)
 			failed[key] = err.Error()
 			continue
 		}
@@ -212,13 +215,15 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 		result.Changed = true
 	}
 
+	retry := temporaryFailure && len(result.Vendored) == 0
 	result.NextCommand = `copera designs push --wait -m "<what this version is>"`
-	if limitReached {
+	if limitReached || retry {
 		result.NextCommand = "copera designs vendor --all"
 	}
 	if dir != "." {
 		result.NextCommand += " '" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
 	}
+	const retrySuggestion = "Run the same command again."
 	if cli.Printer.IsJSON() {
 		if err := cli.Printer.PrintJSON(result); err != nil {
 			return err
@@ -238,10 +243,18 @@ func runDesignVendorAll(ctx context.Context, cli *CLI, root *os.Root, state *des
 			cli.Printer.PrintLine(fmt.Sprintf("Skipped: %s (%s) — %s",
 				designsTerminalLine(ref.URL), designsTerminalLine(ref.Path), designsTerminalLine(ref.Reason)))
 		}
+		if retry {
+			cli.Printer.PrintLine("The download failed for a reason that may be temporary.")
+		}
 		cli.Printer.PrintLine("Run: " + designsTerminalLine(result.NextCommand))
 	}
 	if len(sources) > 0 && len(result.Vendored) == 0 {
-		return designError(cli, fmt.Errorf("no vendorable URLs could be downloaded"))
+		err := errors.New("no vendorable URLs could be downloaded")
+		if retry {
+			cli.Printer.PrintError("request_failed", err.Error(), retrySuggestion, true)
+			return exitcodes.New(exitcodes.Error, err)
+		}
+		return designError(cli, err)
 	}
 	return nil
 }

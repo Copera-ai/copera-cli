@@ -195,10 +195,13 @@ func ExecuteWithWriters(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if err := cmd.Execute(); err != nil {
 		// Cobra wraps unknown commands in its own error type; preserve exit code.
 		var exitErr *exitcodes.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr
+		if !errors.As(err, &exitErr) {
+			exitErr = exitcodes.New(exitcodes.Error, err)
 		}
-		return exitcodes.New(exitcodes.Error, err)
+		if cli.Printer != nil && cli.Printer.ErrorPrinted() {
+			exitErr.Printed = true
+		}
+		return exitErr
 	}
 	return nil
 }

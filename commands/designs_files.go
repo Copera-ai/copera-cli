@@ -265,8 +265,19 @@ func writeDesignContentWithMode(root *os.Root, name string, file designFile, mod
 	return root.Rename(temp, local)
 }
 
+type designLinkMissingError struct {
+	dir string
+	err error
+}
+
+func (e *designLinkMissingError) Error() string { return "This folder is not linked to a Design yet." }
+func (e *designLinkMissingError) Unwrap() error { return e.err }
+
 func loadDesignState(root *os.Root) (*designState, error) {
 	data, err := readDesignFile(root, designStateFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, &designLinkMissingError{dir: root.Name(), err: err}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", designStateFile, err)
 	}

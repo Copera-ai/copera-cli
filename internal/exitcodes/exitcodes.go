@@ -16,8 +16,9 @@ const (
 // ExitError wraps an error with a semantic exit code. Commands return this;
 // main.go calls os.Exit based on the embedded code.
 type ExitError struct {
-	Code int
-	Err  error
+	Code    int
+	Err     error
+	Printed bool
 }
 
 func (e *ExitError) Error() string {

@@ -47,6 +47,10 @@ func designsTerminalLine(value string) string {
 }
 
 func designError(cli *CLI, err error) error {
+	var missing *designLinkMissingError
+	if errors.As(err, &missing) {
+		return designUsageError(cli, missing)
+	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
 		cli.Printer.PrintError("api_error", apiErr.Error(),
@@ -262,7 +266,8 @@ func newDesignGuideCmd(cli *CLI) *cobra.Command {
 	var kind, runtime, topic, template string
 	cmd := &cobra.Command{
 		Use:   "guide",
-		Short: "Print the Copera Design authoring guide",
+		Short: "Print the Copera Design authoring guide as text",
+		Long:  "Print the Copera Design authoring guide as text. Use --json to include machine-readable facts and template files.",
 		Args:  systemArgs(cli, cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			topicSet := cmd.Flags().Changed("topic")
@@ -289,7 +294,8 @@ func newDesignGuideCmd(cli *CLI) *cobra.Command {
 				}
 				return designError(cli, err)
 			}
-			if cli.Printer.IsJSON() {
+			hasTemplateFiles := guide.Template != nil && len(guide.Template.Files) > 0
+			if cli.Printer.IsExplicitJSON() || (hasTemplateFiles && cli.Printer.IsJSON()) {
 				if topicSet {
 					return cli.Printer.PrintJSON(struct {
 						*api.ArtifactGuide
@@ -328,6 +334,18 @@ func validateDesignTemplate(kind, runtime, template string) error {
 }
 
 func designUsageError(cli *CLI, err error) error {
+	var missing *designLinkMissingError
+	if errors.As(err, &missing) {
+		dir := missing.dir
+		if strings.HasPrefix(dir, "-") {
+			dir = "./" + dir
+		}
+		quoted := "'" + strings.ReplaceAll(dir, "'", "'\\''") + "'"
+		suggestion := "Run: copera designs init " + quoted +
+			" --adopt --kind <kind> to keep the files that are here, or copera designs init " + quoted + " in an empty folder."
+		cli.Printer.PrintError("not_a_design_folder", missing.Error(), designsTerminalLine(suggestion), false)
+		return exitcodes.New(exitcodes.Usage, missing)
+	}
 	cli.Printer.PrintError("invalid_input", err.Error(), "", false)
 	return exitcodes.New(exitcodes.Usage, err)
 }

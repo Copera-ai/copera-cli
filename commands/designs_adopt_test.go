@@ -520,7 +520,7 @@ func TestDesignInitAdoptEntryStorageAndLegacyGuide(t *testing.T) {
 			res := testutil.RunCommand(t, args, "")
 			require.Equal(t, 0, res.ExitCode, res.Stderr)
 			assert.Contains(t, res.Stdout, "Entry: "+want)
-			assert.Contains(t, res.Stdout, "A separate check is optional because push runs it.")
+			assert.Contains(t, res.Stdout, "A separate check is optional: push runs the same check first and saves nothing when it finds an error.")
 			if tc.scope == "" {
 				assert.Contains(t, res.Stdout, "Storage: none")
 			} else {
@@ -551,7 +551,7 @@ func TestDesignInitAdoptNextSteps(t *testing.T) {
 				require.Zero(t, res.ExitCode, res.Stderr)
 				suffix := " -- '-app'\\''s " + format + "'"
 				vendor := step{"copera designs vendor --all" + suffix, "downloads the fonts and libraries your pages link to"}
-				push := step{`copera designs push --wait -m "<what this version is>"` + suffix, "checks every page, saves the version, waits for the build and prints the link; screenshots are saved under .copera/shots/. A separate check is optional because push runs it."}
+				push := step{`copera designs push --wait -m "<what this version is>"` + suffix, "checks every page, saves the version, waits for the build and prints the link; screenshots are saved under .copera/shots/. A separate check is optional: push runs the same check first and saves nothing when it finds an error."}
 				want := []step{push}
 				if tc.vendor {
 					want = []step{vendor, push}

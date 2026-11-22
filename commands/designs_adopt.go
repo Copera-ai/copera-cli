@@ -211,7 +211,7 @@ func adoptDesign(ctx context.Context, cli *CLI, dir, kind, entry, title string) 
 	}
 	nextSteps = append(nextSteps, nextStep{
 		`copera designs push --wait -m "<what this version is>"` + dirArg,
-		"checks every page, saves the version, waits for the build and prints the link; screenshots are saved under .copera/shots/. A separate check is optional because push runs it.",
+		"checks every page, saves the version, waits for the build and prints the link; screenshots are saved under .copera/shots/. A separate check is optional: push runs the same check first and saves nothing when it finds an error.",
 	})
 	outside := groupAdoptOutsideLinks(links)
 	if cli.Printer.IsJSON() {

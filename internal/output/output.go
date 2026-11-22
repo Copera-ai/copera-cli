@@ -35,10 +35,11 @@ func ParseFormat(s string) (Format, error) {
 // Printer writes structured output to stdout and errors to stderr.
 // Construct one per command invocation via New().
 type Printer struct {
-	format Format
-	Out    io.Writer
-	Err    io.Writer
-	Quiet  bool
+	format       Format
+	errorPrinted bool
+	Out          io.Writer
+	Err          io.Writer
+	Quiet        bool
 }
 
 // New creates a Printer. When format is FormatAuto, it resolves to FormatTable
@@ -74,6 +75,9 @@ func (p *Printer) IsJSON() bool {
 	return p.resolvedFormat() == FormatJSON
 }
 
+// IsExplicitJSON reports whether JSON was selected before auto-detection.
+func (p *Printer) IsExplicitJSON() bool { return p.format == FormatJSON }
+
 // IsTable reports whether the effective output format is a human table.
 func (p *Printer) IsTable() bool {
 	return p.resolvedFormat() == FormatTable
@@ -83,6 +87,7 @@ func (p *Printer) IsTable() bool {
 func (p *Printer) PrintJSON(v any) error {
 	enc := json.NewEncoder(p.Out)
 	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
 	return enc.Encode(v)
 }
 
@@ -116,5 +121,11 @@ func (p *Printer) PrintError(errType, message, suggestion string, transient bool
 		Transient:  transient,
 	}
 	enc := json.NewEncoder(p.Err)
-	_ = enc.Encode(e)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(e) == nil {
+		p.errorPrinted = true
+	}
 }
+
+// ErrorPrinted reports whether PrintError wrote a structured error.
+func (p *Printer) ErrorPrinted() bool { return p.errorPrinted }

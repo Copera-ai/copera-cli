@@ -62,6 +62,16 @@ type designVendorFile struct {
 	sourceURLs    []string
 }
 
+type designVendorTemporaryError struct{ error }
+
+func (e designVendorTemporaryError) Unwrap() error { return e.error }
+
+func isDesignVendorTemporary(err error) bool {
+	var temporary designVendorTemporaryError
+	return !errors.Is(err, context.Canceled) &&
+		(errors.Is(err, context.DeadlineExceeded) || errors.As(err, &temporary))
+}
+
 func newDesignVendorCmd(cli *CLI) *cobra.Command {
 	var dir, destination string
 	var all bool
@@ -266,6 +276,14 @@ func validateDesignVendorPath(name, ext string) error {
 }
 
 func downloadDesignVendor(ctx context.Context, client *http.Client, remote string, limit int64, bytesLeft *int64) ([]byte, string, error) {
+	data, mediaType, err := downloadDesignVendorAttempt(ctx, client, remote, limit, bytesLeft)
+	if isDesignVendorTemporary(err) && ctx.Err() == nil {
+		return downloadDesignVendorAttempt(ctx, client, remote, limit, bytesLeft)
+	}
+	return data, mediaType, err
+}
+
+func downloadDesignVendorAttempt(ctx context.Context, client *http.Client, remote string, limit int64, bytesLeft *int64) ([]byte, string, error) {
 	readLimit := limit + 1
 	if bytesLeft != nil {
 		if *bytesLeft == 0 {
@@ -280,11 +298,15 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 	req.Header.Set("User-Agent", designVendorUserAgent)
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", designVendorTemporaryError{err}
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("vendor download from %s returned HTTP %d", req.URL.Host, res.StatusCode)
+		err := fmt.Errorf("vendor download from %s returned HTTP %d", req.URL.Host, res.StatusCode)
+		if res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500 && res.StatusCode < 600 {
+			err = designVendorTemporaryError{err}
+		}
+		return nil, "", err
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, readLimit))
 	if bytesLeft != nil {
@@ -293,14 +315,14 @@ func downloadDesignVendor(ctx context.Context, client *http.Client, remote strin
 			return nil, "", errDesignVendorDownloadLimit
 		}
 	}
-	if err != nil {
-		return nil, "", err
-	}
-	if len(data) == 0 || int64(len(data)) > limit {
+	if int64(len(data)) > limit || (len(data) == 0 && err == nil) {
 		return nil, "", fmt.Errorf("vendor download from %s must contain 1 to %d bytes", req.URL.Host, limit)
 	}
+	if err != nil {
+		return nil, "", designVendorTemporaryError{err}
+	}
 	mediaType := res.Header.Get("Content-Type")
-	if mediaType != "" {
+	if mediaType != "" && req.URL.Host != "fonts.gstatic.com" {
 		mediaType, _, err = mime.ParseMediaType(mediaType)
 		if err != nil {
 			return nil, "", fmt.Errorf("vendor download from %s returned an invalid content type", req.URL.Host)
@@ -533,11 +555,11 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 				remote := value
 				name := urls[remote]
 				if name == "" {
-					font, mediaType, err := downloadDesignVendor(ctx, client, remote, designVendorFileLimit, bytesLeft)
+					font, _, err := downloadDesignVendor(ctx, client, remote, designVendorFileLimit, bytesLeft)
 					if err != nil {
 						return nil, err
 					}
-					if !validDesignVendorWOFF2(font, mediaType) {
+					if !validDesignVendorWOFF2(font) {
 						return nil, fmt.Errorf("Google Fonts returned an invalid WOFF2 file")
 					}
 					file := newDesignVendorFile("", font, "local_sha256")
@@ -568,11 +590,9 @@ func vendorGoogleFonts(ctx context.Context, client *http.Client, source designVe
 	return files, nil
 }
 
-func validDesignVendorWOFF2(data []byte, mediaType string) bool {
+func validDesignVendorWOFF2(data []byte) bool {
 	const headerSize = 48
-	return (mediaType == "" || mediaType == "font/woff2" || mediaType == "application/font-woff2" ||
-		mediaType == "application/octet-stream") &&
-		len(data) > headerSize && string(data[:4]) == "wOF2" &&
+	return len(data) > headerSize && string(data[:4]) == "wOF2" &&
 		binary.BigEndian.Uint32(data[8:12]) == uint32(len(data)) &&
 		binary.BigEndian.Uint16(data[12:14]) > 0 && binary.BigEndian.Uint16(data[14:16]) == 0 &&
 		binary.BigEndian.Uint32(data[20:24]) > 0 && binary.BigEndian.Uint32(data[20:24]) < uint32(len(data)-headerSize)

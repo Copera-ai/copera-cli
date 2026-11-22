@@ -320,7 +320,9 @@ func watchDesignData(ctx context.Context, cli *CLI, client *api.Client, id, coll
 			}
 			if first || change.Changed {
 				if cli.Printer.IsJSON() {
-					err = json.NewEncoder(cli.Printer.Out).Encode(response)
+					enc := json.NewEncoder(cli.Printer.Out)
+					enc.SetEscapeHTML(false)
+					err = enc.Encode(response)
 				} else {
 					err = printDesignData(cli, response, nil)
 				}
