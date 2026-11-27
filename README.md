@@ -253,6 +253,7 @@ copera rows column-content <row-id> --board <board-id> --table <table-id> --colu
 copera rows update-column-content <row-id> --board <board-id> --table <table-id> --column <column-id> --content "# Notes"
 
 copera rows comment <row-id> --board <board-id> --table <table-id> --content "Looks good"
+copera rows activities <row-id> --board <board-id> --table <table-id> --json
 copera rows comments <row-id> --board <board-id> --table <table-id>
 
 # Manage attachments on FILE columns, and download from comments

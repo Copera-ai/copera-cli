@@ -46,6 +46,7 @@ func newRowsCmd(cli *CLI) *cobra.Command {
 		newRowsAuthenticateCmd(cli),
 		newRowsCommentCmd(cli),
 		newRowsCommentsCmd(cli),
+		newRowsActivitiesCmd(cli),
 	)
 	cmd.AddCommand(rowParityCommands(cli)...)
 	return cmd
@@ -686,6 +687,78 @@ Visibility:
 }
 
 // ── rows comments ───────────────────────────────────────────────────────────
+
+func newRowsActivitiesCmd(cli *CLI) *cobra.Command {
+	var flagBoard, flagTable, flagAfter string
+	cmd := &cobra.Command{
+		Use:   "activities <row-id>",
+		Short: "List visible row activities, newest first",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cfg, err := requireAPIClient(cli)
+			if err != nil {
+				return err
+			}
+
+			boardID, err := resolveID(nil, flagBoard, cfg.BoardID, "board ID (--board or config board_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --board <id> or set board_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			tableID, err := resolveID(nil, flagTable, cfg.TableID, "table ID (--table or config table_id)")
+			if err != nil {
+				cli.Printer.PrintError("missing_id", err.Error(),
+					"Use --table <id> or set table_id in your profile config", false)
+				return exitcodes.New(exitcodes.Usage, err)
+			}
+
+			page, err := client.RowActivities(cmd.Context(), boardID, tableID, args[0], flagAfter)
+			if err != nil {
+				return apiError(cli, err)
+			}
+			if cli.Printer.IsJSON() {
+				return cli.Printer.PrintJSON(page)
+			}
+			if len(page.Items) == 0 {
+				cli.Printer.Info("No activities found.")
+			}
+			for _, activity := range page.Items {
+				cli.Printer.PrintLine(fmt.Sprintf("%s  %s  %s", activity.CreatedAt, activity.TypeAction, activity.ID))
+				if activity.AutomationName != "" {
+					cli.Printer.PrintLine("  Automation: " + activity.AutomationName)
+				}
+				if activity.ApprovalDecision != "" {
+					cli.Printer.PrintLine("  Approval: " + activity.ApprovalDecision)
+				}
+				if activity.AuthorID != "" {
+					cli.Printer.PrintLine("  Author: " + activity.AuthorID)
+				}
+				if activity.ColumnID != "" {
+					cli.Printer.PrintLine("  Column: " + activity.ColumnID)
+				}
+				if activity.CommentID != "" {
+					cli.Printer.PrintLine("  Comment: " + activity.CommentID)
+				}
+				if activity.Before != nil {
+					cli.Printer.PrintLine("  Before: " + string(activity.Before))
+				}
+				if activity.After != nil {
+					cli.Printer.PrintLine("  After: " + string(activity.After))
+				}
+			}
+			if page.PageInfo.HasNextPage && page.PageInfo.EndCursor != nil {
+				cli.Printer.Info("More results available. Use --after %s to fetch the next page.", *page.PageInfo.EndCursor)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&flagBoard, "board", "", "Board ID")
+	cmd.Flags().StringVar(&flagTable, "table", "", "Table ID")
+	cmd.Flags().StringVar(&flagAfter, "after", "", "Cursor for the next page")
+	return cmd
+}
 
 func newRowsCommentsCmd(cli *CLI) *cobra.Command {
 	var flagBoard, flagTable string

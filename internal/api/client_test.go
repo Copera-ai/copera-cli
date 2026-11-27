@@ -140,3 +140,21 @@ func TestBoardTableAndRowListQueries(t *testing.T) {
 	assert.Equal(t, `{"match":"and","conditions":[]}`, rowQuery.Get("filter"))
 	assert.Equal(t, "col_a:asc", rowQuery.Get("sort"))
 }
+
+func TestRowActivities(t *testing.T) {
+	client, closeServer := testClient(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/board/b/table/t/row/r/activities", r.URL.Path)
+		assert.Equal(t, "older", r.URL.Query().Get("after"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[{"_id":"a","typeAction":"UPDATE","before":null,"after":["done"]}],"pageInfo":{"hasNextPage":false,"endCursor":"a"}}`)
+	})
+	defer closeServer()
+	page, err := client.RowActivities(context.Background(), "b", "t", "r", "older")
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.JSONEq(t, "null", string(page.Items[0].Before))
+	assert.JSONEq(t, `["done"]`, string(page.Items[0].After))
+	require.NotNil(t, page.PageInfo.EndCursor)
+	assert.Equal(t, "a", *page.PageInfo.EndCursor)
+}

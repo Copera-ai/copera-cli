@@ -458,6 +458,38 @@ func (c *Client) RowAttachmentDownload(ctx context.Context, boardID, tableID, ro
 	return c.Download(ctx, path)
 }
 
+type RowActivity struct {
+	AutomationName   string          `json:"automationName,omitempty"`
+	ApprovalDecision string          `json:"approvalDecision,omitempty"`
+	ID               string          `json:"_id"`
+	TypeAction       string          `json:"typeAction"`
+	CreatedAt        string          `json:"createdAt"`
+	AuthorID         string          `json:"authorId,omitempty"`
+	ColumnID         string          `json:"columnId,omitempty"`
+	CommentID        string          `json:"commentId,omitempty"`
+	Before           json.RawMessage `json:"before,omitempty"`
+	After            json.RawMessage `json:"after,omitempty"`
+}
+type RowActivitiesPage struct {
+	Items    []RowActivity `json:"items"`
+	PageInfo struct {
+		EndCursor   *string `json:"endCursor"`
+		HasNextPage bool    `json:"hasNextPage"`
+	} `json:"pageInfo"`
+}
+
+func (c *Client) RowActivities(ctx context.Context, boardID, tableID, rowID, after string) (*RowActivitiesPage, error) {
+	path := fmt.Sprintf("/board/%s/table/%s/row/%s/activities", url.PathEscape(boardID), url.PathEscape(tableID), url.PathEscape(rowID))
+	if after != "" {
+		path += "?after=" + url.QueryEscape(after)
+	}
+	var page RowActivitiesPage
+	if err := c.do(ctx, http.MethodGet, path, nil, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
 // ── Comment methods ──────────────────────────────────────────────────────────
 
 func (c *Client) CommentCreate(ctx context.Context, boardID, tableID, rowID string, input *CreateCommentInput) (*Comment, error) {
